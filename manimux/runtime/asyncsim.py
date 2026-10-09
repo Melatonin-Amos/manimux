@@ -80,6 +80,7 @@ class AsyncSimRuntime:
             robot["group_dims"],
             max_source_steps=inference["max_chunk_policy_steps"],
             action_start_mode=inference["action_start_mode"],
+            hold_last_step=inference["inference_schedule"] == "serial",
         )
         self.executor = (
             SmoothExecutor(config["executor"]["smooth"], self.dt_ns / 1e9)
@@ -125,6 +126,7 @@ class AsyncSimRuntime:
                 self.robot.group_dims,
                 max_source_steps=inference["max_chunk_policy_steps"],
                 action_start_mode=inference["action_start_mode"],
+                hold_last_step=inference["inference_schedule"] == "serial",
             )
             self._last_command = None
             self._selected_packets = {}

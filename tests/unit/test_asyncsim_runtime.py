@@ -274,6 +274,51 @@ class AsyncSimRuntimeTests(unittest.TestCase):
                            for item in events[index + 1:response_index])
         self.assertTrue(overlap)
 
+    def test_serial_executes_last_row_before_next_inference(self):
+        class AdvancingClock(FixedClock):
+            def sleep_until_ns(self, target_ns):
+                self.time_ns = max(self.time_ns, target_ns)
+
+        class AdvancingAsyncSim(FakeAsyncSim):
+            def read_snapshot(self, streams):
+                clock.time_ns += 200_000_000
+                self.sim_ts = round(self.sim_ts + 0.04, 6)
+                return super().read_snapshot(streams)
+
+        class RampWorker(DelayedWorker):
+            def poll(self):
+                response = super().poll()
+                if response is not None:
+                    for values in response.raw_action["actions"].values():
+                        values[:, 0] = 10 * response.request_seq + np.arange(4)
+                return response
+
+        clock = AdvancingClock()
+        backend = AdvancingAsyncSim(clock_ns=clock.now_ns)
+        configured = config()
+        configured["run"].update(simulation_time_timeline=True, skip_unplanned_commands=True)
+        configured["robot"]["control_hz"] = 25
+        configured["policy"]["action_dt_s"] = 0.04
+        configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
+        configured["inference"]["inference_schedule"] = "serial"
+        runtime = AsyncSimRuntime(
+            configured, client=backend, clock=clock, worker=RampWorker(clock),
+        )
+        run = runtime.run_policy(max_steps=8)
+        np.testing.assert_allclose(
+            [command["groups"]["left_arm"][0] for command in backend.commands],
+            [10, 11, 12, 13, 20, 21, 22, 23],
+        )
+        pending = False
+        for event in run["audit"]["manimux_events"]:
+            if event["kind"] == "inference_submitted":
+                pending = True
+            elif event["kind"] == "inference_response":
+                pending = False
+            elif event["kind"] == "command_ack":
+                self.assertFalse(pending, "serial inference overlapped a planned command")
+        self.assertEqual(run["accepted_plans"], 2)
+
     def test_specialized_strategies_use_their_requests_and_canonical_timeline(self):
         for mode, request_type in (
             ("rtc", RtcInferenceRequest),
