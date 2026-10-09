@@ -1,0 +1,25 @@
+policy_name: Xiaomi_Robotics_1
+protocol: ws
+host: 127.0.0.1
+port: 18766
+bench_name: RoboDojo
+env_cfg_type: arx_x5
+ckpt_name: RoboDojo-sim-arx_x5-ee-0
+action_type: ee
+seed: 0
+eval_batch: false
+eval_env: sim
+num_envs: 1
+robot_action_dim_info: {arm_dim: [6, 6], ee_dim: [1, 1]}
+checkpoint_source: huggingface:RoboDojo-Benchmark/RoboDojo
+checkpoint_variant: RoboDojo-sim-arx_x5-ee-0
+action_horizon: 30
+output_format: packed_ee_delta
+action_length: 30
+image_factor: 32
+image_max_pixels: 160000
+# These workspace-relative paths are resolved by the shared station loader.
+model_dir: null
+vlm_processor_path: null
+backend_identity:
+  fields: [policy_name, task_name, checkpoint_variant, checkpoint_source, action_horizon, action_type]

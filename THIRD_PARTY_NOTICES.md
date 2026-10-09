@@ -12,6 +12,17 @@ its own license and third-party notices inside the submodule.
 `YuyangLiu2003/PRM-as-a-Judge`. It remains separately versioned under the
 Apache License 2.0; see `PRM-as-a-Judge/LICENSE`.
 
+## RoboDojo ARX X5 kinematic description
+
+`manimux/embodiments/arm/arx_x5/description.urdf` is derived from
+`Assets/Robots/x5/X5A.urdf` in the Hugging Face dataset
+`RoboDojo-Benchmark/RoboDojo`, revision
+`43dacb13d3051a9ccd421f4e7e08e4e3eb29dfab`. The dataset declares Apache-2.0;
+see `licenses/RoboDojo-Apache-2.0.txt`. The derivative removes camera branches,
+visual meshes and collision meshes, preserving the arm/finger joint geometry,
+limits and inertial values. It is used for offline FK/IK only. Source SHA256:
+`7aaa308a1a5b6a213d914db86ba09ddd6252f25cb498ac9a148bfa6c7166a423`.
+
 ## i2rt YAM model assets
 
 `manimux/embodiments/arm/yam/assets/i2rt/robot_models/` contains the YAM and linear_4310 model

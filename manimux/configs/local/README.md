@@ -62,6 +62,7 @@ configuration directory.
 | UMI_DP artifact | `paths.checkpoint` | Local checkpoint directory used by the UMI_DP artifact binding |
 | XR-1 artifact | `paths.checkpoint` | Local checkpoint file or directory containing `mp_rank_00_model_states.pt` |
 | XR-1 normalization | `paths.norm_stats` | Optional explicit `training_metadata/normalize.json` path |
+| XR-1 Hugging Face X5 directory | `paths.model_dir` | Directory containing the 30-step `config.py` and `last.ckpt/checkpoint/`; used by the AsyncSim XR1 launcher |
 | XR-1 processor | `paths.vlm_processor` | Optional local Qwen processor directory; otherwise use the recipe's repository ID |
 | Run output override | `paths.output_dir` | Optional local directory for experiment output |
 

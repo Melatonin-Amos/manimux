@@ -213,6 +213,8 @@ def bind_station(config: dict, local: str | Path) -> dict:
                 server[key] = str((paths["checkpoints"] / server[key]).resolve())
         elif "checkpoint" in paths:
             server["checkpoint_path"] = str(paths["checkpoint"])
+        if "model_dir" in paths:
+            server["model_dir"] = str(paths["model_dir"])
         if "norm_stats" in paths:
             server["norm_stats_path"] = str(paths["norm_stats"])
         if "vlm_processor" in paths:

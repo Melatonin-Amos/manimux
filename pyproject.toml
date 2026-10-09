@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+arx-x5-ik = ["mink>=1.3,<2", "quadprog>=0.1.13,<0.2"]
 realsense = ["pyrealsense2>=2.55"]
 tianji-diff-ik = [
   "osqp>=1,<2",
@@ -59,6 +60,7 @@ exclude = ["manimux/configs/local/station.yaml"]
 [tool.hatch.build.targets.wheel.force-include]
 "THIRD_PARTY_NOTICES.md" = "manimux/THIRD_PARTY_NOTICES.md"
 "licenses/i2rt-MIT.txt" = "manimux/licenses/i2rt-MIT.txt"
+"licenses/RoboDojo-Apache-2.0.txt" = "manimux/licenses/RoboDojo-Apache-2.0.txt"
 
 [tool.pytest.ini_options]
 addopts = "-q"
