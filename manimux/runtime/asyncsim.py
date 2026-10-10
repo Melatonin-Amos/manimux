@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from copy import deepcopy
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,12 @@ class AsyncSimRuntime:
             env_index=options.get("env_index", 0),
         )
         self.streams = [self.robot.state_stream, *self.sensor.streams.values()]
+        self.observation_streams = config["run"].get("observation_streams", [])
+        if not isinstance(self.observation_streams, list) or any(
+            not isinstance(name, str) or not name for name in self.observation_streams
+        ):
+            raise ValueError("run.observation_streams must be a list of stream names")
+        self.streams = list(dict.fromkeys([*self.streams, *self.observation_streams]))
         self.instruction_stream = config["run"].get("instruction_stream")
         if self.instruction_stream is not None:
             if not isinstance(self.instruction_stream, str) or not self.instruction_stream:
@@ -204,7 +211,14 @@ class AsyncSimRuntime:
             self._last_command = copy_group_vector(state.groups)
             self.executor.reset(state)
             self.safety.reset(state)
-        return ObservationSnapshot(state, frames)
+        stream_packets = {}
+        for stream in self.observation_streams:
+            packet = snapshot["packets"][stream]["packet"]
+            if packet is not None:
+                if packet["episode_id"] != self.client.episode_id:
+                    raise RuntimeError("observation packet belongs to another episode")
+                stream_packets[stream] = packet
+        return ObservationSnapshot(state, frames, stream_packets)
 
     def step(self, chunk: ActionChunk | None = None) -> tuple[ObservationSnapshot, CommitResult | None, dict]:
         observation = self.observe()
@@ -295,11 +309,10 @@ class AsyncSimRuntime:
         last_deadline = 0
         in_flight = False
         pending_observation_ns: dict[int, int] = {}
-        next_tick = self.clock.now_ns()
-        episode = self.start(seed=seed, recording_directory=recording_directory)
         try:
             worker.start()
             self._check_capabilities(worker)
+            episode = self.start(seed=seed, recording_directory=recording_directory)
             self.strategy.reset()
             while True:
                 initial = self.client.read_snapshot(self.streams)
@@ -310,6 +323,13 @@ class AsyncSimRuntime:
                 self.clock.sleep_until_ns(self.clock.now_ns() + self.dt_ns)
             control_steps = 0
             loop_ticks = 0
+            last_control_slot: int | None = None
+            health = self.client.health()
+
+            def wait_for_poll() -> None:
+                # Wall time only paces polling; missed wall ticks never burst.
+                poll_dt_ns = max(1, self.dt_ns // 4) if self._simulation_timeline else self.dt_ns
+                self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
                 nonlocal request_seq, last_submitted, last_deadline, pending_observation_ns, in_flight
@@ -339,7 +359,13 @@ class AsyncSimRuntime:
                 events.append({"kind": "inference_submitted", "request_seq": request_seq,
                                "instruction": prepared.instruction,
                                "observation_time_ns": prepared.observation_time_ns,
-                               "deadline_ns": prepared.deadline_ns, **submission.event_fields})
+                               "deadline_ns": prepared.deadline_ns,
+                               "measured_groups": {name: values.tolist() for name, values in observation.state.groups.items()},
+                               "policy_groups": {name: values.tolist() for name, values in prepared.observation.state.groups.items()},
+                               "observation_packets": {name: {key: packet.get(key) for key in (
+                                   "episode_id", "seq", "capture_ts", "available_ts",
+                               )} for name, packet in prepared.observation.stream_packets.items()},
+                               **submission.event_fields})
                 return True
 
             while control_steps < max_steps:
@@ -348,8 +374,26 @@ class AsyncSimRuntime:
                     raise TimeoutError("AsyncSim policy rollout exceeded its wall time limit")
                 if not worker.is_alive:
                     raise RuntimeError("policy worker stopped")
+                state = health["episode"]["state"]
+                if state not in {"ready", "running", "safe_hold"}:
+                    break
+                if state == "safe_hold":
+                    # Physics and fixed-period task evaluation continue in hold.
+                    wait_for_poll()
+                    health = self.client.health()
+                    continue
                 observation = self.observe()
                 now_ns = self._timeline_now_ns if self._simulation_timeline else self.clock.now_ns()
+                if self._simulation_timeline:
+                    slot = (now_ns - self._timeline_origin_ns) // self.dt_ns
+                    if last_control_slot is not None and slot <= last_control_slot:
+                        wait_for_poll()
+                        continue
+                    if last_control_slot is not None and slot > last_control_slot + 1:
+                        events.append({"kind": "control_periods_skipped",
+                                       "count": slot - last_control_slot - 1,
+                                       "sim_ts": health["episode"]["sim_ts"]})
+                    last_control_slot = slot
                 response: InferenceResponse | None = worker.poll()
                 chunk = None
                 settings = None
@@ -405,6 +449,10 @@ class AsyncSimRuntime:
                             events.append({"kind": "plan_rejected", "request_seq": response.request_seq,
                                            "reason": f"invalid_action:{exc}"})
                             chunk = None
+                if self._simulation_timeline and chunk is not None:
+                    # Decoding can take time; commit against current simulation time.
+                    observation = self.observe()
+                    now_ns = self._timeline_now_ns
                 submitted_early = (
                     submit_if_ready(observation, now_ns)
                     if self._simulation_timeline and chunk is None else False
@@ -417,12 +465,20 @@ class AsyncSimRuntime:
                     except AsyncSimCommandRejected as exc:
                         state = self.client.health()["episode"]["state"]
                         if exc.reason != "episode_not_accepting_commands" or state not in {
-                            "succeeded", "failed", "finished",
+                            "succeeded", "failed", "finished", "safe_hold",
                         }:
                             raise
                         events.append({"kind": "command_rejected", "reason": exc.reason,
                                        "episode_state": state})
+                        if state == "safe_hold":
+                            wait_for_poll()
+                            health = self.client.health()
+                            continue
                         break
+                    if self._simulation_timeline:
+                        issued_slot = round(ack["issued_sim_ts"] * 1e9) // self.dt_ns
+                        last_control_slot = max(last_control_slot, issued_slot)
+                        ack["control_slot"] = issued_slot
                     command_acks.append(ack)
                     events.append({"kind": "command_ack", **ack})
                     control_steps += 1
@@ -452,10 +508,9 @@ class AsyncSimRuntime:
                     events.append({"kind": kind, **fields})
                 self.strategy.on_tick(steps=loop_ticks, loop_ms=0.0, control_dt_ns=self.dt_ns)
                 health = self.client.health()
-                if health["episode"]["state"] not in {"ready", "running"}:
+                if health["episode"]["state"] not in {"ready", "running", "safe_hold"}:
                     break
-                next_tick += self.dt_ns
-                self.clock.sleep_until_ns(next_tick)
+                wait_for_poll()
             return {
                 "session_id": self.session_id, "episode_id": episode["episode_id"],
                 "steps": control_steps, "loop_ticks": loop_ticks, "responses": responses,
@@ -472,8 +527,15 @@ class AsyncSimRuntime:
                 "packets": tuple(self._selected_packets.values()),
             }
         finally:
-            worker.close()
-            self.close()
+            cleanup_error = None
+            for close in (worker.close, self.close):
+                try:
+                    close()
+                except Exception as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
+            if cleanup_error is not None and sys.exc_info()[0] is None:
+                raise cleanup_error
 
     def run(self, chunks: Iterable[ActionChunk | None], *, seed: int | None = None) -> list[dict]:
         """Run a fake-policy sequence; worker submission is added separately."""

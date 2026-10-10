@@ -1,0 +1,5 @@
+services:
+  policy:
+    endpoint: ws://127.0.0.1:18866
+paths:
+  model_dir: ../../../checkpoints/finetuned/openwam_huggingface/OpenWAM-Alpha-Sim-RoboDojo

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from collections import OrderedDict
 from dataclasses import replace
 
@@ -12,7 +13,7 @@ from scipy.spatial.transform import Rotation
 from manimux.policies.base import action_interval
 from manimux.policy_adapter.kinematics import KinematicAdapter
 from manimux.runtime.rtc.request import RtcInferenceRequest
-from manimux.types import ActionChunk
+from manimux.types import ActionChunk, RobotState, copy_group_vector
 
 # RoboDojo's XR1 training conversion uses R_mibot = R_link6 @ P.
 EEF_REFRAME = np.array([[0., -1., 0.], [0., 0., -1.], [1., 0., 0.]])
@@ -22,7 +23,7 @@ SLICES = {"left_arm": (slice(0, 3), slice(3, 6), 6),
 
 
 class XR1ArxX5Adapter(KinematicAdapter):
-    """Decode native 60-D actions using the original request's measured state.
+    """Decode 60-D actions from measured arm joints and the gripper control anchor.
 
     Base placement cancels for anchor-local deltas, so FK/IK stay in each arm's
     base_link frame. Whole chunks are rejected on IK failure. Gripper commands
@@ -35,6 +36,8 @@ class XR1ArxX5Adapter(KinematicAdapter):
         self._anchors = OrderedDict()
         self._session_id = None
         self._camera_names = tuple(policy["adapter"]["camera_map"].values())
+        self._gripper_stream = policy["adapter"].get("gripper_state_stream")
+        self._env_index = robot["options"].get("env_index", 0)
 
     def validate(self, robot, policy):
         if robot["group_dims"] != {"left_arm": 7, "right_arm": 7}:
@@ -50,7 +53,27 @@ class XR1ArxX5Adapter(KinematicAdapter):
     def build_observation(self, snapshot):
         if any(name not in snapshot.frames for name in self._camera_names):
             raise ValueError("XR1 X5 observation is missing a configured camera")
-        return snapshot
+        if self._gripper_stream is None:
+            return snapshot
+        packet = snapshot.stream_packets.get(self._gripper_stream)
+        if packet is None:
+            raise ValueError("XR1 X5 observation is missing its gripper control state")
+        payload = packet["payload"]
+        if not isinstance(payload, Mapping):
+            raise ValueError("XR1 X5 gripper control payload must be an environment mapping")
+        source = payload.get(self._env_index, payload.get(str(self._env_index)))
+        if not isinstance(source, Mapping):
+            raise ValueError("XR1 X5 gripper control state lacks the configured environment")
+        groups = copy_group_vector(snapshot.state.groups)
+        for name in GROUPS:
+            key = name.replace("_arm", "_ee") + "_joint_state"
+            opening = np.asarray(source.get(key), dtype=float).reshape(-1)
+            if opening.shape != (1,) or not np.isfinite(opening).all():
+                raise ValueError(f"XR1 X5 requires one finite control opening for {name}")
+            groups[name][-1] = opening[0]
+        # Only the policy view changes; executor feedback remains measured.
+        state = RobotState(groups, snapshot.state.monotonic_ns, snapshot.state.sequence)
+        return replace(snapshot, state=state)
 
     @staticmethod
     def _geometry_state(values):
@@ -58,8 +81,8 @@ class XR1ArxX5Adapter(KinematicAdapter):
         if q.shape != (7,) or not np.isfinite(q).all():
             raise ValueError("XR1 X5 anchor must contain seven finite coordinates")
         # Finger tracking can overshoot the normalized interval slightly. The
-        # fixed link6 geometry does not depend on opening; preserve raw feedback
-        # for model inputs and delta restoration, clip only this FK/IK argument.
+        # fixed link6 geometry does not depend on opening. Clip only this FK/IK
+        # argument; the policy anchor retains the original control semantics.
         q[-1] = np.clip(q[-1], 0, 1)
         return q
 

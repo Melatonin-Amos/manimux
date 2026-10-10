@@ -1,0 +1,28 @@
+policy_name: OpenWAM
+protocol: ws
+host: 127.0.0.1
+port: 18866
+bench_name: RoboDojo
+env_cfg_type: arx_x5
+action_type: ee
+seed: 0
+eval_batch: true
+num_envs: 1
+robot_action_dim_info: {arm_dim: [6, 6], ee_dim: [1, 1]}
+checkpoint_source: huggingface:OpenWAM/OpenWAM-Alpha-Sim-RoboDojo
+checkpoint_variant: 2c1302294e3ba8319bbdb2c803b7a27de9292d03
+action_horizon: 32
+replan_steps: 32
+device: cuda:0
+allow_dummy_policy: false
+# The station binds model_dir; the upstream resolver accepts it directly.
+model_dir: null
+backend_identity:
+  fields: [policy_name, task_name, checkpoint_source, checkpoint_variant, action_horizon, action_type]
+expected_artifacts:
+  repo_id: OpenWAM/OpenWAM-Alpha-Sim-RoboDojo
+  revision: 2c1302294e3ba8319bbdb2c803b7a27de9292d03
+  checkpoint_file: checkpoint_step_60000.safetensors
+  checkpoint_sha256: 78ca4ef5d2f6c8fa877bcae8b40c36b3d8700547fd5a708b472c4564e5f40abb
+  config_sha256: 8b05f4365dc020daf07c9fce1f61b653a7f6d16053baf1e7238b7b48403c67ca
+  norm_stats_sha256: 48bc266e0390f341c86dc3712501788c2bfdb75e44f005e41cc3e5820ace36a3

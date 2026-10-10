@@ -178,7 +178,8 @@ class AsyncSimRuntimeTests(unittest.TestCase):
 
         backend = FailedReset()
         with self.assertRaises(AsyncSimRemoteError) as caught:
-            AsyncSimRuntime(config(), client=backend, clock=FixedClock()).run_policy(seed=2)
+            clock = FixedClock()
+            AsyncSimRuntime(config(), client=backend, clock=clock, worker=FakeWorker(clock)).run_policy(seed=2)
         self.assertEqual(caught.exception.code, "unstable_layout")
         self.assertTrue(backend.closed)
 
@@ -318,6 +319,74 @@ class AsyncSimRuntimeTests(unittest.TestCase):
             elif event["kind"] == "command_ack":
                 self.assertFalse(pending, "serial inference overlapped a planned command")
         self.assertEqual(run["accepted_plans"], 2)
+
+    def test_simulation_control_slots_are_unique_when_wall_time_is_slow(self):
+        class SlowSim(FakeAsyncSim):
+            def read_snapshot(self, streams):
+                clock.time_ns += 200_000_000
+                self.sim_ts = round(self.sim_ts + .004, 6)
+                return super().read_snapshot(streams)
+
+        clock = FixedClock()
+        backend = SlowSim(clock_ns=clock.now_ns)
+        configured = config()
+        configured["run"]["simulation_time_timeline"] = True
+        configured["robot"]["control_hz"] = 25
+        configured["policy"]["action_dt_s"] = .04
+        configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
+        run = AsyncSimRuntime(configured, client=backend, clock=clock,
+                              worker=FakeWorker(clock)).run_policy(max_steps=8)
+        slots = [ack["control_slot"] for ack in run["command_acks"]]
+        self.assertEqual(len(slots), len(set(slots)))
+        self.assertGreater(run["loop_ticks"], run["steps"])
+        self.assertLess(backend.sim_ts, .4)
+
+    def test_safe_hold_waits_for_fixed_period_task_termination(self):
+        class HeldSim(FakeAsyncSim):
+            def health(self):
+                self.sim_ts += .04
+                result = super().health()
+                result["episode"]["state"] = "safe_hold" if self.sim_ts < .2 else "failed"
+                return result
+
+            def result(self):
+                result = super().result()
+                result["state"] = "failed"
+                return result
+
+        clock = FixedClock()
+        backend = HeldSim()
+        run = AsyncSimRuntime(config(), client=backend, clock=clock,
+                              worker=FakeWorker(clock)).run_policy(max_steps=8)
+        self.assertEqual(run["asyncsim_result"]["state"], "failed")
+        self.assertFalse(backend.commands)
+
+    def test_auxiliary_observations_keep_source_packet_identity(self):
+        class ExtraSim(FakeAsyncSim):
+            def read_snapshot(self, streams):
+                snapshot = super().read_snapshot([name for name in streams if name != "proprio.control"])
+                snapshot["packets"]["proprio.control"] = {"packet": {
+                    "episode_id": self.episode_id, "seq": 9, "capture_ts": .02,
+                    "available_ts": .03, "payload": {0: {"opening": [.2]}},
+                }}
+                return snapshot
+
+        configured = config()
+        configured["run"]["observation_streams"] = ["proprio.control"]
+        backend = ExtraSim()
+        # This fake accepts a subset read while synthesizing the auxiliary stream.
+        backend.streams = ["proprio.joint_state", "camera.head.rgb"]
+        backend.subscribe = lambda streams: None
+        runtime = AsyncSimRuntime(configured, client=backend, clock=FixedClock())
+        runtime.start()
+        try:
+            packet = runtime.observe().stream_packets["proprio.control"]
+            self.assertEqual(packet["seq"], 9)
+            self.assertEqual(packet["capture_ts"], .02)
+            self.assertEqual(packet["available_ts"], .03)
+            self.assertEqual(packet["payload"][0]["opening"], [.2])
+        finally:
+            runtime.close()
 
     def test_specialized_strategies_use_their_requests_and_canonical_timeline(self):
         for mode, request_type in (

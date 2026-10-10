@@ -83,6 +83,8 @@ class SensorFrame:
 class ObservationSnapshot:
     state: RobotState
     frames: dict[str, SensorFrame] = field(default_factory=dict)
+    # Visible auxiliary packets retain their source identity and capture time.
+    stream_packets: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

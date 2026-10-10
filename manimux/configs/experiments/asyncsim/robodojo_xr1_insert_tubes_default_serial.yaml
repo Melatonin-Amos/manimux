@@ -1,6 +1,7 @@
 run:
   task: insert_tubes
   instruction_stream: language.instruction
+  observation_streams: [proprio.joint_state]
   output_dir: ./data/asyncsim-xr1-insert-tubes-default-serial
   max_control_steps: 500
   max_command_submissions: 1000
@@ -35,6 +36,7 @@ policy:
     request_timeout_s: 120.0
   adapter:
     type: manimux.policy_adapter.xr1.arx_x5:XR1ArxX5Adapter
+    gripper_state_stream: proprio.joint_state
     camera_map: {cam_head: head, cam_left_wrist: left_wrist, cam_right_wrist: right_wrist}
   action_dt_s: 0.04
   horizon_policy_steps: 30

@@ -1,0 +1,67 @@
+run:
+  task: insert_key
+  instruction_stream: language.instruction
+  observation_streams: [proprio.ee_pose, proprio.joint_state]
+  output_dir: ./data/asyncsim-openwam-insert-key
+  max_control_steps: 300
+  max_command_submissions: 600
+  skip_unplanned_commands: true
+  simulation_time_timeline: true
+
+robot:
+  type: asyncsim
+  config: ../../embodiment/robot/arx_x5_dual.yaml
+  control_hz: 25
+  group_dims: {left_arm: 7, right_arm: 7}
+  options:
+    endpoint: ws://127.0.0.1:18865
+    state_stream: proprio.canonical_joint_state
+    state_keys: {left_arm: left_arm, right_arm: right_arm}
+    command_ttl_s: 35.0
+
+sensors:
+- name: robodojo_cameras
+  driver: asyncsim
+  options:
+    streams:
+      head: camera.cam_head.rgb
+      left_wrist: camera.cam_left_wrist.rgb
+      right_wrist: camera.cam_right_wrist.rgb
+
+policy:
+  worker: xpolicylab_ws
+  options:
+    server: ws://127.0.0.1:18866
+    action_format: pose
+    request_timeout_s: 300.0
+  adapter:
+    type: manimux.policy_adapter.openwam.arx_x5:OpenWAMArxX5Adapter
+    camera_map: {cam_head: head, cam_left_wrist: left_wrist, cam_right_wrist: right_wrist}
+    pose_state_stream: proprio.ee_pose
+    gripper_state_stream: proprio.joint_state
+    action_semantics: absolute_env_relative_xyz_wxyz
+    # RoboDojo dual_x5.yml / robodojo-eef20-v1. xyz metres, quaternion wxyz.
+    base_poses:
+      left_arm: [-0.3, -0.45, 0.765, 0.7071067811865476, 0.0, 0.0, 0.7071067811865476]
+      right_arm: [0.3, -0.45, 0.765, 0.7071067811865476, 0.0, 0.0, 0.7071067811865476]
+  action_dt_s: 0.04
+  horizon_policy_steps: 32
+  timeout_s: 300.0
+  startup_timeout_s: 1200.0
+  inference_delay_s: 0.0
+
+inference:
+  algorithm: manimux
+  inference_schedule: serial
+  chunk_policy_steps: 32
+  action_start_mode: first_step_when_ready
+  commit_lead_s: 0.0
+  max_plan_age_s: 300.0
+  blend_policy_steps: 0
+
+executor:
+  type: direct
+
+policy_server:
+  config: ../../policy/openwam/robodojo/alpha_sim_arx_x5_ee.yaml
+  task_name: insert_key

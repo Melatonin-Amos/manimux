@@ -19,6 +19,19 @@ actual rollout has not been verified against a checkpoint.
 Do not route an `asyncsim` experiment through
 `EdgeRuntime` or the physical robot factory.
 
+With `run.simulation_time_timeline: true`, command sampling/submission is gated by
+`robot.control_hz` periods of simulator time. Wall time paces polling and enforces
+real timeouts; missed periods are logged and skipped. Worker startup precedes the
+episode reset so it does not consume evaluation time. Fixed-period RoboDojo task
+evaluation continues while inference or safe hold keeps the current target.
+
+`run.observation_streams` selects additional visible AsyncSim packets from the same
+atomic snapshot. `ObservationSnapshot.stream_packets` preserves their source
+identity and capture/availability timestamps for policy adapters. The canonical
+`state` remains measured executor feedback; an adapter may build a separate policy
+view when the training observation uses different semantics, such as an applied
+gripper control target. Model-specific mapping stays in the policy adapter.
+
 Read `manimux/runtime/inference.py` (`InferenceStrategy`,
 `build_inference_strategy`) and the selected strategy, such as
 `runtime/rtc/strategy.py`. A new inference algorithm controls when to submit,
