@@ -1,13 +1,28 @@
-control_profile: ../../../embodiment/robot/yam_control.yaml
+control_profile: ../../../embodiment/robot/yam_control_unlimited.yaml
 
 run:
   task: Put the bottles into the bin.
   output_dir: ./data/experiments/pi05-put-bottles-joint-step30000/rtc
   max_control_steps: 12000
+  warmup_before_start: true
+  experiment_template:
+    name: Put bottles - ten layouts, three repeats
+    layout_ids: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"]
+    repeats: 3
+    require_reference: true
+  sensor_reading:
+    mode: background
+    poll_hz: 100.0
+    max_frame_age_s: 0.5
+    startup_timeout_s: 5.0
+    shutdown_timeout_s: 2.0
+
+evaluation:
+  config: ../../../evaluation/put_bottles.yaml
 
 robot:
   config: ../../../embodiment/robot/yam_dual.yaml
-  control_hz: 30.0
+  control_hz: 100.0  # Interpolate 30 Hz action points for 100 Hz execution.
   options:
     move_to_start_on_connect: true
     start_joints:
@@ -43,7 +58,7 @@ sensors:
     camera_names: [d405_left, d405_front, d405_right]
 
 policy:
-  action_dt_s: 0.03333333333333333  # 相邻模型动作点的间隔（秒）；不决定下发频率。
+  action_dt_s: 0.03333333333333333  # Interval between adjacent model action points in seconds; independent of command frequency.
   worker: xpolicylab_ws
   service: policy
   adapter:
@@ -61,10 +76,10 @@ policy:
     action_format: joint
     request_timeout_s: 10.0
 
-viewer:
+robogui:
   enabled: true
   robot: yam
-  policy_label: Pi05 YAM put-bottles joint step-30000 - RTC max 12
+  policy_label: Pi05 YAM put-bottles joint step-30000 - RTC min 16
 
 recording:
   enabled: true
@@ -73,11 +88,10 @@ recording:
 # Inference controls requests and chunk handoff; the executor controls smoothing and limits.
 inference:
   algorithm: rtc
-  config: ../../../inference/yam_rtc.yaml
+  config: ../../../inference/aligned/yam_rtc.yaml
 
 executor:
-  type: smooth
-  config: ../../../executor/yam_smooth_control_profile.yaml
+  type: direct
 
 policy_server:
   config: ../../../policy/pi05/yam/put-bottles/joint-step30000.yaml

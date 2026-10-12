@@ -8,7 +8,7 @@ The scripts are grouped by responsibility:
 
 - `datasets/`: prepare assets and statistics consumed by runtime inference.
 - `validation/`: offline probes, configuration checks, and diagnostic audits.
-- `media/`: viewer recording and other presentation helpers.
+- `media/`: robogui recording and other presentation helpers.
 
 Policy launchers live in `manimux/servers/`; model implementations and the shared
 policy server belong to XPolicyLab.
@@ -21,3 +21,7 @@ envs/yam/.venv/bin/python manimux/servers/pi05.py --check
 python scripts/datasets/compute_yam_aac_ee_stats.py --help
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py --help
 ```
+
+For self-contained chunk speed reports with online execution, offline Pi05
+predictions, wrist images and inference latency, see the
+[chunk speed diagnostics guide](../.agents/skills/manimux-experiments/references/chunk-speed.md).

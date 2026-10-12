@@ -12,13 +12,11 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 XPOLICY_ROOT = REPO_ROOT / "XPolicyLab"
 XR1_ROOT = XPOLICY_ROOT / "policy/Xiaomi_Robotics_1/xiaomi_robotics_1/xr1"
-DEFAULT_EXPERIMENT = (
-    REPO_ROOT
-    / "manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml"
-)
 
 
 def _shape(value: object) -> tuple[int, ...]:
@@ -63,10 +61,10 @@ def _validate(config: dict[str, Any]) -> dict[str, Any]:
         "policy_name": "Xiaomi_Robotics_1",
         "protocol": "ws",
         "action_type": "ee",
-        "output_format": "packed_ee_delta",
+        "output_format": "xpolicylab",
         "ego_view_mode": "black",
         "observation_profile": "tianji_taccap_two_wrist_black_ego",
-        "action_semantics": "anchor_relative_ee_delta",
+        "action_semantics": "absolute_per_arm_base_xyz_wxyz",
     }
     mismatches = {
         name: (config.get(name), value)
@@ -75,6 +73,9 @@ def _validate(config: dict[str, Any]) -> dict[str, Any]:
     }
     if mismatches:
         raise ValueError(f"XR-1 Tianji server contract mismatch: {mismatches}")
+    reframe = config.get("eef_reframe_matrix")
+    if reframe is None or not np.array_equal(np.asarray(reframe, dtype=float), np.eye(3)):
+        raise ValueError("eef_reframe_matrix must be the identity for Tianji TCP FK")
     if int(config.get("action_length", 0)) != 30:
         raise ValueError("action_length must be 30 for the pass-ball checkpoint")
     if int(config.get("action_horizon", 0)) != 30:
@@ -140,6 +141,7 @@ def _validate(config: dict[str, Any]) -> dict[str, Any]:
         "processor": processor_value,
         "processor_status": processor_status,
         "model_action_shape": [30, 60],
+        "wire_action_format": "xpolicylab_absolute_ee",
         "runtime_action_shape": [30, 16],
         "ego_view": "synthetic_pure_black_rgb",
         "required_physical_cameras": ["left_wrist", "right_wrist"],
@@ -160,7 +162,7 @@ def _prepare_imports() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--experiment", type=Path, default=DEFAULT_EXPERIMENT)
+    parser.add_argument("--experiment", type=Path, required=True)
     parser.add_argument("--local", type=Path)
     parser.add_argument(
         "--checkpoint",
@@ -173,9 +175,11 @@ def main() -> int:
     args = parser.parse_args()
 
     _prepare_imports()
-    from manimux.cli import read_experiment
+    from manimux.cli import read_experiment, resolve_local_path
 
-    experiment = read_experiment(args.experiment, local=args.local)
+    experiment = read_experiment(
+        args.experiment, local=resolve_local_path(args.experiment, args.local)
+    )
     config = dict(experiment["policy_server"])
     if args.checkpoint is not None:
         config["checkpoint_path"] = str(args.checkpoint)
@@ -198,7 +202,7 @@ def main() -> int:
         raise RuntimeError(
             "policy environment is missing dependencies: " + ", ".join(missing)
         )
-    from XPolicyLab.setup_policy_server import main as serve
+    from manimux.policies.xpolicylab.server import serve
 
     serve(config)
     return 0

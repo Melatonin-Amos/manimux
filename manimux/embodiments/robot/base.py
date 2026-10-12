@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -25,6 +25,7 @@ from manimux.kinematics.end_effector import Frame, attach_end_effector
 from manimux.kinematics.robot import RobotKinematics
 from manimux.kinematics.tool import FixedToolGeometry
 from manimux.plugins import load_plugin
+from manimux.timing import stage, timed, timed_lock, timing_scope
 from manimux.types import RobotCommand, RobotState, SensorFrame
 
 
@@ -143,10 +144,18 @@ class RobotBase(ABC):
         if not self._ready:
             raise RuntimeError("robot is not connected")
 
+    @timed("robot_get_state")
     def get_state(self) -> RobotState:
-        with self._lock:
+        with timing_scope("robot_get_state"), timed_lock(self._lock, "assembly_lock_wait"):
             self._require_ready()
-            feedback = {controller: controller.get_states() for controller in self._controllers}
+            feedback = {}
+            for index, controller in enumerate(self._controllers):
+                name = f"controller_{index}.get_states"
+                with (
+                    stage(name, controller_type=type(controller).__name__),
+                    timing_scope(name),
+                ):
+                    feedback[controller] = controller.get_states()
             groups, timestamps = {}, []
             for name, arm in self.arm_components.items():
                 state = feedback[arm.controller][arm.channel]
@@ -166,8 +175,9 @@ class RobotBase(ABC):
             self._sequence += 1
             return RobotState(groups, min(timestamps), self._sequence)
 
+    @timed("robot_send_command")
     def send_command(self, command: RobotCommand) -> None:
-        with self._lock:
+        with timing_scope("robot_send_command"), timed_lock(self._lock, "assembly_lock_wait"):
             self._require_ready()
             if set(command.groups) != set(self.arm_components):
                 raise ValueError("command must contain all configured groups, without extras")
@@ -191,8 +201,13 @@ class RobotBase(ABC):
                 controller.validate_commands(batch)
             try:
                 self.get_state()
-                for controller, batch in batches.items():
-                    controller.send_commands(batch)
+                for index, (controller, batch) in enumerate(batches.items()):
+                    name = f"controller_{index}.send_commands"
+                    with (
+                        stage(name, controller_type=type(controller).__name__),
+                        timing_scope(name),
+                    ):
+                        controller.send_commands(batch)
                 if self._end_effector_control:
                     for name, tool_command in tool_commands.items():
                         self.end_effectors[name].send_command(tool_command)
@@ -205,6 +220,88 @@ class RobotBase(ABC):
 
     def home(self) -> None:
         raise NotImplementedError("home trajectory not configured; use the runtime motion planner")
+
+    # Idle recovery: RoboGUI may request these between rollouts. Each request builds
+    # a fresh, disconnected assembly and calls the matching method below.
+
+    @property
+    def recovery_actions(self) -> tuple[str, ...]:
+        """Supported idle recovery actions: any of "clear_error", "home" and "drag"."""
+        return ()
+
+    @property
+    def drag_selections(self) -> Mapping[str, tuple[str, ...]]:
+        """RoboGUI drag choices, mapping each label to the robot groups it moves."""
+        return MappingProxyType({})
+
+    def clear_errors(self) -> None:
+        """Reset latched controller faults; call on a disconnected assembly."""
+        raise NotImplementedError("this robot does not support clearing controller faults")
+
+    def drag(
+        self,
+        groups: Sequence[str],
+        stop: threading.Event,
+        on_active: Callable[[], None] | None = None,
+    ) -> None:
+        """Hand-guide the named groups until stop is set; on_active marks drag entry."""
+        raise NotImplementedError("this robot does not support hand-guided drag")
+
+    def recover_home(self, stop: threading.Event | None = None) -> None:
+        """Connect, Home and close; idle Home implementations must support cancellation."""
+        if stop is not None:
+            raise NotImplementedError("this robot does not support cancellable idle Home")
+        self.connect()
+        try:
+            self.home()
+        except Exception as error:
+            try:
+                self.close()
+            except Exception as cleanup_error:
+                raise ExceptionGroup("home and cleanup failed", [error, cleanup_error]) from None
+            raise
+        self.close()
+
+    def recover_drag(
+        self,
+        groups: Sequence[str],
+        stop: threading.Event,
+        on_active: Callable[[], None] | None = None,
+    ) -> None:
+        """Idle drag on a disconnected assembly; robots add any preparation they need."""
+        self.drag(groups, stop, on_active)
+
+    def sent_command_snapshots(self) -> dict:
+        """Read optional controller send evidence without issuing hardware reads."""
+        with self._lock:
+            snapshots = {}
+            for controller in self._controllers:
+                getter = getattr(controller, "sent_command_snapshots", None)
+                snapshots[controller] = getter() if callable(getter) else {}
+            return {
+                name: snapshots[arm.controller][arm.channel]
+                for name, arm in self.arm_components.items()
+                if arm.channel in snapshots[arm.controller]
+            }
+
+    def runtime_metadata(self) -> dict:
+        """Snapshot optional controller provenance without polling or commanding hardware."""
+        controllers = {}
+        for controller in self._controllers:
+            method = getattr(controller, "runtime_metadata", None)
+            try:
+                controllers[controller] = method() if callable(method) else {
+                    "available": False, "reason": "controller_metadata_not_supported",
+                }
+            except Exception as exc:
+                controllers[controller] = {"available": False, "reason": type(exc).__name__}
+        return {
+            "connected": self._ready,
+            "execute": self._execute,
+            "groups": {
+                name: controllers[arm.controller] for name, arm in self.arm_components.items()
+            },
+        }
 
     def start_sensors(self) -> None:
         """Explicitly start owned sensors; connect() does not claim camera devices."""
@@ -235,7 +332,7 @@ class RobotBase(ABC):
             frames = {}
             for name, sensor in self.sensors.items():
                 reading = sensor.read()
-                # 物理组件用装配名；网络数据源保留每帧原有的逻辑相机名。
+                # Physical components use assembly names; network sources retain each frame's logical camera name.
                 frames.update({name: reading} if isinstance(reading, SensorFrame) else reading)
             return frames
 
@@ -298,14 +395,14 @@ class RobotBase(ABC):
 
 # These data classes belong to robot assembly. They neither connect devices nor
 # replace a component's official solver; no separate description/assembly layer
-# is needed to share them with Viewer and policy adapters.
+# is needed to share them with RoboGUI and policy adapters.
 @dataclass(frozen=True, slots=True)
 class MountedGroup:
     arm_name: str
     arm: ArmModel
     end_effector_name: str | None
     end_effector: EndEffectorModel | None
-    mount: Frame  # 法兰到独立末端的真实安装关系，参与 TCP 计算。
+    mount: Frame  # Physical flange-to-tool mounting transform used in TCP calculations.
     kinematics: ManipulatorKinematicsBase
 
     def visual_end_effector(self):
@@ -346,7 +443,7 @@ def _read_mapping(path: Path) -> dict:
 
 
 def _mount(value) -> Frame:
-    # Frame 负责读取 xyz/rpy；这里只补充刚体变换的数值约束。
+    # Frame reads xyz/rpy; only add numerical rigid-transform constraints here.
     frame = Frame.model_validate(value)
     # Reuse the common rigid-transform validator, including finite values.
     rigid_transform(frame.matrix(), "mount")
@@ -355,10 +452,10 @@ def _mount(value) -> Frame:
 
 @dataclass(frozen=True, slots=True)
 class RobotModel:
-    """Offline assembly shared by control, adapters and Viewer.
+    """Offline assembly shared by control, adapters and RoboGUI.
 
     Each arm keeps its own base frame, with an optional flange-mounted tool.
-    Scene placement belongs to Viewer configuration and is never loaded here.
+    Scene placement belongs to RoboGUI configuration and is never loaded here.
     Sensors may declare an unknown mount (null); no camera transform is inferred.
     """
 
@@ -392,8 +489,8 @@ class RobotModel:
             )
             kind = component["type"]
             component["class"] = factory
-            # 手臂 FK/IK 自带基座坐标；只解析实际工具或相机的安装关系。
-            # Viewer 的摆放参数不进入本体模型。
+            # Arm FK/IK includes the base frame; resolve only physical tool or camera mounts.
+            # RoboGUI scene placement does not enter the embodiment model.
             if kind == "end_effector" or (kind == "sensor" and entry.get("mount") is not None):
                 mounts[component_name] = _mount(entry.get("mount"))
             if kind == "arm":
@@ -423,8 +520,8 @@ class RobotModel:
                 mount = mounts[tool_name]
                 used_tools.add(tool_name)
             if tool is None and isinstance(arm.kinematics, ManipulatorKinematicsBase):
-                # null 表示没有额外挂载工具。一体组件已定义自己的 TCP、夹爪和
-                # 坐标布局，直接复用，避免再加一次工具偏移或丢掉夹爪坐标。
+                # null means no additional tool. Integrated components already define their TCP, gripper and
+                # coordinate layout; reuse these to avoid duplicating tool offsets or losing the gripper coordinate.
                 kin = arm.kinematics
             else:
                 geometry = (
@@ -439,7 +536,7 @@ class RobotModel:
                     geometry,
                     arm_coordinates=arm.coordinates,
                     mount=mount.matrix(),
-                    # 上面的 mount 仅连接法兰和工具；输出仍相对该臂基座。
+                    # The mount above connects flange and tool only; output remains relative to the arm base.
                     base_frame=arm.base_frame,
                     position_tolerance=None,
                 )

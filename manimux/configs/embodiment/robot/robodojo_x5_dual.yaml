@@ -1,0 +1,9 @@
+name: robodojo-x5-dual
+components:
+  left_x5: {config: ../arm/robodojo_x5.yaml}
+  right_x5: {config: ../arm/robodojo_x5.yaml}
+groups:
+  left_arm: {arm: left_x5, end_effector: null}
+  right_arm: {arm: right_x5, end_effector: null}
+action_contract:
+  group_prefixes: {left_arm: left, right_arm: right}

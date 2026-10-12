@@ -604,6 +604,10 @@ realsense = [
 replay = [
     { name = "av" },
 ]
+starvla = [
+    { name = "msgpack" },
+    { name = "websockets" },
+]
 tianji-diff-ik = [
     { name = "osqp" },
 ]
@@ -625,6 +629,7 @@ dev = [
 requires-dist = [
     { name = "av", marker = "extra == 'replay'", specifier = ">=12" },
     { name = "mink", marker = "extra == 'arx-x5-ik'", specifier = ">=1.3,<2" },
+    { name = "msgpack", marker = "extra == 'starvla'", specifier = ">=1.0.8" },
     { name = "msgpack", marker = "extra == 'xpolicylab'", specifier = ">=1.0.8" },
     { name = "msgpack-numpy", marker = "extra == 'xpolicylab'", specifier = ">=0.4.8" },
     { name = "mujoco", specifier = ">=3.3" },
@@ -638,11 +643,12 @@ requires-dist = [
     { name = "quadprog", marker = "extra == 'arx-x5-ik'", specifier = ">=0.1.13,<0.2" },
     { name = "scipy", specifier = ">=1.13" },
     { name = "viser", specifier = ">=1.0.30" },
+    { name = "websockets", marker = "extra == 'starvla'", specifier = ">=15" },
     { name = "websockets", marker = "extra == 'xpolicylab'", specifier = ">=14" },
     { name = "yourdfpy", specifier = ">=0.0.58" },
     { name = "zarr", specifier = ">=2.18,<3" },
 ]
-provides-extras = ["arx-x5-ik", "realsense", "tianji-diff-ik", "replay", "xpolicylab"]
+provides-extras = ["arx-x5-ik", "realsense", "tianji-diff-ik", "replay", "starvla", "xpolicylab"]
 
 [package.metadata.requires-dev]
 dev = [

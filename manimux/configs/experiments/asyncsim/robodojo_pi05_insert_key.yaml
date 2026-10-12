@@ -44,11 +44,10 @@ policy:
   startup_timeout_s: 1200.0
 
 inference:
-  algorithm: manimux
+  algorithm: async
   inference_schedule: single_inflight
   refill_threshold_s: 0.08
-  action_start_mode: skip_elapsed_steps
-  commit_lead_s: 0.0
+  action_start_mode: drop_infer_latency
   max_plan_age_s: 30.0
   blend_policy_steps: 0
   max_chunk_policy_steps: 50

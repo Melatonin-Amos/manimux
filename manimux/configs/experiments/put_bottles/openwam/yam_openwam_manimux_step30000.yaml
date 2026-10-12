@@ -76,7 +76,7 @@ policy:
     connect_timeout_s: 30.0
     request_timeout_s: 300.0
 
-viewer:
+robogui:
   enabled: true
   robot: yam
   policy_label: OpenWAM YAM put-bottles step-30000 - Serial first 12
@@ -87,7 +87,7 @@ recording:
 
 # Inference controls requests and chunk handoff; the executor controls smoothing and limits.
 inference:
-  algorithm: manimux
+  algorithm: serial
   config: ../../../inference/yam_manimux_single.yaml
   chunk_policy_steps: 12
   inference_schedule: serial
@@ -96,8 +96,7 @@ inference:
   action_start_mode: first_step_when_ready
 
 executor:
-  type: smooth
-  config: ../../../executor/yam_smooth_standard.yaml
+  type: direct
 
 # Device serials and service addresses come from the shared station file.
 camera_server:

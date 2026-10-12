@@ -213,7 +213,7 @@ class ActionDecoderClient:
             return DecodeResult(response, None, ";".join(errors))
         ordered = [self._pieces[p] for p in self._partitions]
         merged = ordered[0][0]
-        # 各分区返回 ActionChunk；合并前只核对时间、动作语义和分组是否一致。
+        # Each partition returns ActionChunk; check timing, action semantics and groups before merging.
         fields = (
             "request_seq",
             "observation_time_ns",
@@ -228,7 +228,30 @@ class ActionDecoderClient:
                 raise ValueError("action decode partitions have mismatched contracts")
             if merged.groups.keys() & other.groups.keys():
                 raise ValueError("action decode partitions overlap")
+            # Every partition plans the handoff over all groups, so the plans must agree.
+            if (merged.handoff is None) != (other.handoff is None) or (
+                merged.handoff is not None
+                and (merged.handoff.plan_id, merged.handoff.time_ns)
+                != (other.handoff.plan_id, other.handoff.time_ns)
+            ):
+                raise ValueError("action decode partitions have mismatched handoffs")
             merged.groups.update(other.groups)
+            merged_runtime = merged.runtime_trajectory
+            other_runtime = other.runtime_trajectory
+            if (merged_runtime is None) != (other_runtime is None):
+                raise ValueError("action decode partitions have mismatched runtime trajectories")
+            if merged_runtime is not None and other_runtime is not None:
+                if (
+                    merged_runtime.start_time_ns != other_runtime.start_time_ns
+                    or merged_runtime.dt_ns != other_runtime.dt_ns
+                    or merged_runtime.horizon_steps != other_runtime.horizon_steps
+                ):
+                    raise ValueError(
+                        "action decode partitions have mismatched runtime trajectories"
+                    )
+                if merged_runtime.groups.keys() & other_runtime.groups.keys():
+                    raise ValueError("action decode runtime trajectories overlap")
+                merged_runtime.groups.update(other_runtime.groups)
             merged.hold_from_step.update(other.hold_from_step)
             for key, value in other.metadata.items():
                 if key not in merged.metadata:

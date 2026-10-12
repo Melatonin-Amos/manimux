@@ -5,9 +5,9 @@
 #        python manimux/servers/sapolicy.py --config manimux/configs/policy/sapolicy/yam/abc-bottles.yaml
 #   2. camera server at 640x480:
 #        envs/yam/.venv/bin/manimux-camera-server --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
-#   3. viewer as in docs/sapolicy-yam-runbook.md
+#   3. robogui as in .agents/skills/manimux-inference/references/deployment/sapolicy-yam.md
 #
-# Safety: connects paused when viewer.enabled; operator must Start at the robot.
+# Safety: connects paused when robogui.enabled; operator must Start at the robot.
 run:
   task: put the plastic bottles in the bin
   output_dir: ./data
@@ -104,7 +104,7 @@ policy:
     connect_timeout_s: 5.0
     request_timeout_s: 1.0
 
-viewer:
+robogui:
   enabled: true
   robot: yam
   policy_label: SAPolicy bottles 3cam TCP · XPolicyLab WS
@@ -115,26 +115,14 @@ recording:
 
 # Inference controls requests and chunk handoff; the executor controls smoothing and limits.
 inference:
-  algorithm: manimux
+  algorithm: async
   config: ../../../inference/yam_manimux_single.yaml
   refill_threshold_s: 0.2
   max_plan_age_s: 2.0
   blend_policy_steps: 4
 
 executor:
-  type: smooth
-  config: ../../../executor/yam_smooth_arm_standard.yaml
-  smooth:
-    position_limit_abs: 4.0
-    gripper:
-      close_threshold: 0.55
-      open_threshold: 0.85
-      min_closed_s: 10.0
-      open_confirm_s: 0.5
-      max_velocity: 3.0
-      max_acceleration: 12.0
-      closed_value: 0.0
-      open_value: 1.0
+  type: direct
 
 # Device serials and service addresses come from the shared station file.
 camera_server:

@@ -10,7 +10,7 @@ run:
 
 robot:
   type: asyncsim
-  config: ../../embodiment/robot/arx_x5_dual.yaml
+  config: ../../embodiment/robot/robodojo_x5_dual.yaml
   control_hz: 25
   group_dims: {left_arm: 7, right_arm: 7}
   options:
@@ -51,8 +51,7 @@ inference:
     initial_delay_policy_steps: 0
     delay_buffer_size: 10
     beta: 9.1
-  action_start_mode: skip_elapsed_steps
-  commit_lead_s: 0.0
+  action_start_mode: drop_infer_latency
   max_plan_age_s: 120.0
   blend_policy_steps: 0
 

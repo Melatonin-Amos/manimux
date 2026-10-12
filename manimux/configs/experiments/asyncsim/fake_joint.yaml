@@ -33,9 +33,8 @@ policy:
   inference_delay_s: 0.0
 
 inference:
-  algorithm: manimux
+  algorithm: async
   action_start_mode: first_step_when_ready
-  commit_lead_s: 0.0
   blend_policy_steps: 0
 
 executor:

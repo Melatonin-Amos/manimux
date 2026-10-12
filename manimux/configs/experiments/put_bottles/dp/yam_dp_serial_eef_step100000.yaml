@@ -69,7 +69,7 @@ policy:
     server: ws://127.0.0.1:8520
   service: policy_dp
 
-viewer:
+robogui:
   enabled: true
   robot: yam
   policy_label: DP YAM EEF 100k - Serial 6
@@ -79,7 +79,7 @@ recording:
   video_fps: 30.0
 
 inference:
-  algorithm: manimux
+  algorithm: serial
   strategy: manimux.policy_adapter.dp.yam:HistoryStrategy
   history:
     period_s: 0.03333333333333333
@@ -88,15 +88,13 @@ inference:
     camera_skew_s: 0.04
     max_age_s: 0.2
   inference_schedule: serial
-  commit_lead_s: 0.0
   max_plan_age_s: 2.0
   blend_policy_steps: 0
   action_start_mode: first_step_when_ready
   chunk_policy_steps: 6
 
 executor:
-  type: smooth
-  config: ../../../executor/yam_smooth_standard.yaml
+  type: direct
 
 policy_server:
   config: ../../../policy/dp/yam/put-bottles/eef-step100000.yaml

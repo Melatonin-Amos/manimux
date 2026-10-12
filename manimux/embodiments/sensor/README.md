@@ -32,3 +32,46 @@ must explicitly set `height: 360`, `enable_depth: true`, `align_depth: true`, an
 For a new camera, add the implementation and component YAML, then test deferred
 startup, RGB conversion, cached metadata, failure cleanup, and restart with a
 fake SDK. Do not open hardware during imports, construction, or model loading.
+
+## Background runtime reading
+
+`SensorReader` in `reader.py` operates on the existing `SensorBase` interface,
+independently of camera vendor, robot or policy. Configure it in the experiment:
+
+```yaml
+run:
+  sensor_reading:
+    mode: background         # inline remains the default and comparison mode
+    poll_hz: 100.0           # source polling, not camera acquisition or control Hz
+    max_frame_age_s: 0.5
+    startup_timeout_s: 5.0
+    shutdown_timeout_s: 2.0
+```
+
+One runtime thread owns `start/read/close` for all configured sources. A network
+bundle remains one request for all selected cameras. The control loop only reads
+the latest complete snapshot; it never waits for a new frame after startup. The
+reader waits for the first complete snapshot before robot connection, publishes
+owned read-only RGB arrays, retains capture times/frame identities on cached reads,
+and reports background exceptions or expired frames to the control loop. An empty
+source during startup is retried; losing frame names after readiness is an error.
+
+Polling and image copies occur outside the snapshot lock. No unbounded frame queue
+is introduced. Sources must bound their blocking I/O below the configured shutdown
+timeout. A shutdown timeout reports failure rather than closing a socket/device
+concurrently with a blocked read; its owning thread performs cleanup when I/O ends.
+The reader does not modify robot states, timeline timestamps, action intervals or
+the control loop's sleep policy.
+
+The REQ/REP camera driver retains the server's existing Unix capture timestamps,
+converts them with a fixed local Unix-to-monotonic offset, and uses capture time as
+frame identity because this wire format does not include a hardware frame counter.
+Repeated replies for the same capture keep the same timestamp and identity. Camera
+server and runtime hosts must have synchronized Unix clocks; both clocks must be
+stable. A local offset jump (default tolerance `options.clock_jump_tolerance_s: 0.02`)
+or backward source time fails visibly. Transport receipt time is not capture time.
+
+`max_frame_age_s` checks the source capture age on every cached read, not the last
+successful fetch age. Retaining source timestamps also lets recordings distinguish
+new frames from repeated reads. It does not make image capture simultaneous with
+robot feedback or change the existing inference observation-time anchor.

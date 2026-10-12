@@ -1,7 +1,7 @@
 # Policies: model, client and robot adapter are separate
 
-Paths are relative to the repository root. Read
-`docs/component-policy-development.md` for payload examples and migration limits.
+Source paths below are relative to the repository root. Read
+`.agents/skills/manimux-development/references/components.md` for payload examples and migration limits.
 
 ## Classify the integration first
 
@@ -65,6 +65,13 @@ Do not claim a real framework integration exists because a synthetic client pass
 the interface test. Verify its native lifecycle, identity/capability exchange, reset
 behavior and response decoding through the public client boundary.
 
+The StarVLA peer implementation uses `policy.worker: starvla_ws` and
+`manimux/policies/starvla/`. Its independently versioned `StarVLA/` service owns
+loading, normalization and sampling; the client owns native MessagePack, reset and
+identity checks. See `.agents/skills/manimux-inference/references/deployment/starvla-offline.md` for explicit joint/EEF
+contracts and offline examples. AAC selection operates on grouped joint candidates
+in `manimux/policies/aac.py`; each backend converts its own wire format before selection.
+
 The grouped payload reader is `manimux/policies/actions.py`; the XPolicyLab codec
 in `manimux/policies/xpolicylab/codec.py` selects grouped or native output:
 
@@ -79,7 +86,7 @@ The XPolicyLab client selects these through `policy.options.action_format`; its
 default is currently `native`. Migrated joint/pose adapters therefore need the
 matching explicit experiment option. Wire field names belong in the client/codec;
 do not import an XPolicyLab codec into a new backend-independent action adapter.
-Retain action semantics and sampler metadata such as AAC/PAINT/DVAC/AutoHorizon
+Retain action semantics and sampler metadata such as AAC/PAINT/AutoHorizon
 fields. Translation must not silently renormalize or reinterpret the action.
 
 ## Observation and action adapter
@@ -114,6 +121,37 @@ do not instantiate a second default body or pass a hardware connection. See
 adapters may have different solver requirements; preserve whole-chunk rejection
 versus per-step hold behavior. SAPolicy's bounded IK must not be replaced as a
 side effect of a different model's integration.
+
+### Tianji waypoint handoff and IK seeds
+
+The shared `TianjiAbsoluteEEAdapter` (including Pi05) supports the same
+`WaypointHandoff` planner as UMI-DP. Opt in with `policy.adapter.handoff_waypoint`
+(`max_pos_speed_m_s`, `max_rot_speed_rad_s`), `ik_backend: diff` and
+`execute_diff_ik_substeps: true`; select `inference.handoff: waypoint` with
+`blend_policy_steps: 0`. Both ManiMux and RTC support `handoff_skip_steps`; see the
+[runtime contract](runtime-config.md#rtc-waypoint-handoff-skip) for RTC guidance
+alignment and effective-horizon accounting. The first chunk,
+or a chunk without a valid outgoing reference window, keeps the request-observation
+IK seed. Subsequent handoffs seed from the outgoing runtime reference at the aligned
+handoff time and decode only the future source suffix plus its dense lead-in.
+This does not change measured model inputs, pose anchors or first-action offsets.
+Plan metadata records the actual `ik_seed_source`, `ik_seed_time_ns` and, for a
+reference seed, `ik_seed_plan_id`. The timeline rejects a missed handoff or a changed
+reference instead of committing a discontinuous replacement.
+
+## Model layout configuration
+
+For XPolicyLab models, declare `robot_action_dim_info` (`arm_dim`, `ee_dim`) and
+`num_envs` in the policy recipe and consume the complete config in the shared
+framework dimension helpers. `policy_server.config` and its inline overrides are
+the deployment path; do not add a root `env_cfg/` directory or derive model dimensions
+from a robot SDK. `env_cfg_type` may still identify checkpoints/profiles, but explicit
+layouts do not use it for a filesystem lookup. See the
+[recipe contract](../../../../manimux/configs/policy/README.md#model-layout-passed-to-xpolicylab).
+Test experiment overrides, standalone recipes and unchanged pack/unpack results.
+Model representations and physical joints can differ; the action adapter owns that
+conversion. Existing benchmark-only framework adapters retain their legacy registry
+until explicitly migrated; they are not templates for new ManiMux deployments.
 
 ## Verify the connection between layers
 

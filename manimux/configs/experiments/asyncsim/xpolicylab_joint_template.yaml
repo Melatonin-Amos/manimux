@@ -40,9 +40,8 @@ policy:
   horizon_policy_steps: 4
 
 inference:
-  algorithm: manimux
+  algorithm: async
   action_start_mode: first_step_when_ready
-  commit_lead_s: 0.0
   blend_policy_steps: 0
 
 executor:

@@ -15,11 +15,16 @@ import numpy as np
 from manimux.clock import Clock, SystemClock
 from manimux.embodiments.robot import RobotBase, build_robot
 from manimux.embodiments.sensor import build_sensor
-from manimux.policies import ActionDecoderClient, PolicyCapabilities
+from manimux.embodiments.sensor.reader import SensorReader
+from manimux.evaluation.identity import rollout_identity, start_identity
+from manimux.evaluation.rubric import evaluation_parameters
+from manimux.policies import ActionDecoderClient, PolicyCapabilities, metadata_mismatches
 from manimux.policies.base import action_interval
 from manimux.policies.worker import PolicyWorkerClient
 from manimux.policy_adapter import build_policy_adapter
 from manimux.recording import EpisodeRecorder
+from manimux.recording.provenance import state_evidence
+from manimux.robogui import RoboGUIBridge
 from manimux.runtime.decode_forecast import DecodeForecast
 from manimux.runtime.diagnostics import build_plan_boundary_payload
 from manimux.runtime.executors import DirectExecutor, Executor, MPCExecutor, SmoothExecutor
@@ -27,21 +32,26 @@ from manimux.runtime.inference import (
     DefaultChunkStrategy,
     InferenceStrategy,
     RequestState,
+    StrategyChunkSelector,
+    build_inference_strategy,
+    decode_strategy_action,
     prepare_strategy_chunk,
+    seed_strategy_warmup,
 )
 from manimux.runtime.safety import RuntimeState, SafetyGuard
+from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
+from manimux.runtime.warmup import PolicyWarmup
+from manimux.timing import LoopTiming, stage
 from manimux.types import (
     ActionContext,
     GroupVector,
     ObservationSnapshot,
     RobotCommand,
     RobotState,
-    SensorFrame,
     copy_action_chunk,
     copy_group_vector,
 )
-from manimux.viewer import ViewerBridge
 
 logger = logging.getLogger(__name__)
 
@@ -114,11 +124,13 @@ def _exception_detail(exc: BaseException, *, depth: int = 3) -> str:
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
+    """Runtime completion only; human task outcomes are stored separately."""
+
     episode_dir: Path
     steps: int
     accepted_plans: int
     rejected_plans: int
-    success: bool
+    run_completed: bool
     terminal_reason: str
 
 
@@ -134,32 +146,6 @@ def _next_rollout_id(run_dir: Path) -> str:
     return f"rollout-{highest + 1:03d}"
 
 
-def _metadata_mismatches(
-    expected: dict[str, object],
-    actual: dict[str, object],
-    *,
-    path: str = "backend",
-) -> list[str]:
-    mismatches: list[str] = []
-    for key, expected_value in expected.items():
-        field_path = f"{path}.{key}"
-        if key not in actual:
-            mismatches.append(f"{field_path} is missing (expected {expected_value!r})")
-            continue
-        actual_value = actual[key]
-        if isinstance(expected_value, dict):
-            if not isinstance(actual_value, dict):
-                mismatches.append(
-                    f"{field_path} expected a mapping, got {type(actual_value).__name__}"
-                )
-                continue
-            mismatches.extend(_metadata_mismatches(expected_value, actual_value, path=field_path))
-            continue
-        if actual_value != expected_value:
-            mismatches.append(f"{field_path} expected {expected_value!r}, got {actual_value!r}")
-    return mismatches
-
-
 class EdgeRuntime:
     """One real-robot control loop with a replaceable inference strategy."""
 
@@ -172,23 +158,38 @@ class EdgeRuntime:
         strategy: InferenceStrategy | None = None,
         launch_mode: str = "run",
     ) -> None:
+        self._rollout_identity = rollout_identity(config["run"])
+        self._evaluation = evaluation_parameters(config.get("evaluation"))
         self._config = config
         self._run_dir = run_dir
         self._clock = clock or SystemClock()
         self._control_dt_ns = int(1_000_000_000 / config["robot"]["control_hz"])
         self._robot = self._build_robot()
         self._sensors = [build_sensor(sensor, self._clock) for sensor in config["sensors"]]
-        # 运行时直接复用整机的运动学；解码子进程从同一配置加载离线模型。
-        self._adapter = build_policy_adapter(
-            config["robot"],
-            config["policy"],
-            kinematics=self._robot.kinematics,
-            motion_limits=config["executor"]["motion_limits"],
-        )
-        self._adapter.validate(config["robot"], config["policy"])
+        # Runtime reuses robot kinematics; decoding subprocesses load the offline
+        # model from the same configuration.
+        self._adapter = self._build_adapter()
+        if (
+            (config["inference"].get("temporal_ensemble") or {}).get("enabled", False)
+            or (
+                config["inference"]["algorithm"] == "act_temporal_ensemble"
+                and config["inference"]["inference_schedule"] == "serial"
+            )
+            or (
+                config["inference"]["algorithm"] in {"aac", "autohorizon"}
+                and config["inference"]["inference_schedule"] != "serial"
+            )
+        ) and not getattr(self._adapter, "supports_candidate_decoding", False):
+            raise ValueError("inference composition requires complete absolute-joint decoding")
+        self._scheduler = RequestScheduler(config["inference"])
+        self._multi_inflight = self._scheduler.multi_inflight
+        if self._multi_inflight and not getattr(self._adapter, "supports_multi_inflight", False):
+            raise ValueError("multi_inflight requires an adapter with streaming-safe decoding")
         self._decode_seed_source = getattr(
             self._adapter, "decode_seed_source", "execution_reference"
         )
+        if self._multi_inflight and self._decode_seed_source != "execution_reference":
+            raise ValueError("multi_inflight does not retain request-observation decode seeds")
         if self._decode_seed_source not in {"execution_reference", "observation_state"}:
             raise ValueError(
                 "adapter decode_seed_source must be 'execution_reference' or "
@@ -198,13 +199,21 @@ class EdgeRuntime:
             self._adapter, "supports_independent_group_decode", False
         ):
             raise ValueError("adapter does not support independent group decoding")
+        if config["inference"]["handoff"] == "waypoint" and not getattr(
+            self._adapter, "supports_waypoint_handoff", False
+        ):
+            raise ValueError("adapter does not support waypoint handoff")
         self._strategy = strategy or DefaultChunkStrategy(config)
+        if self._strategy.name == "bid_backward" and not getattr(
+            self._adapter, "supports_candidate_decoding", False,
+        ):
+            raise ValueError("BID requires an adapter with candidate decoding support")
         self._decoder = None
         if config["policy"]["action_decoding"] == "process":
             # A plugin may wrap the default strategy (the UMI history plugin
             # does); the constructed strategy decides, not the plugin path.
-            if self._strategy.name not in {"manimux", "rtc"}:
-                raise ValueError("process action decoding requires the manimux or rtc strategy")
+            if self._strategy.name not in {"async", "rtc"}:
+                raise ValueError("process action decoding requires the async or rtc strategy")
             self._decoder = ActionDecoderClient(
                 config["robot"],
                 config["policy"],
@@ -217,7 +226,9 @@ class EdgeRuntime:
             mode=config["inference"]["decode_forecast_mode"],
         )
         self._session_id = f"session-{uuid.uuid4().hex}"
-        self._worker = PolicyWorkerClient(config["policy"], self._session_id)
+        self._worker = PolicyWorkerClient(
+            config["policy"], self._session_id, multi_inflight=self._multi_inflight,
+        )
         self._timeline = self._build_timeline()
         self._executor = self._build_executor()
         self._launch_mode = launch_mode
@@ -236,12 +247,13 @@ class EdgeRuntime:
             max_acceleration=command_safety["max_acceleration"],
             control_dt_s=self._control_dt_ns / 1_000_000_000,
         )
-        self._viewer = ViewerBridge(
-            enabled=config["viewer"]["enabled"],
-            robot=config["viewer"]["robot"],
-            policy=config["viewer"]["policy_label"] or "manimux-local",
-            instruction=config["run"]["task"] if config["viewer"]["policy_label"] else "",
-            camera_hz=config["viewer"]["camera_hz"],
+        self._robogui = RoboGUIBridge(
+            enabled=config["robogui"]["enabled"],
+            robot=config["robogui"]["robot"],
+            policy=config["robogui"]["policy_label"] or "manimux-local",
+            instruction=config["run"]["task"] if config["robogui"]["policy_label"] else "",
+            camera_hz=config["robogui"]["camera_hz"],
+            control=config["robogui"].get("control", {}),
         )
         self._state = RuntimeState.DISCONNECTED
         logger.info(
@@ -259,6 +271,15 @@ class EdgeRuntime:
 
     def _build_robot(self) -> RobotBase:
         return build_robot(self._config["robot"], self._clock)
+
+    def _build_adapter(self):
+        adapter = build_policy_adapter(
+            self._config["robot"], self._config["policy"],
+            kinematics=self._robot.kinematics,
+            motion_limits=self._config["executor"]["motion_limits"],
+        )
+        adapter.validate(self._config["robot"], self._config["policy"])
+        return adapter
 
     def _build_executor(self) -> Executor:
         control_dt_s = self._control_dt_ns / 1_000_000_000
@@ -279,7 +300,13 @@ class EdgeRuntime:
             self._config["robot"]["group_dims"],
             max_source_steps=self._config["inference"]["max_chunk_policy_steps"],
             action_start_mode=self._config["inference"]["action_start_mode"],
-            hold_last_step=self._config["inference"]["inference_schedule"] == "serial",
+            hold_last_step=(
+                (
+                    self._config["inference"]["inference_schedule"] == "serial"
+                    and self._config["inference"]["algorithm"] in {"async", "serial"}
+                )
+                or getattr(self._strategy, "hold_last_step", False)
+            ),
         )
 
     def _hold_command(self, now_ns: int, groups: GroupVector) -> RobotCommand:
@@ -302,9 +329,8 @@ class EdgeRuntime:
         adapter that decodes the complete observation-anchored source trajectory
         can instead require the exact state captured with that observation.
         """
-        execution = self._config["inference"]
         expected_decode_s = self._decode_forecast.seconds
-        start_ns = now_ns + int((execution["commit_lead_s"] + expected_decode_s) * 1e9)
+        start_ns = now_ns + int(expected_decode_s * 1e9)
         if self._decode_seed_source == "observation_state":
             if observation_state is None:
                 raise ValueError("request observation state is unavailable for action decoding")
@@ -330,14 +356,23 @@ class EdgeRuntime:
         expected_metadata = {
             key: value for key, value in deepcopy(expected).items() if value is not None
         }
-        mismatches = _metadata_mismatches(expected_metadata, capabilities.backend_metadata)
+        mismatches = metadata_mismatches(expected_metadata, capabilities.backend_metadata)
         if mismatches:
             details = "; ".join(mismatches)
             raise RuntimeError(f"policy backend identity mismatch: {details}")
 
     def run(self) -> RunResult:  # noqa: C901 - the safety-critical loop stays linear
         started_wall = time.perf_counter()
+        sensor_reader = SensorReader(
+            self._sensors, self._clock, **self._config["run"].get("sensor_reading", {}),
+        )
         episode_id = _next_rollout_id(self._run_dir)
+        timing = LoopTiming(
+            enabled=self._config["run"].get("control_timing", False),
+            max_cycles=self._config["run"].get("timing_max_cycles", 20000),
+            period_ns=self._control_dt_ns,
+            clock_source=type(self._clock).__name__,
+        )
         recorder = EpisodeRecorder(
             self._run_dir,
             episode_id,
@@ -346,6 +381,7 @@ class EdgeRuntime:
                 "episode_id": episode_id,
                 "session_id": self._session_id,
                 "task": self._config["run"]["task"],
+                "evaluation": dict(self._evaluation),
                 "executor_kind": self._config["executor"]["type"],
                 "smooth": (
                     loads(dumps(deepcopy(self._config["executor"]["smooth"]), default=str))
@@ -353,7 +389,10 @@ class EdgeRuntime:
                     else None
                 ),
                 "runtime": self._strategy.name,
-                "policy_label": self._config["viewer"]["policy_label"],
+                "inference_schedule": self._scheduler.mode,
+                "request_trigger": self._scheduler.trigger,
+                "observation_hz": self._config["inference"]["observation_hz"],
+                "policy_label": self._config["robogui"]["policy_label"],
                 "policy_worker": self._config["policy"]["worker"],
                 "policy_adapter": self._config["policy"]["adapter"]["type"],
                 "view_profile": self._config["policy"]["adapter"].get("view_profile"),
@@ -363,14 +402,15 @@ class EdgeRuntime:
                 "max_chunk_steps": self._config["inference"]["max_chunk_policy_steps"],
                 "blend_steps": self._config["inference"]["blend_policy_steps"],
                 "action_start_mode": self._config["inference"]["action_start_mode"],
-                "experiment_mode": self._config["run"]["experiment_mode"],
-                "layout_id": self._config["run"]["layout_id"],
+                **self._rollout_identity,
+                "identity_frozen": False,
                 "launch_mode": self._launch_mode,
                 "policy_backend": {},
             },
             video_fps=self._config["recording"]["video_fps"],
             video_codec=self._config["recording"]["video_codec"],
             video_queue_size=self._config["recording"]["video_queue_size"],
+            control_timing=timing,
         )
         accepted_plans = 0
         rejected_plans = 0
@@ -387,15 +427,23 @@ class EdgeRuntime:
         last_dispatch_plan_id: object = object()
         robot_connected = False
         steps = 0
+        formal_start_recorded = False
+        identity_frozen = False
+        last_control_status = None
         completed = False
         terminal_reason = "completed"
         abort_reason = "runtime_exception"
         abort_detail = ""
         home_on_close = bool(self._config["robot"]["options"].get("home_on_close", False))
+        warmup = None
         try:
-            for sensor in self._sensors:
-                sensor.start()
-                sensor.read()
+            if self._config["run"].get("warmup_before_start", False):
+                warmup = PolicyWarmup(
+                    self._config, worker=self._worker,
+                    strategy=build_inference_strategy(self._config),
+                    adapter=self._build_adapter(), session_id=self._session_id, clock=self._clock,
+                )
+            sensor_reader.start()
             self._worker.start()
             logger.info("policy_worker_ready session=%s", self._session_id)
             if self._decoder is not None:
@@ -419,92 +467,248 @@ class EdgeRuntime:
             self._safety.reset(initial_state)
             self._executor.reset(initial_state)
             self._strategy.reset()
+            self._scheduler.reset()
+            recorder.update_metadata(
+                robot_backend=self._robot.runtime_metadata(),
+                initial_state=state_evidence(
+                    initial_state,
+                    targets=self._config["robot"]["options"].get("start_joints"),
+                ),
+                inference_seed=capabilities.backend_metadata.get("model", {}).get("inference_seed"),
+            )
             previous_command = copy_group_vector(initial_state.groups)
             last_command = copy_group_vector(initial_state.groups)
             self._state = RuntimeState.RUNNING
-            viewer_episode_metadata = {
+            robogui_episode_metadata = {
                 "episode_active": True,
+                "identity_frozen": False,
                 "episode_id": episode_id,
                 "episode_dir": str(recorder.final_dir.resolve()),
                 "run_dir": str(self._run_dir.resolve()),
                 "instruction": self._config["run"]["task"],
+                "evaluation": dict(self._evaluation),
                 "max_steps": self._config["run"]["max_control_steps"],
                 "control_mode": self._strategy.control_mode,
                 "runtime": self._strategy.name,
                 "executor": self._config["executor"]["type"],
-                "policy_label": self._config["viewer"]["policy_label"],
-                "experiment_mode": self._config["run"]["experiment_mode"],
+                "policy_label": self._config["robogui"]["policy_label"],
+                **self._rollout_identity,
                 "camera_map": self._config["policy"]["adapter"].get("camera_map", {}),
-                "layout_id": self._config["run"]["layout_id"],
                 "launch_mode": self._launch_mode,
+                **({"warmup": warmup.metadata()} if warmup is not None else {}),
             }
-            # 当前整机未提供手动拖动恢复；Viewer 不展示已退役的驱动能力。
-            viewer_episode_metadata["recovery_available"] = False
-            self._viewer.set_state_metadata(viewer_episode_metadata)
-            self._viewer.publish_event(
-                "episode_started",
-                metadata=viewer_episode_metadata,
+            # The current robot does not offer manual-drag recovery; RoboGUI does
+            # not expose retired driver capabilities.
+            robogui_episode_metadata["recovery_available"] = False
+            # The active runtime owns Home; idle recovery remains service-owned.
+            robogui_episode_metadata["home_available"] = (
+                "home" in self._robot.recovery_actions
             )
+            self._robogui.set_state_metadata(robogui_episode_metadata)
+            with stage("robogui_publish_event"):
+                self._robogui.publish_event(
+                    "episode_started",
+                    metadata=robogui_episode_metadata,
+                )
             next_tick_ns = self._clock.now_ns()
 
             while steps < self._config["run"]["max_control_steps"]:
+                timing.begin(
+                    scheduled_start_ns=next_tick_ns,
+                    phase=(
+                        f"warmup_{warmup.phase}"
+                        if warmup is not None and not warmup.complete else self._state.value.lower()
+                    ),
+                    step=steps,
+                )
                 loop_start_ns = self._clock.now_ns()
                 now_ns = loop_start_ns
                 state = self._robot.get_state()
-                self._safety.validate_state(state)
-                frames: dict[str, SensorFrame] = {}
-                for sensor in self._sensors:
-                    reading = sensor.read()
-                    batch = {reading.name: reading} if isinstance(reading, SensorFrame) else reading
-                    overlap = set(frames).intersection(batch)
-                    if overlap:
-                        raise RuntimeError(f"duplicate sensor frames: {sorted(overlap)}")
-                    frames.update(batch)
+                with stage("safety_state"):
+                    self._safety.validate_state(state)
+                with stage("camera_read", mode=sensor_reader.mode):
+                    frames = sensor_reader.read()
 
-                viewer_control = self._viewer.poll_control()
-                if viewer_control.finish_requested:
-                    if viewer_control.finish_home is not None:
-                        home_on_close = viewer_control.finish_home
-                    terminal_reason = "viewer_finish_requested"
-                    recorder.event("viewer_finish_requested", step=steps, home=home_on_close)
+                with stage("robogui_control"):
+                    robogui_control = self._robogui.poll_control()
+                control_diagnostics = getattr(robogui_control, "diagnostics", None)
+                if control_diagnostics is not None:
+                    control_status = (
+                        robogui_control.paused, control_diagnostics.get("reason"),
+                        control_diagnostics.get("timeout_count"),
+                        control_diagnostics.get("error_count"),
+                        control_diagnostics.get("transport_status"),
+                    )
+                    if control_status != last_control_status:
+                        recorder.event(
+                            "robogui_control_state", step=steps,
+                            monotonic_ns=self._clock.now_ns(),
+                            paused=robogui_control.paused, **control_diagnostics,
+                        )
+                        last_control_status = control_status
+                if robogui_control.finish_requested:
+                    timing.set_phase("stopped")
+                    # Stop model requests before Home/recording cleanup can take time.
+                    self._worker.request_stop()
+                    if robogui_control.finish_home is not None:
+                        home_on_close = robogui_control.finish_home
+                    terminal_reason = "robogui_finish_requested"
+                    recorder.event("robogui_finish_requested", step=steps, home=home_on_close)
                     break
-                if viewer_control.home_requested:
+                if robogui_control.home_requested:
+                    timing.set_phase("homing")
                     self._robot.home()
                     state = self._robot.get_state()
                     self._safety.reset(state)
                     self._timeline = self._build_timeline()
                     self._executor.reset(state)
                     self._strategy.reset()
+                    self._scheduler.reset()
                     previous_command = copy_group_vector(state.groups)
                     last_command = copy_group_vector(state.groups)
                     discard_responses_through = max(discard_responses_through, request_seq)
                     pending_observation_states.clear()
                     self._state = RuntimeState.PAUSED
-                    recorder.event("viewer_home_requested", step=steps)
+                    recorder.event(
+                        "robogui_home_requested", step=steps,
+                        state=state_evidence(
+                            state, targets=self._config["robot"]["options"].get("start_joints")
+                        ),
+                    )
                     next_tick_ns = self._clock.now_ns()
+                    timing.end()
                     continue
-                if viewer_control.paused and (
+                if not identity_frozen and not robogui_control.paused:
+                    if self._config["robogui"].get("enabled", False):
+                        if (robogui_control.episode_id != episode_id
+                                or robogui_control.control_run_dir
+                                != robogui_episode_metadata["run_dir"]
+                                or robogui_control.start_identity is None):
+                            raise ValueError("Start requires a selection for the active episode")
+                        self._rollout_identity = start_identity(
+                            self._rollout_identity, robogui_control.start_identity,
+                        )
+                    identity_frozen = True
+                    self._config["run"].update(self._rollout_identity)
+                    recorder.update_metadata(**self._rollout_identity, identity_frozen=True)
+                    recorder.event("rollout_identity_frozen", **self._rollout_identity)
+                    robogui_episode_metadata.update(self._rollout_identity, identity_frozen=True)
+                    self._robogui.set_state_metadata(robogui_episode_metadata)
+                if warmup is not None and not warmup.complete:
+                    self._state = RuntimeState.PAUSED
+                    before = warmup.metadata()
+                    if (not self._config["robogui"].get("enabled", False)
+                            or (robogui_control.episode_id == episode_id
+                                and robogui_control.control_run_dir
+                                == robogui_episode_metadata["run_dir"]
+                                and robogui_control.warmup_requested)):
+                        warmup.activate()
+                    with stage("warmup_advance"):
+                        warmup.advance(
+                            paused=robogui_control.paused,
+                            snapshot=ObservationSnapshot(state=state, frames=frames),
+                        )
+                    status = warmup.metadata()
+                    timing.set_phase(f"warmup_{warmup.phase}")
+                    preview = warmup.take_preview()
+                    if preview is not None:
+                        preview_chunk, preview_inference_ms, preview_metadata = preview
+                        with stage("robogui_publish_plan"):
+                            self._robogui.publish_plan(
+                                preview_chunk, preview_inference_ms,
+                                metadata={
+                                    **preview_metadata,
+                                    "episode_id": episode_id,
+                                    "run_dir": str(self._run_dir.resolve()),
+                                    "runtime": self._strategy.name,
+                                },
+                            )
+                    if warmup.complete:
+                        self._validate_policy_capabilities()
+                        self._strategy.reset()
+                        self._scheduler.reset()
+                        seed_strategy_warmup(self._strategy, latency_ns=list(warmup.latency_ns))
+                        self._timeline = self._build_timeline()
+                        recorder.event(
+                            "formal_rollout_ready",
+                            inference_seed=capabilities.backend_metadata.get("model", {}).get(
+                                "inference_seed"
+                            ), latency_sample_count=len(warmup.latency_ns),
+                        )
+                    for kind, fields in warmup.take_events():
+                        recorder.event(kind, **fields)
+                        logger.info("%s %s", kind, fields)
+                        with stage("robogui_publish_event"):
+                            self._robogui.publish_event(
+                                kind, step=steps,
+                                metadata={
+                                    **fields, "episode_id": episode_id,
+                                    "run_dir": str(self._run_dir.resolve()),
+                                    "runtime": self._strategy.name,
+                                },
+                            )
+                    if status != before:
+                        recorder.update_metadata(warmup=status)
+                    robogui_episode_metadata["warmup"] = status
+                    self._robogui.set_state_metadata(robogui_episode_metadata)
+                    # Preserve the existing paused hold; model output never reaches it.
+                    self._executor.reset(state)
+                    command = self._hold_command(self._clock.now_ns(), state.groups)
+                    self._safety.reset(state)
+                    with stage("safety_command"):
+                        self._safety.validate_command(command)
+                    self._robot.send_command(command)
+                    previous_command = copy_group_vector(last_command)
+                    last_command = copy_group_vector(command.groups)
+                    with stage("robogui_publish_state"):
+                        self._robogui.publish_state(
+                            state, frames, step=steps,
+                            max_steps=self._config["run"]["max_control_steps"],
+                        )
+                    next_tick_ns = max(
+                        next_tick_ns + self._control_dt_ns,
+                        self._clock.now_ns(),
+                    )
+                    timing.sleep_until(self._clock, next_tick_ns)
+                    timing.end()
+                    # Even after RESET, reacquire a fresh observation on the next tick.
+                    continue
+                if robogui_control.paused and (
                     self._decoder is not None
-                    or self._config["inference"]["inference_schedule"] == "serial"
+                    or self._multi_inflight
+                    or (
+                        self._config["inference"]["inference_schedule"] == "serial"
+                        and self._config["inference"]["algorithm"] in {"async", "serial"}
+                    )
                     or getattr(self._strategy, "discard_plans_while_paused", False)
                 ):
                     # RTC conditions must not refer to the timeline discarded
                     # by Pause/Hold while a decoder response is still pending.
                     if self._state != RuntimeState.PAUSED:
                         self._strategy.reset()
+                        self._scheduler.reset()
                     self._timeline = self._build_timeline()
                     discard_responses_through = max(discard_responses_through, request_seq)
                     pending_observation_states.clear()
                 self._state = (
-                    RuntimeState.RUNNING if not viewer_control.paused else RuntimeState.PAUSED
+                    RuntimeState.RUNNING if not robogui_control.paused else RuntimeState.PAUSED
                 )
+                timing.set_phase(self._state.value.lower())
+                if self._state == RuntimeState.RUNNING and not formal_start_recorded:
+                    recorder.update_metadata(
+                        formal_start_state=state_evidence(
+                            state, targets=self._config["robot"]["options"].get("start_joints")
+                        ),
+                    )
+                    formal_start_recorded = True
 
                 if not self._worker.is_alive and not worker_failure_reported:
                     worker_failure_reported = True
                     recorder.event("policy_worker_stopped", step=steps)
 
                 decoded_chunk = None
-                response = self._worker.poll()
+                with stage("worker_poll"):
+                    response = self._worker.poll()
                 if response is not None:
                     logger.info(
                         "policy_response seq=%d inference_ms=%.1f error=%s raw=%s",
@@ -514,7 +718,8 @@ class EdgeRuntime:
                         _raw_action_summary(response.raw_action),
                     )
                 if self._decoder is not None:
-                    decoded = self._decoder.poll()
+                    with stage("decoder_poll"):
+                        decoded = self._decoder.poll()
                     if decoded is not None:
                         if response is not None:
                             raise RuntimeError("model response arrived while decode was in flight")
@@ -548,36 +753,66 @@ class EdgeRuntime:
                             except ValueError as exc:
                                 response = replace(response, error=f"decode_seed_unavailable:{exc}")
                             else:
-                                self._decoder.submit(
-                                    response,
-                                    ActionContext(
-                                        request_seq=response.request_seq,
-                                        observation_time_ns=response.observation_time_ns,
-                                        created_time_ns=response.finished_time_ns,
-                                        execution_time_ns=start_ns,
-                                        measured_state=seed,
-                                        max_source_steps=self._config["inference"][
-                                            "max_chunk_policy_steps"
-                                        ],
-                                        independent_groups=self._config["inference"][
-                                            "independent_group_decoding"
-                                        ],
-                                        decode_budget_ms=(
-                                            self._config["inference"]["decode_budget_ms"]
-                                            if self._config["inference"][
+                                handoff_reference = None
+                                if self._config["inference"][
+                                    "handoff"
+                                ] == "waypoint" and self._strategy.decode_handoff(
+                                    response=response
+                                ):
+                                    # The adapter aligns the handoff within one source row.
+                                    start_ns += int(
+                                        self._config["inference"]["handoff_margin_s"] * 1e9
+                                    )
+                                    handoff_reference = self._timeline.handoff_reference(
+                                        start_ns,
+                                        round(action_interval(self._config["policy"]) * 1e9),
+                                    )
+                                with stage("decoder_submit"):
+                                    self._decoder.submit(
+                                        response,
+                                        ActionContext(
+                                            request_seq=response.request_seq,
+                                            observation_time_ns=response.observation_time_ns,
+                                            created_time_ns=response.finished_time_ns,
+                                            execution_time_ns=start_ns,
+                                            measured_state=seed,
+                                            handoff_reference=handoff_reference,
+                                            # A waypoint lead-in is planned to the skipped
+                                            # row, so the skip happens here, not at commit.
+                                            handoff_skip_steps=(
+                                                0
+                                                if handoff_reference is None
+                                                else self._config["inference"][
+                                                    "handoff_skip_steps"
+                                                ]
+                                            ),
+                                            max_source_steps=self._config["inference"][
+                                                "max_chunk_policy_steps"
+                                            ],
+                                            independent_groups=self._config["inference"][
                                                 "independent_group_decoding"
-                                            ]
-                                            else None
+                                            ],
+                                            decode_budget_ms=(
+                                                self._config["inference"]["decode_budget_ms"]
+                                                if self._config["inference"][
+                                                    "independent_group_decoding"
+                                                ]
+                                                else None
+                                            ),
                                         ),
-                                    ),
-                                    last_request_deadline_ns,
-                                )
+                                        last_request_deadline_ns,
+                                    )
                                 recorder.event(
                                     "decode_submitted",
                                     request_seq=response.request_seq,
                                     seed_time_ns=seed.monotonic_ns,
                                     seed_source=seed_source,
                                     expected_start_ns=start_ns,
+                                    handoff_plan_id=(
+                                        None
+                                        if handoff_reference is None
+                                        else handoff_reference.plan_id
+                                    ),
                                     seed_to_expected_start_ms=(
                                         start_ns - seed.monotonic_ns
                                     )
@@ -597,14 +832,26 @@ class EdgeRuntime:
                     rejection_reason = None
                     if response.error is not None:
                         rejection_reason = response.error
+                    elif response.session_id != self._session_id:
+                        rejection_reason = "session_mismatch"
+                    elif response.request_seq <= discard_responses_through:
+                        rejection_reason = "invalidated_by_pause_or_home"
+                    elif not self._multi_inflight and response.request_seq < last_submitted_seq:
+                        rejection_reason = "superseded_response"
                     elif (
-                        response.session_id != self._session_id
-                        or response.request_seq <= discard_responses_through
-                        or response.request_seq < last_submitted_seq
-                        or response.finished_time_ns > last_request_deadline_ns
-                        or response.raw_action is None
+                        self._multi_inflight
+                        and response.request_seq <= self._timeline.accepted_request_seq
                     ):
-                        rejection_reason = "stale_or_expired_response"
+                        # Reject before ACT can add an out-of-order chunk to its history.
+                        rejection_reason = "stale_request_seq"
+                    elif response.finished_time_ns > (
+                        response.deadline_ns if self._multi_inflight else last_request_deadline_ns
+                    ):
+                        rejection_reason = "inference_deadline_exceeded"
+                    elif self._multi_inflight and self._clock.now_ns() > response.deadline_ns:
+                        rejection_reason = "deadline_exceeded_before_decode"
+                    elif response.raw_action is None:
+                        rejection_reason = "missing_action"
                     if rejection_reason is not None:
                         logger.warning(
                             "inference_rejected seq=%d reason=%s",
@@ -618,45 +865,49 @@ class EdgeRuntime:
                             request_seq=response.request_seq,
                             reason=rejection_reason,
                         )
-                        self._viewer.publish_event(
-                            "inference_rejected",
-                            step=steps,
-                            chunk_id=response.request_seq,
-                            metadata={"reason": rejection_reason},
-                        )
+                        with stage("robogui_publish_event"):
+                            self._robogui.publish_event(
+                                "inference_rejected",
+                                step=steps,
+                                chunk_id=response.request_seq,
+                                metadata={"reason": rejection_reason},
+                            )
                         pending_visuals.pop(response.request_seq, None)
                     else:
                         try:
                             decode_start = time.perf_counter_ns()
-                            chunk = (
-                                decoded_chunk
-                                if decoded_chunk is not None
-                                else self._adapter.decode_action(
-                                    response.raw_action,
-                                    ActionContext(
-                                        request_seq=response.request_seq,
-                                        observation_time_ns=response.observation_time_ns,
-                                        created_time_ns=response.finished_time_ns,
-                                        execution_time_ns=(
-                                            now_ns
-                                            + int(
-                                                self._config["inference"]["commit_lead_s"]
-                                                * 1_000_000_000
-                                            )
-                                            if self._strategy.name in {"manimux", "rtc"}
-                                            else None
+                            with stage("policy_decode"):
+                                chunk = (
+                                    decoded_chunk
+                                    if decoded_chunk is not None
+                                    else decode_strategy_action(
+                                        self._strategy, self._adapter,
+                                        response.raw_action,
+                                        ActionContext(
+                                            request_seq=response.request_seq,
+                                            observation_time_ns=response.observation_time_ns,
+                                            created_time_ns=response.finished_time_ns,
+                                            # Only latency-trimming timelines may let the
+                                            # adapter drop elapsed rows before decoding.
+                                            execution_time_ns=(
+                                                now_ns
+                                                if self._strategy.name
+                                                in {"async", "serial", "rtc"}
+                                                and self._config["inference"]["action_start_mode"]
+                                                == "drop_infer_latency"
+                                                else None
+                                            ),
+                                            measured_state=(
+                                                observation_state
+                                                if self._decode_seed_source == "observation_state"
+                                                else state
+                                            ),
+                                            max_source_steps=self._config["inference"][
+                                                "max_chunk_policy_steps"
+                                            ],
                                         ),
-                                        measured_state=(
-                                            observation_state
-                                            if self._decode_seed_source == "observation_state"
-                                            else state
-                                        ),
-                                        max_source_steps=self._config["inference"][
-                                            "max_chunk_policy_steps"
-                                        ],
-                                    ),
+                                    )
                                 )
-                            )
                             if decoded_chunk is None:
                                 chunk.metadata["decode_ms"] = (
                                     time.perf_counter_ns() - decode_start
@@ -675,12 +926,13 @@ class EdgeRuntime:
                                 request_seq=response.request_seq,
                                 reason=reason,
                             )
-                            self._viewer.publish_event(
-                                "plan_rejected",
-                                step=steps,
-                                chunk_id=response.request_seq,
-                                metadata={"reason": reason},
-                            )
+                            with stage("robogui_publish_event"):
+                                self._robogui.publish_event(
+                                    "plan_rejected",
+                                    step=steps,
+                                    chunk_id=response.request_seq,
+                                    metadata={"reason": reason},
+                                )
                             pending_visuals.pop(response.request_seq, None)
                             chunk = None
                         now_ns = self._clock.now_ns()
@@ -695,23 +947,29 @@ class EdgeRuntime:
                                     f"'joint_position', got {chunk.action_space!r}"
                                 ),
                             )
-                            self._viewer.publish_event(
-                                "plan_rejected",
-                                step=steps,
-                                chunk_id=response.request_seq,
-                                metadata={"reason": "invalid_action_space"},
-                            )
+                            with stage("robogui_publish_event"):
+                                self._robogui.publish_event(
+                                    "plan_rejected",
+                                    step=steps,
+                                    chunk_id=response.request_seq,
+                                    metadata={"reason": "invalid_action_space"},
+                                )
                             pending_visuals.pop(response.request_seq, None)
                             chunk = None
                         canonical_raw = None if chunk is None else copy_action_chunk(chunk)
-                        if chunk is not None:
+                        selector = (
+                            self._strategy
+                            if isinstance(self._strategy, StrategyChunkSelector) else None
+                        )
+                        if chunk is not None and selector is None:
                             try:
-                                chunk = prepare_strategy_chunk(
-                                    self._strategy,
-                                    chunk=chunk,
-                                    response=response,
-                                    now_ns=now_ns,
-                                )
+                                with stage("strategy_prepare_chunk"):
+                                    chunk = prepare_strategy_chunk(
+                                        self._strategy,
+                                        chunk=chunk,
+                                        response=response,
+                                        now_ns=now_ns,
+                                    )
                             except (TypeError, ValueError) as exc:
                                 self._strategy.on_response_rejected(response)
                                 rejected_plans += 1
@@ -721,12 +979,13 @@ class EdgeRuntime:
                                     request_seq=response.request_seq,
                                     reason=reason,
                                 )
-                                self._viewer.publish_event(
-                                    "plan_rejected",
-                                    step=steps,
-                                    chunk_id=response.request_seq,
-                                    metadata={"reason": reason},
-                                )
+                                with stage("robogui_publish_event"):
+                                    self._robogui.publish_event(
+                                        "plan_rejected",
+                                        step=steps,
+                                        chunk_id=response.request_seq,
+                                        metadata={"reason": reason},
+                                    )
                                 pending_visuals.pop(response.request_seq, None)
                                 chunk = None
                         if chunk is not None:
@@ -757,7 +1016,6 @@ class EdgeRuntime:
                             chunk.metadata["observation_to_commit_ms"] = (
                                 now_ns - chunk.observation_time_ns
                             ) / 1e6
-                            commit_lead_ns = int(self._config["inference"]["commit_lead_s"] * 1e9)
                             source_end_ns = (
                                 chunk.observation_time_ns
                                 + (chunk.source_offset_steps + chunk.horizon_steps - 1)
@@ -766,26 +1024,51 @@ class EdgeRuntime:
                             if (
                                 self._decoder is not None
                                 and self._config["inference"]["action_start_mode"]
-                                == "skip_elapsed_steps"
-                                and now_ns + commit_lead_ns > source_end_ns
+                                == "drop_infer_latency"
+                                and now_ns > source_end_ns
                             ):
                                 result = CommitResult(False, "no_future_horizon")
                             else:
-                                result = self._timeline.commit(
-                                    chunk,
-                                    now_ns=now_ns,
-                                    commit_lead_ns=commit_lead_ns,
-                                    max_plan_age_ns=int(
-                                        self._config["inference"]["max_plan_age_s"] * 1_000_000_000
-                                    ),
-                                    current_command=commit.current_command,
-                                    blend_steps=commit.blend_steps,
-                                )
+                                with stage("timeline_commit"):
+                                    try:
+                                        if selector is not None:
+                                            # Selection and trimming share one handoff clock.
+                                            chunk = selector.select_chunk(
+                                                chunk=chunk, now_ns=now_ns,
+                                            )
+                                            canonical_raw = copy_action_chunk(chunk)
+                                            chunk = prepare_strategy_chunk(
+                                                self._strategy, chunk=chunk,
+                                                response=response, now_ns=now_ns,
+                                            )
+                                    except (TypeError, ValueError) as exc:
+                                        result = CommitResult(
+                                            False,
+                                            f"invalid_strategy_chunk:{type(exc).__name__}:{exc}",
+                                        )
+                                    else:
+                                        result = self._timeline.commit(
+                                            chunk,
+                                            now_ns=now_ns,
+                                            max_plan_age_ns=int(
+                                                self._config["inference"]["max_plan_age_s"]
+                                                * 1_000_000_000
+                                            ),
+                                            current_command=commit.current_command,
+                                            blend_steps=commit.blend_steps,
+                                            handoff_skip_steps=self._config["inference"][
+                                                "handoff_skip_steps"
+                                            ],
+                                        )
                             if result.accepted:
                                 accepted_plans += 1
                                 last_inference_ms = response.inference_ms
                                 chunk.metadata["timeline_latency_ms"] = (
                                     result.timeline_latency_ns / 1_000_000
+                                )
+                                chunk.metadata["time_trimmed_steps"] = result.time_trimmed_steps
+                                chunk.metadata["handoff_skipped_steps"] = (
+                                    result.handoff_skipped_steps
                                 )
                                 committed = self._timeline.active_horizon()
                                 if committed is None:
@@ -804,12 +1087,13 @@ class EdgeRuntime:
                                     infra_output=chunk,
                                     committed=committed,
                                 )
-                                event_fields = self._strategy.on_plan_accepted(
-                                    chunk=chunk,
-                                    result=result,
-                                    response=response,
-                                    now_ns=now_ns,
-                                )
+                                with stage("strategy_feedback"):
+                                    event_fields = self._strategy.on_plan_accepted(
+                                        chunk=chunk,
+                                        result=result,
+                                        response=response,
+                                        now_ns=now_ns,
+                                    )
                                 recorder.event(
                                     "plan_accepted",
                                     plan_id=chunk.plan_id,
@@ -817,56 +1101,71 @@ class EdgeRuntime:
                                     **chunk.metadata,
                                     **event_fields,
                                 )
-                                recorder.event(
-                                    "plan_boundary",
-                                    **build_plan_boundary_payload(
-                                        step=steps,
-                                        monotonic_ns=now_ns,
-                                        blend_anchor_source=commit.anchor_source,
-                                        blend_steps=commit.blend_steps,
-                                        trimmed_steps=result.trimmed_steps,
-                                        previous_reference=previous_reference,
-                                        previous_command=previous_command,
-                                        last_command=last_command,
-                                        measured=state.groups,
-                                        chunk=chunk,
+                                with stage("plan_boundary_diagnostics"):
+                                    recorder.event(
+                                        "plan_boundary",
+                                        **build_plan_boundary_payload(
+                                            step=steps,
+                                            monotonic_ns=now_ns,
+                                            blend_anchor_source=commit.anchor_source,
+                                            blend_steps=commit.blend_steps,
+                                            trimmed_steps=result.trimmed_steps,
+                                            previous_reference=previous_reference,
+                                            previous_command=previous_command,
+                                            last_command=last_command,
+                                            measured=state.groups,
+                                            chunk=chunk,
+                                            committed=committed,
+                                        ),
+                                    )
+                                # A waypoint chunk arrives with its skipped rows already
+                                # removed; RoboGUI draws them like a commit-time skip.
+                                upstream_skip = (
+                                    0 if chunk.handoff is None else chunk.handoff.skipped_steps
+                                )
+                                with stage("robogui_publish_plan"):
+                                    self._robogui.publish_plan(
+                                        chunk,
+                                        response.inference_ms,
                                         committed=committed,
-                                    ),
-                                )
-                                self._viewer.publish_plan(
-                                    chunk,
-                                    response.inference_ms,
-                                    committed=committed,
-                                    metadata={
-                                        "runtime": self._strategy.name,
-                                        "raw_horizon_steps": chunk.horizon_steps,
-                                        "committed_horizon_steps": committed.horizon_steps,
-                                        "trimmed_steps": result.trimmed_steps,
-                                        "timeline_latency_ms": (
-                                            result.timeline_latency_ns / 1_000_000
-                                        ),
-                                        "commit_lead_ms": commit_lead_ns / 1_000_000,
-                                        "decode_stage_ms": chunk.metadata.get("decode_stage_ms"),
-                                        "previous_chunk_id": previous_chunk_id,
-                                        "previous_chunk_index": previous_chunk_index,
-                                        "previous_chunk_horizon_steps": (
-                                            0
-                                            if previous_horizon is None
-                                            else previous_horizon.horizon_steps
-                                        ),
-                                        "superseded_steps": (
-                                            0
-                                            if previous_horizon is None
-                                            else max(
-                                                0,
-                                                previous_horizon.horizon_steps
-                                                - previous_chunk_index,
-                                            )
-                                        ),
-                                        **submission_visuals,
-                                        **event_fields,
-                                    },
-                                )
+                                        metadata={
+                                            "runtime": self._strategy.name,
+                                            "raw_horizon_steps": (
+                                                chunk.horizon_steps + upstream_skip
+                                            ),
+                                            "committed_horizon_steps": committed.horizon_steps,
+                                            "time_trimmed_steps": result.time_trimmed_steps,
+                                            "handoff_skipped_steps": (
+                                                result.handoff_skipped_steps
+                                            ),
+                                            "timeline_latency_ms": (
+                                                result.timeline_latency_ns / 1_000_000
+                                            ),
+                                            "decode_stage_ms": chunk.metadata.get(
+                                                "decode_stage_ms"
+                                            ),
+                                            "previous_chunk_id": previous_chunk_id,
+                                            "previous_chunk_index": previous_chunk_index,
+                                            "previous_chunk_horizon_steps": (
+                                                0
+                                                if previous_horizon is None
+                                                else previous_horizon.horizon_steps
+                                            ),
+                                            "superseded_steps": (
+                                                0
+                                                if previous_horizon is None
+                                                else max(
+                                                    0,
+                                                    previous_horizon.horizon_steps
+                                                    - previous_chunk_index,
+                                                )
+                                            ),
+                                            **submission_visuals,
+                                            **event_fields,
+                                            # After event_fields, which repeat the timeline's count.
+                                            "trimmed_steps": result.trimmed_steps + upstream_skip,
+                                        },
+                                    )
                                 pending_visuals.pop(response.request_seq, None)
                             else:
                                 logger.warning(
@@ -883,40 +1182,47 @@ class EdgeRuntime:
                                     request_seq=chunk.request_seq,
                                     reason=result.reason,
                                 )
-                                self._viewer.publish_event(
-                                    "plan_rejected",
-                                    step=steps,
-                                    chunk_id=response.request_seq,
-                                    metadata={"reason": result.reason},
-                                )
+                                with stage("robogui_publish_event"):
+                                    self._robogui.publish_event(
+                                        "plan_rejected",
+                                        step=steps,
+                                        chunk_id=response.request_seq,
+                                        metadata={"reason": result.reason},
+                                    )
                                 pending_visuals.pop(response.request_seq, None)
 
                 if self._worker.is_alive and not (
                     (
                         self._decoder is not None
+                        or self._multi_inflight
                         or getattr(self._strategy, "discard_plans_while_paused", False)
                     )
                     and self._state != RuntimeState.RUNNING
                 ):
                     snapshot = ObservationSnapshot(state=state, frames=frames)
-                    submission = self._strategy.build_submission(
-                        session_id=self._session_id,
-                        request_seq=request_seq + 1,
-                        now_ns=now_ns,
-                        snapshot=snapshot,
-                        adapter=self._adapter,
-                        timeline=self._timeline,
-                        request_state=RequestState(
-                            in_flight=request_in_flight,
-                            last_submitted_seq=last_submitted_seq,
-                            last_deadline_ns=last_request_deadline_ns,
-                        ),
-                        runtime_state=self._state,
+                    request_state = RequestState(
+                        in_flight=request_in_flight,
+                        last_submitted_seq=last_submitted_seq,
+                        last_deadline_ns=last_request_deadline_ns,
+                        multi_flight=self._multi_inflight,
                     )
-                    if submission is not None:
-                        prepared_request = self._adapter.prepare_request(
-                            submission.request,
+                    with stage("policy_schedule"):
+                        submission = self._scheduler.build_submission(
+                            self._strategy,
+                            session_id=self._session_id,
+                            request_seq=request_seq + 1,
+                            now_ns=now_ns,
+                            snapshot=snapshot,
+                            adapter=self._adapter,
+                            timeline=self._timeline,
+                            request_state=request_state,
+                            runtime_state=self._state,
                         )
+                    if submission is not None:
+                        with stage("policy_prepare"):
+                            prepared_request = self._adapter.prepare_request(
+                                submission.request,
+                            )
                         request_seq = submission.request.request_seq
                         if self._decode_seed_source == "observation_state":
                             observation_state = prepared_request.observation.state
@@ -925,7 +1231,8 @@ class EdgeRuntime:
                                 monotonic_ns=observation_state.monotonic_ns,
                                 sequence=observation_state.sequence,
                             )
-                        self._worker.submit_latest(prepared_request)
+                        with stage("worker_submit"):
+                            self._worker.submit_latest(prepared_request)
                         logger.info(
                             "inference_submitted seq=%d observation_ns=%d deadline_ns=%d "
                             "state_seq=%d cameras=%s",
@@ -944,6 +1251,7 @@ class EdgeRuntime:
                         request_in_flight = True
                         last_submitted_seq = request_seq
                         last_request_deadline_ns = prepared_request.deadline_ns
+                        self._scheduler.on_submitted(now_ns)
                         recorder.event(
                             "inference_submitted",
                             request_seq=request_seq,
@@ -975,28 +1283,37 @@ class EdgeRuntime:
                                 submission.event_fields.get("forecast_delay", 0)
                             )
                         pending_visuals[request_seq] = visual_fields
-                        self._viewer.publish_event(
-                            "inference_submitted",
-                            step=steps,
-                            chunk_id=request_seq,
-                            metadata=visual_fields,
-                        )
+                        if self._multi_inflight:
+                            # Coalesced uploads never produce a plan. Keep diagnostic
+                            # history bounded independently of model/network latency.
+                            while len(pending_visuals) > 128:
+                                pending_visuals.pop(next(iter(pending_visuals)))
+                        with stage("robogui_publish_event"):
+                            self._robogui.publish_event(
+                                "inference_submitted",
+                                step=steps,
+                                chunk_id=request_seq,
+                                metadata=visual_fields,
+                            )
                 for kind, fields in self._strategy.take_runtime_events(step=steps):
                     recorder.event(kind, **fields)
-                    self._viewer.publish_event(kind, step=steps, metadata=fields)
+                    with stage("robogui_publish_event"):
+                        self._robogui.publish_event(kind, step=steps, metadata=fields)
 
                 now_ns = self._clock.now_ns()
-                reference = self._timeline.reference_horizon(
-                    now_ns=now_ns,
-                    dt_ns=self._control_dt_ns,
-                    horizon_steps=self._executor.horizon_steps,
-                )
+                with stage("timeline_reference"):
+                    reference = self._timeline.reference_horizon(
+                        now_ns=now_ns,
+                        dt_ns=self._control_dt_ns,
+                        horizon_steps=self._executor.horizon_steps,
+                    )
                 scheduled = copy_group_vector(state.groups)
                 if self._state == RuntimeState.RUNNING and reference is not None:
                     scheduled = {
                         name: values[0].copy() for name, values in reference.groups.items()
                     }
-                    command = self._executor.step(now_ns, state, reference)
+                    with stage("executor_step"):
+                        command = self._executor.step(now_ns, state, reference)
                     if isinstance(self._executor, SmoothExecutor) and (
                         self._config["executor"]["smooth"]["release_guard"] is not None
                         or self._executor.uses_close_latch
@@ -1008,11 +1325,8 @@ class EdgeRuntime:
                             plan_id=reference.plan_id,
                             groups=self._executor.gripper_diagnostics,
                         )
-                elif (
-                    self._state == RuntimeState.RUNNING
-                    and self._config["inference"]["inference_schedule"] == "serial"
-                ):
-                    # Keep the last command fixed while waiting for the next chunk.
+                elif self._state == RuntimeState.RUNNING:
+                    # Every strategy holds the last sent command during a timeline gap.
                     # Reset executor velocity history to the held command, so a new
                     # chunk does not resume with velocity left over before the wait.
                     held_state = RobotState(
@@ -1021,36 +1335,16 @@ class EdgeRuntime:
                         sequence=state.sequence,
                     )
                     if isinstance(self._executor, SmoothExecutor):
-                        command = self._executor.hold(now_ns, held_state)
+                        with stage("executor_hold"):
+                            command = self._executor.hold(now_ns, held_state)
                         command.plan_id = self._timeline.active_plan_id
                     else:
                         self._executor.reset(held_state)
                         command = self._hold_command(now_ns, last_command)
-                elif (
-                    self._state == RuntimeState.RUNNING
-                    and isinstance(self._executor, SmoothExecutor)
-                    and self._executor.braking_tracking
-                ):
-                    command = self._executor.brake_hold(now_ns, state)
-                    if self._executor.has_pending_gripper_event:
-                        recorder.event(
-                            "gripper_decision",
-                            step=steps,
-                            monotonic_ns=now_ns,
-                            plan_id=None,
-                            groups=self._executor.gripper_diagnostics,
-                        )
                 else:
-                    if self._state == RuntimeState.RUNNING and isinstance(
-                        self._executor, SmoothExecutor
-                    ):
-                        command = self._executor.hold(now_ns, state)
-                        command.plan_id = self._timeline.active_plan_id
-                    else:
-                        self._executor.reset(state)
-                        command = self._hold_command(now_ns, state.groups)
-                    # Arm holds retain their measured anchor; a latched gripper
-                    # retains its already-sent command, which can differ at contact.
+                    # Pause holds measured state and clears execution history.
+                    self._executor.reset(state)
+                    command = self._hold_command(now_ns, state.groups)
                     self._safety.reset(
                         RobotState(
                             copy_group_vector(command.groups),
@@ -1058,7 +1352,8 @@ class EdgeRuntime:
                             state.sequence,
                         )
                     )
-                self._safety.validate_command(command)
+                with stage("safety_command"):
+                    self._safety.validate_command(command)
                 log_dispatch = (
                     command.plan_id != last_dispatch_plan_id
                     or now_ns - last_dispatch_log_ns >= 1_000_000_000
@@ -1099,25 +1394,26 @@ class EdgeRuntime:
                     last_dispatch_plan_id = command.plan_id
                 previous_command = copy_group_vector(last_command)
                 last_command = copy_group_vector(command.groups)
-                self._viewer.publish_state(
-                    state,
-                    frames,
-                    step=steps,
-                    max_steps=self._config["run"]["max_control_steps"],
-                    chunk_index=self._timeline.cursor(now_ns),
-                    active_chunk_id=(
-                        None
-                        if self._timeline.accepted_request_seq < 0
-                        else self._timeline.accepted_request_seq
-                    ),
-                )
+                with stage("robogui_publish_state"):
+                    self._robogui.publish_state(
+                        state,
+                        frames,
+                        step=steps,
+                        max_steps=self._config["run"]["max_control_steps"],
+                        chunk_index=self._timeline.cursor(now_ns),
+                        active_chunk_id=(
+                            None
+                            if self._timeline.accepted_request_seq < 0
+                            else self._timeline.accepted_request_seq
+                        ),
+                    )
                 if self._state == RuntimeState.RUNNING:
                     recorder.record_tick(
                         monotonic_ns=now_ns,
                         state=state,
                         scheduled=scheduled,
-                        optimized=command.groups,
                         command=command.groups,
+                        sent_commands=getattr(self._robot, "sent_command_snapshots", lambda: {})(),
                         plan_id=command.plan_id,
                         inference_ms=last_inference_ms,
                         camera_times_ns={
@@ -1127,11 +1423,12 @@ class EdgeRuntime:
                     )
                     steps += 1
 
-                self._strategy.on_tick(
-                    steps=steps,
-                    loop_ms=(self._clock.now_ns() - loop_start_ns) / 1e6,
-                    control_dt_ns=self._control_dt_ns,
-                )
+                with stage("strategy_tick"):
+                    self._strategy.on_tick(
+                        steps=steps,
+                        loop_ms=(self._clock.now_ns() - loop_start_ns) / 1e6,
+                        control_dt_ns=self._control_dt_ns,
+                    )
                 next_tick_ns += self._control_dt_ns
                 finished_tick_ns = self._clock.now_ns()
                 if next_tick_ns <= finished_tick_ns:
@@ -1141,32 +1438,38 @@ class EdgeRuntime:
                             lag_ns=finished_tick_ns - next_tick_ns,
                             step=steps,
                         )
-                    next_tick_ns = finished_tick_ns + self._control_dt_ns
-                self._clock.sleep_until_ns(next_tick_ns)
+                    # Resume immediately; rebase so missed periods are not replayed.
+                    next_tick_ns = finished_tick_ns
+                timing.sleep_until(self._clock, next_tick_ns)
+                timing.end()
 
+            timing.end(completed=False)
             episode_dir = recorder.finish(
-                success=True,
+                run_completed=True,
                 terminal_reason=terminal_reason,
                 steps=steps,
                 wall_time_s=time.perf_counter() - started_wall,
             )
-            self._viewer.publish_event(
-                "episode_finished",
-                step=steps,
-                metadata={
-                    "episode_id": episode_id,
-                    "episode_dir": str(episode_dir.resolve()),
-                    "reason": terminal_reason,
-                    "launch_mode": self._launch_mode,
-                },
-            )
+            with stage("robogui_publish_event"):
+                self._robogui.publish_event(
+                    "episode_finished",
+                    step=steps,
+                    metadata={
+                        "episode_id": episode_id,
+                        "episode_dir": str(episode_dir.resolve()),
+                        "reason": terminal_reason,
+                        "launch_mode": self._launch_mode,
+                        "evaluation": dict(self._evaluation),
+                        **self._rollout_identity,
+                    },
+                )
             completed = True
             return RunResult(
                 episode_dir=episode_dir,
                 steps=steps,
                 accepted_plans=accepted_plans,
                 rejected_plans=rejected_plans,
-                success=True,
+                run_completed=True,
                 terminal_reason=terminal_reason,
             )
         except KeyboardInterrupt:
@@ -1178,6 +1481,7 @@ class EdgeRuntime:
             logger.error("episode_aborted %s", abort_detail)
             raise
         finally:
+            timing.end(completed=False)
             faulted = not completed and abort_reason != "KeyboardInterrupt"
             self._state = RuntimeState.IDLE
             cleanup_errors: list[BaseException] = []
@@ -1200,13 +1504,12 @@ class EdgeRuntime:
                     closer()
                 except BaseException as exc:
                     cleanup_errors.append(exc)
-            for sensor in self._sensors:
-                try:
-                    sensor.close()
-                except BaseException as exc:
-                    cleanup_errors.append(exc)
             try:
-                self._viewer.close()
+                sensor_reader.close()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            try:
+                self._robogui.close()
             except BaseException as exc:
                 cleanup_errors.append(exc)
             if not completed:

@@ -51,8 +51,7 @@ inference:
     initial_delay_policy_steps: 0
     delay_buffer_size: 10
     beta: 9.1
-  action_start_mode: skip_elapsed_steps
-  commit_lead_s: 0.0
+  action_start_mode: drop_infer_latency
   max_plan_age_s: 30.0
   blend_policy_steps: 0
 

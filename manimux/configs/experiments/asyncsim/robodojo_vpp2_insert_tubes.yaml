@@ -10,7 +10,7 @@ run:
 
 robot:
   type: asyncsim
-  config: ../../embodiment/robot/arx_x5_dual.yaml
+  config: ../../embodiment/robot/robodojo_x5_dual.yaml
   control_hz: 25
   group_dims: {left_arm: 7, right_arm: 7}
   options:
@@ -52,12 +52,11 @@ policy:
   inference_delay_s: 0.0
 
 inference:
-  algorithm: manimux
+  algorithm: serial
   strategy: manimux.policy_adapter.vpp2.history:HistoryStrategy
   inference_schedule: serial
   chunk_policy_steps: 24
   action_start_mode: first_step_when_ready
-  commit_lead_s: 0.0
   max_plan_age_s: 300.0
   blend_policy_steps: 0
 

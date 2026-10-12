@@ -60,7 +60,7 @@ policy:
     request_timeout_s: 10.0
     server: ws://127.0.0.1:8530
 
-viewer:
+robogui:
   enabled: true
   robot: yam
   policy_label: Pi05 joint+EEF 30k - EEF execution - ManiMux first 20
@@ -70,12 +70,11 @@ recording:
   video_fps: 30.0
 
 inference:
-  algorithm: manimux
+  algorithm: async
   config: ../../../inference/yam_manimux_chunk20.yaml
 
 executor:
-  type: smooth
-  config: ../../../executor/yam_smooth_standard.yaml
+  type: direct
 
 policy_server:
   config: ../../../policy/pi05/yam/put-bottles/eef-from-joint-ee-step30000.yaml

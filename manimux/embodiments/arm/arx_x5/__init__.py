@@ -1,11 +1,13 @@
-"""Offline ARX X5 geometry for simulation policy adapters."""
+"""Physical X5 controller and separately selected RoboDojo offline geometry."""
 
 from manimux.embodiments.arm.base import ArmBase, ArmModel
 
 from .kinematics import ArxX5Kinematics
+from .arm import ArxX5Arm
+from .controller import ArxX5Controller
 
 
-class ArxX5Arm(ArmBase):
+class RoboDojoX5Arm(ArmBase):
     """Model provider only; physical controller methods remain abstract."""
 
     @classmethod
@@ -17,4 +19,4 @@ class ArxX5Arm(ArmBase):
         )
 
 
-__all__ = ["ArxX5Arm", "ArxX5Kinematics"]
+__all__ = ["ArxX5Arm", "ArxX5Controller", "ArxX5Kinematics", "RoboDojoX5Arm"]

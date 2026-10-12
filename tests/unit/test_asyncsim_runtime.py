@@ -13,7 +13,6 @@ from manimux.policies import build_policy_model
 from manimux.policies.capabilities import PolicyCapabilities
 from manimux.policies.xpolicylab.client import XPolicyLabWsPolicyModel
 from manimux.runtime.asyncsim import AsyncSimRuntime
-from manimux.runtime.dvac import DvacInferenceRequest
 from manimux.runtime.paint import PaintInferenceRequest
 from manimux.runtime.rtc.request import RtcInferenceRequest
 from manimux.types import ActionChunk, InferenceResponse, RobotCommand
@@ -153,13 +152,6 @@ class SamplingWorker(FakeWorker):
     def __init__(self, clock, mode):
         super().__init__(clock, PolicyCapabilities(sampling_modes=frozenset({mode})))
         self.mode = mode
-
-    def poll(self):
-        response = super().poll()
-        if response is not None and self.mode == "dvac":
-            response.raw_action["dvac"] = {"execution_steps": 2}
-        return response
-
 
 def config():
     source = Path(__file__).resolve().parents[2] / "manimux/configs/experiments/asyncsim/fake_joint.yaml"
@@ -392,11 +384,11 @@ class AsyncSimRuntimeTests(unittest.TestCase):
         for mode, request_type in (
             ("rtc", RtcInferenceRequest),
             ("paint", PaintInferenceRequest),
-            ("dvac", DvacInferenceRequest),
         ):
             with self.subTest(mode=mode):
                 configured = config()
                 configured["inference"]["algorithm"] = mode
+                configured["inference"].update(inference_schedule="single_inflight", request_trigger="algorithm")
                 configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
                 configured["inference"]["rtc"].update(
                     initial_delay_policy_steps=1, min_execute_policy_steps=1,
@@ -415,8 +407,6 @@ class AsyncSimRuntimeTests(unittest.TestCase):
                 else:
                     self.assertIsInstance(worker.submitted[0], request_type)
                 self.assertTrue(all(item["action_space"] == "joint_position" for item in backend.commands))
-                if mode == "dvac":
-                    self.assertTrue(any(item["plan_id"].startswith("joint-") for item in backend.commands))
 
     def test_rtc_uses_simulation_time_for_conditioned_overlap(self):
         class SlowClock(FixedClock):
@@ -441,6 +431,7 @@ class AsyncSimRuntimeTests(unittest.TestCase):
         configured["policy"]["action_dt_s"] = 0.04
         configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
         configured["inference"]["algorithm"] = "rtc"
+        configured["inference"].update(inference_schedule="single_inflight", request_trigger="algorithm")
         configured["inference"]["rtc"].update(
             initial_delay_policy_steps=1, min_execute_policy_steps=1,
         )
@@ -455,6 +446,7 @@ class AsyncSimRuntimeTests(unittest.TestCase):
     def test_sampling_mode_mismatch_fails_before_request(self):
         configured = config()
         configured["inference"]["algorithm"] = "rtc"
+        configured["inference"].update(inference_schedule="single_inflight", request_trigger="algorithm")
         worker = FakeWorker(FixedClock())
         runtime = AsyncSimRuntime(configured, client=FakeAsyncSim(), clock=worker.clock, worker=worker)
         with self.assertRaisesRegex(RuntimeError, "sampling modes"):
@@ -497,12 +489,12 @@ class AsyncSimRuntimeTests(unittest.TestCase):
         self.assertLess(backend.commands[-1]["groups"]["left_arm"][0], 1.0)
         runtime.close()
 
-    def test_skip_elapsed_steps_reuses_one_chunk_for_multiple_commands(self):
+    def test_drop_infer_latency_reuses_one_chunk_for_multiple_commands(self):
         backend = FakeAsyncSim()
         clock = FixedClock()
         configured = config()
         configured["run"]["simulation_time_timeline"] = True
-        configured["inference"]["action_start_mode"] = "skip_elapsed_steps"
+        configured["inference"]["action_start_mode"] = "drop_infer_latency"
         runtime = AsyncSimRuntime(configured, client=backend, clock=clock)
         runtime.start()
         try:
@@ -551,7 +543,7 @@ class AsyncSimRuntimeTests(unittest.TestCase):
                 self.assertEqual(configured["policy"]["action_dt_s"], 0.04)
                 self.assertEqual(configured["policy"]["horizon_policy_steps"], 50)
                 self.assertEqual(configured["inference"]["inference_schedule"], "single_inflight")
-                self.assertEqual(configured["inference"]["action_start_mode"], "skip_elapsed_steps")
+                self.assertEqual(configured["inference"]["action_start_mode"], "drop_infer_latency")
                 self.assertEqual(configured["policy_server"]["checkpoint_num"], 59999)
                 self.assertEqual(configured["policy_server"]["task_name"], task)
                 self.assertEqual(configured["policy"]["expected_backend"]["model"]["task_name"], task)

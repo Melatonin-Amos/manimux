@@ -1,7 +1,7 @@
 """Measured observation history decorating existing inference strategies.
 
-build_submission already runs once per control tick. This plugin only gates
-history readiness and supplies observations; scheduling stays in the delegate.
+observe_snapshot runs once per control tick, independently of request admission.
+This plugin gates history readiness and supplies observations to its delegate.
 """
 
 from __future__ import annotations
@@ -111,7 +111,9 @@ class MeasuredHistory:
         return WindowSnapshot(newest.state, frames, previous)
 
 
-def align_rtc_condition(request, timeline, now_ns, *, offset_ns, dt_ns, group_order, horizon):
+def align_rtc_condition(
+    request, timeline, now_ns, *, offset_ns, dt_ns, group_order, horizon, handoff_skip_steps=0
+):
     """Sample the actual committed trajectory at the new model's target times.
 
     This handles first_action_offset != action_dt and removes weights beyond the
@@ -123,23 +125,38 @@ def align_rtc_condition(request, timeline, now_ns, *, offset_ns, dt_ns, group_or
     if active is None:
         raise ValueError("RTC condition has no committed trajectory")
     old = np.concatenate([active.groups[name] for name in group_order], axis=1)
-    target = request.observation_time_ns + offset_ns + np.arange(horizon) * dt_ns
+    # The delegate already moved the mask to model-row indices. Row k+skip
+    # executes in slot k, including for UMI's non-zero first-action offset.
+    slots = np.arange(horizon) - handoff_skip_steps
+    target = request.observation_time_ns + offset_ns + slots * dt_ns
     old_times = active.start_time_ns + np.arange(len(old)) * active.dt_ns
     weight_times = (
         active.start_time_ns
-        + (timeline.cursor(now_ns) + np.arange(len(request.condition_weights))) * dt_ns
+        + (timeline.cursor(now_ns) + np.arange(len(request.condition_weights)) - handoff_skip_steps)
+        * dt_ns
     )
     rows = np.column_stack(
         [np.interp(target, old_times, old[:, column]) for column in range(old.shape[1])]
     )
     weights = np.interp(target, weight_times, request.condition_weights, left=0.0, right=0.0)
     weights[(target < old_times[0]) | (target > old_times[-1])] = 0
+    weights[:handoff_skip_steps] = 0
     request.action_condition = rows
     request.condition_weights = weights
 
 
+def execution_offset_s(policy) -> float:
+    """Wall-clock phase of source row 0; defaults to the checkpoint's trained offset.
+
+    adapter.execution_offset_s may move it, e.g. to zero to run each row at the
+    observation time it was predicted for. Decoding and RTC alignment both use it.
+    """
+    identity = policy["expected_backend"]["model"]
+    return float(policy["adapter"].get("execution_offset_s", identity["first_action_offset_s"]))
+
+
 class HistoryStrategy:
-    # Read by EdgeRuntime: while the viewer holds the rollout paused, submit no
+    # Read by EdgeRuntime: while the robogui holds the rollout paused, submit no
     # inference and drop plans. A plan committed during the pause keeps its
     # wall-clock start, so Start would make the arms chase it mid-way from an
     # observation taken before Start.
@@ -154,11 +171,11 @@ class HistoryStrategy:
                 raise ValueError(f"Bind UMI checkpoint {key} before constructing history")
         history = config["inference"]["history"]
         delegate_name = config["inference"]["algorithm"]
-        if delegate_name not in {"manimux", "rtc"}:
-            raise ValueError("UMI history supports the existing manimux and rtc strategies")
+        if delegate_name not in {"async", "serial", "rtc"}:
+            raise ValueError("UMI history supports the existing async, serial and rtc strategies")
         delegate_config = deepcopy(config)
         delegate_config["inference"]["strategy"] = None
-        # 配置已补齐默认值；只复查切换 delegate 后的时间与动作约束。
+        # Configuration defaults are resolved; recheck only timing and action constraints after switching delegates.
         validate_inference_parameters(delegate_config["inference"], delegate_config["executor"])
         validate_runtime_parameters(delegate_config)
         self.delegate = build_inference_strategy(delegate_config)
@@ -171,10 +188,15 @@ class HistoryStrategy:
             state_tolerance_s=float(history["state_tolerance_s"]),
             camera_skew_s=float(history["camera_skew_s"]),
         )
-        self.offset_ns = round(float(identity["first_action_offset_s"]) * 1e9)
+        self.offset_ns = round(execution_offset_s(config["policy"]) * 1e9)
         self.dt_ns = round(action_interval(config["policy"]) * 1e9)
         self.group_order = tuple(config["robot"]["group_dims"])
         self.horizon = config["policy"]["horizon_policy_steps"]
+        self.handoff_skip_steps = (
+            config["inference"]["handoff_skip_steps"]
+            if config["inference"]["handoff"] == "waypoint"
+            else 0
+        )
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -183,8 +205,10 @@ class HistoryStrategy:
         self.history.reset()
         self.delegate.reset()
 
+    def observe_snapshot(self, snapshot):
+        self.history.observe(snapshot)
+
     def build_submission(self, **kwargs):
-        self.history.observe(kwargs["snapshot"])
         window = self.history.window(kwargs["now_ns"])
         if window is None:
             return None
@@ -198,6 +222,7 @@ class HistoryStrategy:
                 dt_ns=self.dt_ns,
                 group_order=self.group_order,
                 horizon=self.horizon,
+                handoff_skip_steps=self.handoff_skip_steps,
             )
             weights = getattr(submission.request, "condition_weights", None)
             if weights is not None and not np.any(weights > 0):
@@ -205,7 +230,10 @@ class HistoryStrategy:
                 submission.request.condition_weights = None
                 self.delegate.clear_condition(submission.request.request_seq)
                 submission.event_fields.update(
-                    conditioned=False, forecast_delay=0, condition_reason="no_committed_overlap"
+                    conditioned=False,
+                    forecast_delay=0,
+                    condition_handoff_skip_steps=0,
+                    condition_reason="no_committed_overlap",
                 )
         return submission
 

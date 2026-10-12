@@ -1,0 +1,8 @@
+# Offline RoboDojo geometry. Joint targets are executed by AsyncSim.
+type: arm
+implementation: manimux.embodiments.arm.arx_x5:RoboDojoX5Arm
+action_layout: {arm_dofs: 6, gripper_dofs: 1}
+options:
+  position_tolerance: 0.00001
+  orientation_tolerance: 0.0001
+  max_iterations: 200

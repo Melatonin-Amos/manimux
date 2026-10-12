@@ -21,12 +21,12 @@ class HistoryStrategy:
     def __init__(self, config):
         inference = config["inference"]
         if (
-            inference["algorithm"] != "manimux"
+            inference["algorithm"] != "serial"
             or inference["inference_schedule"] != "serial"
             or inference["action_start_mode"] != "first_step_when_ready"
             or inference["max_chunk_policy_steps"] != REPLAN_STEPS
             or inference["blend_policy_steps"] != 0
-            or inference["commit_lead_s"] != 0
+            or inference["handoff_skip_steps"] != 0
             or config["executor"]["type"] != "direct"
             or config["executor"].get("motion_limits") is not None
             or config["policy"]["action_decoding"] != "inline"
@@ -53,7 +53,28 @@ class HistoryStrategy:
         self._pending_request = None
         self._plan_id = None
         self._has_anchor = False
+        self._adapter = None
+        self._timeline = None
         self.delegate.reset()
+
+    def observe_snapshot(self, snapshot):
+        if not self._has_anchor or self._pending_request is not None or len(self._completed) == REPLAN_STEPS:
+            return
+        active = self._timeline.active_horizon()
+        if active is None or active.plan_id != self._plan_id:
+            raise RuntimeError("VPP2 history lost its committed plan")
+        if active.dt_ns != self.dt_ns or active.horizon_steps != REPLAN_STEPS:
+            raise RuntimeError("VPP2 history needs an untrimmed native 24-step plan")
+        row = len(self._completed)
+        boundary_ns = active.start_time_ns + (row + 1) * self.dt_ns
+        # Use the measured state's capture clock, so stale feedback cannot fill a later period.
+        sample_ns = snapshot.state.monotonic_ns
+        if sample_ns < boundary_ns:
+            return
+        if sample_ns >= boundary_ns + self.dt_ns:
+            raise RuntimeError("VPP2 missed a native observation boundary; history cannot be backfilled")
+        targets = {name: values[row, -1] for name, values in active.groups.items()}
+        self._completed.append(self._adapter.build_observation(snapshot, gripper_targets=targets))
 
     def build_submission(self, **kwargs):
         if kwargs["runtime_state"] != RuntimeState.RUNNING:
@@ -72,7 +93,8 @@ class HistoryStrategy:
         adapter = kwargs["adapter"]
         if not isinstance(adapter, VPP2ArxX5Adapter):
             raise TypeError("VPP2 history requires its paired observation/action adapter")
-        snapshot, now_ns = kwargs["snapshot"], kwargs["now_ns"]
+        self._adapter, self._timeline = adapter, kwargs["timeline"]
+        snapshot = kwargs["snapshot"]
         targets = None
         if self._has_anchor:
             active = kwargs["timeline"].active_horizon()
@@ -80,17 +102,10 @@ class HistoryStrategy:
                 raise RuntimeError("VPP2 history lost its committed plan")
             if active.dt_ns != self.dt_ns or active.horizon_steps != REPLAN_STEPS:
                 raise RuntimeError("VPP2 history needs an untrimmed native 24-step plan")
-            row = min(len(self._completed), REPLAN_STEPS - 1)
-            targets = {name: values[row, -1] for name, values in active.groups.items()}
             if len(self._completed) < REPLAN_STEPS:
-                boundary_ns = active.start_time_ns + (row + 1) * self.dt_ns
-                if now_ns < boundary_ns:
-                    return None
-                if now_ns >= boundary_ns + self.dt_ns:
-                    raise RuntimeError("VPP2 missed a native observation boundary; history cannot be backfilled")
-                self._completed.append(adapter.build_observation(snapshot, gripper_targets=targets))
-                if len(self._completed) < REPLAN_STEPS:
-                    return None
+                return None
+            row = REPLAN_STEPS - 1
+            targets = {name: values[row, -1] for name, values in active.groups.items()}
         view = adapter.build_observation(snapshot, gripper_targets=targets)
         history = (*self._completed[:-1], view) if self._has_anchor else (view,)
         window = replace(view, observation_history=history)

@@ -1,4 +1,3 @@
-# Common single-inflight ManiMux request scheduling.
+# Common single-inflight Async request scheduling.
 inference_schedule: single_inflight
-commit_lead_s: 0.0
-action_start_mode: skip_elapsed_steps
+action_start_mode: drop_infer_latency

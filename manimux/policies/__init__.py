@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from manimux.plugins import load_plugin
 from manimux.policies.base import PolicyModel, action_interval
-from manimux.policies.capabilities import PolicyCapabilities
+from manimux.policies.capabilities import PolicyCapabilities, metadata_mismatches
 from manimux.policies.fake import FakePolicyAdapter, FakePolicyModel
 
 PolicyModelFactory = Callable[[dict], PolicyModel]
@@ -20,6 +20,7 @@ def _fake_model_factory(config: dict) -> PolicyModel:
 
 _MODEL_BUILTINS: dict[str, PolicyModelFactory | str] = {
     "fake": _fake_model_factory,
+    "starvla_ws": "manimux.policies.starvla.client:build_model",
     "xpolicylab_ws": "manimux.policies.xpolicylab.client:build_model",
 }
 
@@ -45,4 +46,5 @@ __all__ = [
     "PolicyModelFactory",
     "PolicyWorkerClient",
     "build_policy_model",
+    "metadata_mismatches",
 ]

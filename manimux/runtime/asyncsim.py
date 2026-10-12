@@ -21,6 +21,7 @@ from manimux.runtime.inference import (
     CommitSettings, RequestState, build_inference_strategy, prepare_strategy_chunk,
 )
 from manimux.runtime.safety import RuntimeState, SafetyGuard
+from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
 from manimux.types import (
     ActionChunk, ActionContext, InferenceResponse, ObservationSnapshot, RobotCommand,
@@ -37,9 +38,11 @@ class AsyncSimRuntime:
         if config["executor"]["type"] not in {"direct", "smooth"}:
             raise ValueError("AsyncSim currently supports direct and smooth executors")
         if config["inference"]["algorithm"] not in {
-            "manimux", "act_temporal_ensemble", "rtc", "paint", "dvac",
+            "async", "serial", "act_temporal_ensemble", "rtc", "paint",
         }:
             raise ValueError("AsyncSim inference strategy is not supported")
+        if config["inference"]["inference_schedule"] == "multi_inflight":
+            raise ValueError("AsyncSim does not yet support multiple in-flight requests")
         if config["policy"]["action_decoding"] != "inline" or config["inference"]["independent_group_decoding"]:
             raise ValueError("AsyncSim requires inline, non-independent action decoding")
         self.config = config
@@ -47,6 +50,7 @@ class AsyncSimRuntime:
         self.session_id = f"asyncsim-{uuid.uuid4().hex}"
         self.worker = worker
         self.strategy = build_inference_strategy(config)
+        self.scheduler = RequestScheduler(config["inference"])
         self.adapter = build_policy_adapter(
             config["robot"], config["policy"], motion_limits=config["executor"]["motion_limits"],
         )
@@ -117,13 +121,12 @@ class AsyncSimRuntime:
         if self._control_period_alignment == "plan" and (
             not self._simulation_timeline
             or config["inference"]["inference_schedule"] != "serial"
-            or config["inference"]["commit_lead_s"] != 0
             or round(config["policy"]["action_dt_s"] * 1e9) != self.dt_ns
             or config["executor"]["type"] != "direct"
         ):
             raise ValueError("plan control alignment requires serial simulation timing with native control intervals")
-        if self._simulation_timeline and config["inference"]["algorithm"] not in {"manimux", "rtc"}:
-            raise ValueError("simulation-time timeline currently requires ManiMux or RTC inference")
+        if self._simulation_timeline and config["inference"]["algorithm"] not in {"async", "serial", "rtc"}:
+            raise ValueError("simulation-time timeline currently requires Async, Serial or RTC inference")
         self._timeline_origin_ns: int | None = None
         self._timeline_now_ns: int | None = None
 
@@ -248,8 +251,8 @@ class AsyncSimRuntime:
                 raise ValueError("AsyncSim requires a canonical joint_position chunk")
             result = self.timeline.commit(
                 chunk, now_ns=now_ns,
-                commit_lead_ns=round(self.config["inference"]["commit_lead_s"] * 1e9),
                 max_plan_age_ns=round(self.config["inference"]["max_plan_age_s"] * 1e9),
+                handoff_skip_steps=self.config["inference"]["handoff_skip_steps"],
                 current_command=(
                     self._last_command if commit_settings is None else commit_settings.current_command
                 ),
@@ -330,6 +333,7 @@ class AsyncSimRuntime:
             self._check_capabilities(worker)
             episode = self.start(seed=seed, recording_directory=recording_directory)
             self.strategy.reset()
+            self.scheduler.reset()
             while True:
                 initial = self.client.read_snapshot(self.streams)
                 if all(entry["packet"] is not None for entry in initial["packets"].values()):
@@ -357,7 +361,8 @@ class AsyncSimRuntime:
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
                 nonlocal request_seq, last_submitted, last_deadline, pending_observation_ns, in_flight
-                submission = self.strategy.build_submission(
+                submission = self.scheduler.build_submission(
+                    self.strategy,
                     session_id=self.session_id, request_seq=request_seq + 1, now_ns=now_ns,
                     snapshot=observation, adapter=self.adapter, timeline=self.timeline,
                     request_state=RequestState(in_flight, last_submitted, last_deadline),
@@ -375,6 +380,7 @@ class AsyncSimRuntime:
                         self.config["policy"]["timeout_s"] * 1_000_000_000
                     )
                 worker.submit_latest(prepared)
+                self.scheduler.on_submitted(now_ns)
                 request_seq = prepared.request_seq
                 last_submitted = request_seq
                 last_deadline = prepared.deadline_ns
