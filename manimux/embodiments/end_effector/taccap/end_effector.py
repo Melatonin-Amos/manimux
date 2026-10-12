@@ -41,13 +41,13 @@ class TacCapGripper(GripperBase):
 
     connect opens serial with cameras disabled, validates calibration and reads
     feedback; it never enables, homes or clears faults. ``control_mode`` selects
-    the existing direct impedance-position path or the SDK's supervised
-    force-position controller. The latter keeps the same normalized position
-    command and applies the configured grasp torque as a bounded budget.
+    the SDK's supervised impedance or force-position controller. Both keep the
+    same normalized position command; force-position applies the configured
+    grasp torque as a bounded budget.
 
-    In force-position mode the first command starts the controller before enabling
-    the motor, then submits the target. While it runs, feedback comes only from its
-    status-stream snapshot; synchronous motor reads must not share that bus.
+    The first command starts the controller before enabling the motor, then
+    submits the target. While it runs, feedback comes only from its status-stream
+    snapshot; synchronous motor reads must not share that bus.
 
     get_state polls synchronously at most read_hz (<=100), caching measurements
     between polls. The timestamp is host receipt using the supplied Clock, not
@@ -116,7 +116,7 @@ class TacCapGripper(GripperBase):
         self._timeout_ms = timeout_ms
         self._device = None
         self._map = None
-        self._force_config = None
+        self._controller_config = None
         self._controller_factory = None
         self._controller = None
         self._controller_running = False
@@ -167,14 +167,14 @@ class TacCapGripper(GripperBase):
                 ):
                     raise ValueError("TacCap calibration is invalid")
                 self._map = mapping
+                model = self._device.motor.get_model()
+                if not model.from_flash:
+                    raise RuntimeError("TacCap motor model is not persisted in flash")
+                spec = self._device.motor.get_spec()
+                audit = self._device.audit_envelope(timeout_ms=self._timeout_ms)
+                if not audit.ok or audit.needs_write or audit.effective is None:
+                    raise RuntimeError(f"TacCap safety envelope is not ready: {audit}")
                 if self._control_mode == "force_position":
-                    model = self._device.motor.get_model()
-                    if not model.from_flash:
-                        raise RuntimeError("TacCap motor model is not persisted in flash")
-                    spec = self._device.motor.get_spec()
-                    audit = self._device.audit_envelope(timeout_ms=self._timeout_ms)
-                    if not audit.ok or audit.needs_write or audit.effective is None:
-                        raise RuntimeError(f"TacCap safety envelope is not ready: {audit}")
                     limit = min(
                         float(spec.stall_cont_torque_nm),
                         float(audit.effective.cont_torque_nm),
@@ -188,11 +188,17 @@ class TacCapGripper(GripperBase):
                     config.grasp_torque_nm = self._grasp_torque_nm
                     if self._close_speed_radps is not None:
                         config.close_speed_radps = self._close_speed_radps
-                    self._force_config = config
-                    # Construction has a destructor-side disable even if start()
-                    # was never called. Delay it until the first authorized command
-                    # so connect/close remains strictly read-only.
                     self._controller_factory = sdk.ForcePositionController
+                else:
+                    config = sdk.ImpedanceConfig.for_spec(spec)
+                    config.kp = self._kp
+                    config.kd = self._kd
+                    config.feedforward_torque = 0.0
+                    self._controller_factory = sdk.ImpedanceController
+                self._controller_config = config
+                # Construction has a destructor-side disable even if start()
+                # was never called. Delay it until the first authorized command
+                # so connect/close remains strictly read-only.
                 self._sample()
                 self._ready = True
             except Exception as error:
@@ -227,15 +233,19 @@ class TacCapGripper(GripperBase):
         snapshot = self._controller.snapshot()
         observation = snapshot.observation
         phase = snapshot.state.name
+        mode = self._control_mode.replace("_", "-")
         if phase == "FAULT" and not allow_fault:
-            raise RuntimeError(f"TacCap force-position fault: {snapshot.fault_reason}")
+            raise RuntimeError(f"TacCap {mode} fault: {snapshot.fault_reason}")
         if not observation.valid:
-            raise RuntimeError("TacCap force-position observation is invalid")
+            raise RuntimeError(f"TacCap {mode} observation is invalid")
         age_ms = float(observation.age_ms)
         if not math.isfinite(age_ms) or age_ms < 0:
-            raise RuntimeError("TacCap force-position observation age is invalid")
-        if age_ms > float(self._force_config.status_timeout_ms):
-            raise TimeoutError(f"TacCap force-position observation is stale ({age_ms:.1f} ms)")
+            raise RuntimeError(
+                f"TacCap {mode} observation age is invalid "
+                f"(side={self._side}, age_ms={age_ms!r}, seq={observation.seq})"
+            )
+        if age_ms > float(self._controller_config.status_timeout_ms):
+            raise TimeoutError(f"TacCap {mode} observation is stale ({age_ms:.1f} ms)")
         if observation.status & _PROTECTION_STATUS_MASK:
             raise RuntimeError(f"TacCap motor protection status: 0x{observation.status:04x}")
         return snapshot, observation
@@ -248,7 +258,7 @@ class TacCapGripper(GripperBase):
                 self._clock.now_ns() / 1e9 - float(observation.age_ms) / 1000.0
             )
         if self._controller_timestamp is None or not math.isfinite(self._controller_timestamp):
-            raise RuntimeError("TacCap force-position timestamp is invalid")
+            raise RuntimeError("TacCap controller timestamp is invalid")
         return self._controller_timestamp
 
     def _sample(self) -> GripperState:
@@ -256,7 +266,8 @@ class TacCapGripper(GripperBase):
         if self._controller_running:
             _, observation = self._controller_snapshot()
             opening, _ = self._opening_from_raw(
-                float(observation.raw_pos), allow_endpoint_excursion=True
+                float(observation.raw_pos),
+                allow_endpoint_excursion=self._control_mode == "force_position",
             )
             self._state = GripperState(opening, self._controller_sample_time(observation))
             return self._state
@@ -323,29 +334,18 @@ class TacCapGripper(GripperBase):
             self._require_ready()
             try:
                 self.get_state()  # reject failed/invalid feedback before commanding
-                if self._control_mode == "force_position":
-                    if not self._controller_running:
-                        if self._controller is None:
-                            self._controller = self._controller_factory(
-                                self._device, self._force_config
-                            )
-                        # Mark cleanup responsibility before start: a failed start
-                        # may still have acquired the stream or submit thread.
-                        self._controller_running = True
-                        self._controller.start()
-                        self._enabled = True
-                        self._device.motor.enable()
-                    self._controller.set_target(opening)
-                    return
-                if not self._enabled:
-                    self._enabled = True  # retain cleanup obligation even if enable raises
+                if not self._controller_running:
+                    if self._controller is None:
+                        self._controller = self._controller_factory(
+                            self._device, self._controller_config
+                        )
+                    # Mark cleanup responsibility before start: a failed start
+                    # may still have acquired the stream or submit thread.
+                    self._controller_running = True
+                    self._controller.start()
+                    self._enabled = True
                     self._device.motor.enable()
-                self._device.set_position(
-                    opening,
-                    kp_nm_per_rad=self._kp,
-                    kd_nm_s_per_rad=self._kd,
-                    feedforward_torque_nm=0.0,
-                )
+                self._controller.set_target(opening)
             except Exception as error:
                 try:
                     self.stop()
@@ -378,7 +378,7 @@ class TacCapGripper(GripperBase):
             if self._device is not None:
                 self._device.transport.stop()
                 self._controller = None
-                self._force_config = None
+                self._controller_config = None
                 self._controller_factory = None
                 self._device = None
             self._map = None

@@ -49,7 +49,11 @@ def main():
             for _ in range(args.repeats):
                 seq += 1
                 now = time.monotonic_ns()
-                context = ActionContext(seq, now, now, measured_state=RobotState(groups, now, seq))
+                state = RobotState(groups, now, seq)
+                context = ActionContext(
+                    seq, now, now, observation_state=state,
+                    ik_seed=state, ik_seed_source="observation_state",
+                )
                 before = time.perf_counter_ns()
                 serial = adapter.decode_action(raw, context)
                 serial_ms.append((time.perf_counter_ns() - before) / 1e6)

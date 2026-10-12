@@ -133,7 +133,9 @@ class PolicyWarmup:
                                     request_seq=response.request_seq,
                                     observation_time_ns=response.observation_time_ns,
                                     created_time_ns=response.finished_time_ns,
-                                    measured_state=request.observation.state,
+                                    observation_state=request.observation.state,
+                                    ik_seed=request.observation.state,
+                                    ik_seed_source="observation_state",
                                     max_source_steps=self.config["policy"]["horizon_policy_steps"],
                                 ),
                             )

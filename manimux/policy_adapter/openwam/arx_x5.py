@@ -145,7 +145,7 @@ class OpenWAMArxX5Adapter(KinematicAdapter):
         actions = action_groups(raw, dict.fromkeys(GROUPS, 8), format="pose")
         if any(len(rows) != self._horizon for rows in actions.values()):
             raise ValueError(f"OpenWAM X5 action horizon must be {self._horizon}")
-        seed_groups = saved[1] if context.measured_state is None else context.measured_state.groups
+        seed_groups = saved[1] if context.ik_seed is None else context.ik_seed.groups
         groups = {}
         for name in GROUPS:
             model = self.kinematics.models[name]

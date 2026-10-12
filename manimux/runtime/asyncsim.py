@@ -24,7 +24,7 @@ from manimux.runtime.safety import RuntimeState, SafetyGuard
 from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
 from manimux.types import (
-    ActionChunk, ActionContext, InferenceResponse, ObservationSnapshot, RobotCommand,
+    ActionChunk, ActionContext, InferenceResponse, ObservationSnapshot, RobotCommand, RobotState,
     copy_group_vector,
 )
 
@@ -328,6 +328,7 @@ class AsyncSimRuntime:
         last_deadline = 0
         in_flight = False
         pending_observation_ns: dict[int, int] = {}
+        pending_observation_states: dict[int, RobotState] = {}
         try:
             worker.start()
             self._check_capabilities(worker)
@@ -385,6 +386,11 @@ class AsyncSimRuntime:
                 last_submitted = request_seq
                 last_deadline = prepared.deadline_ns
                 pending_observation_ns = {request_seq: prepared.observation_time_ns}
+                pending_observation_states.clear()
+                request_state = prepared.observation.state
+                pending_observation_states[request_seq] = RobotState(
+                    copy_group_vector(request_state.groups), request_state.monotonic_ns, request_state.sequence,
+                )
                 in_flight = True
                 events.append({"kind": "inference_submitted", "request_seq": request_seq,
                                "instruction": prepared.instruction,
@@ -442,6 +448,7 @@ class AsyncSimRuntime:
                     if response.request_seq == last_submitted:
                         in_flight = False
                     observation_ns = pending_observation_ns.pop(response.request_seq, None)
+                    observation_state = pending_observation_states.pop(response.request_seq, None)
                     invalid_reason = (
                         response.error
                         or ("stale_session" if response.session_id != self.session_id else None)
@@ -463,7 +470,9 @@ class AsyncSimRuntime:
                                 ActionContext(
                                     response.request_seq, response.observation_time_ns,
                                     response.finished_time_ns, execution_time_ns=now_ns,
-                                    measured_state=observation.state,
+                                    ik_seed=observation.state,
+                                    ik_seed_source="measured_state",
+                                    observation_state=observation_state,
                                     max_source_steps=self.config["inference"]["max_chunk_policy_steps"],
                                 ),
                             )

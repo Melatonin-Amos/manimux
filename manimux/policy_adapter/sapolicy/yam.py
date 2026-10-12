@@ -361,7 +361,7 @@ class SAPolicyYamAdapter(PolicyAdapter):
     def decode_action(self, raw: object, context: ActionContext) -> ActionChunk:
         return self._decode_action(raw, context)
 
-    # A decoder process owns its own kinematics; measured_state is the complete
+    # A decoder process owns its own kinematics; ik_seed is the complete
     # decode seed, so it does not need the observation-side anchor cache.
     supports_context_only_decode = True
     supports_independent_group_decode = True
@@ -431,7 +431,7 @@ class SAPolicyYamAdapter(PolicyAdapter):
                     group, actions[:, start : start + 3]
                 )
         anchor = self._anchors.pop(context.request_seq, None)
-        if anchor is None and context.measured_state is None:
+        if anchor is None and context.ik_seed is None:
             raise ValueError(
                 f"SAPolicy adapter has no observation anchor for request {context.request_seq}"
             )
@@ -455,13 +455,13 @@ class SAPolicyYamAdapter(PolicyAdapter):
             raw_eef[group] = raw_model_actions[:, arm_index * 8 : arm_index * 8 + 8].tolist()
             state_start = arm_index * GROUP_DIM
             seed_state = None if anchor is None else anchor[state_start : state_start + GROUP_DIM]
-            if context.measured_state is not None:
-                measured = context.measured_state.groups.get(group)
-                if measured is None:
-                    raise ValueError(f"SAPolicy measured state is missing group {group!r}")
-                seed_state = np.asarray(measured, dtype=np.float64)
+            if context.ik_seed is not None:
+                selected = context.ik_seed.groups.get(group)
+                if selected is None:
+                    raise ValueError(f"SAPolicy IK seed is missing group {group!r}")
+                seed_state = np.asarray(selected, dtype=np.float64)
                 if seed_state.shape != (GROUP_DIM,) or not np.isfinite(seed_state).all():
-                    raise ValueError(f"SAPolicy measured state group {group!r} is invalid")
+                    raise ValueError(f"SAPolicy IK seed group {group!r} is invalid")
             assert seed_state is not None
             if context.independent_groups:
                 groups[group], failed_at = self._solve_arm_bounded(

@@ -333,6 +333,42 @@ class AsyncSimRuntimeTests(unittest.TestCase):
         self.assertGreater(run["loop_ticks"], run["steps"])
         self.assertLess(backend.sim_ts, .4)
 
+    def test_decode_retains_request_feedback_and_uses_response_feedback_for_ik(self):
+        class ChangingFeedback(FakeAsyncSim):
+            reads = 0
+
+            def read_snapshot(self, streams):
+                self.reads += 1
+                snapshot = super().read_snapshot(streams)
+                state = snapshot["packets"]["proprio.joint_state"]["packet"]["payload"][0]
+                for name in ("left_joints", "right_joints"):
+                    state[name] = [self.reads * .01] * 2
+                return snapshot
+
+        clock = FixedClock()
+        configured = config()
+        configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
+        worker = FakeWorker(clock)
+        runtime = AsyncSimRuntime(configured, client=ChangingFeedback(clock_ns=clock.now_ns),
+                                  clock=clock, worker=worker)
+        contexts = []
+        decode = runtime.adapter.decode_action
+
+        def capture(raw, context):
+            contexts.append(context)
+            return decode(raw, context)
+
+        runtime.adapter.decode_action = capture
+        result = runtime.run_policy(max_steps=4)
+        self.assertGreater(result["accepted_plans"], 0)
+        self.assertTrue(contexts)
+        context = contexts[0]
+        request_state = worker.submitted[0].observation.state
+        self.assertEqual(context.ik_seed_source, "measured_state")
+        self.assertEqual(context.observation_state.monotonic_ns, request_state.monotonic_ns)
+        np.testing.assert_array_equal(context.observation_state.groups["left_arm"], request_state.groups["left_arm"])
+        self.assertGreater(context.ik_seed.groups["left_arm"][0], context.observation_state.groups["left_arm"][0])
+
     def test_safe_hold_waits_for_fixed_period_task_termination(self):
         class HeldSim(FakeAsyncSim):
             def health(self):

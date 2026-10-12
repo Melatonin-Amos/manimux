@@ -14,8 +14,7 @@ class PolicyAdapter(ABC):
     kinematics is an assembled offline model; passing it does not connect cameras or robots.
     """
 
-    # True when decode_action honors ActionContext.handoff_reference and
-    # handoff_skip_steps (waypoint handoff).
+    # True when decode_action honors ActionContext.handoff_reference.
     supports_waypoint_handoff = False
 
     # Decode model apertures and invert the mapping for RTC conditioning.
@@ -25,6 +24,13 @@ class PolicyAdapter(ABC):
     # rows on the policy time grid, with no runtime trajectory or handoff attached.
     # Used by BID and deferred AAC selection; this does not declare model sampling.
     supports_candidate_decoding = False
+
+    # Select the IK starting state, independently of the measured observation.
+    decode_seed_source = "execution_reference"
+
+    def decode_seed_time_ns(self, context: ActionContext) -> int | None:
+        """Exact seed time for timed decoders; None keeps the runtime start/hold policy."""
+        return None
 
     def __init__(self, robot: dict, policy: dict, *, kinematics=None):
         self.robot = robot

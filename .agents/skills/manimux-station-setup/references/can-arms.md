@@ -123,9 +123,9 @@ Select the checkpoint's actual TCP and calibrated bounds before EEF deployment.
 The X5 source's broad `[-10, 10]` bounds are not physical device limits; set
 `options.joint_limits` in its component recipe when using bounded hardware IK.
 
-This contribution does not add live hardware RoboGUI presets. The current
-RoboGUI's Home gating partly depends on robot names; it needs a capability-aware
-extension before exposing Home controls for these assemblies. The ALOHA and PiPER presets provide offline display and replay.
+This contribution does not add live hardware RoboGUI presets. Idle recovery
+controls appear only when the assembly declares them. In-rollout Return Home still
+calls runtime `robot.home()`. The ALOHA and PiPER presets provide offline display and replay.
 A hardware deployment needs its own experiment and station configuration. Keep `home_on_close: false` for these factories.
 
 Offline checks cover real pyAgxArm codecs with virtual CAN, X5 binding signatures,

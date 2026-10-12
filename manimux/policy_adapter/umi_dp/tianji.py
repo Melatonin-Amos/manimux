@@ -45,13 +45,24 @@ def state_vector(value):
     return value
 
 
+def ee_target_trace(steps, side, start_time_ns, dt_ns):
+    """JSON-safe TCP targets in the arm base, before any IK conversion."""
+    return {
+        "start_time_ns": start_time_ns,
+        "dt_ns": dt_ns,
+        "pose_xyz_wxyz": [
+            np.asarray(step[f"{side}_ee_pose"], dtype=float).tolist() for step in steps
+        ],
+        "aperture": [float(np.asarray(step[f"{side}_ee_joint_state"])[0]) for step in steps],
+    }
+
+
 class UmiDpTianjiAdapter(PolicyAdapter):
     supports_gripper_mapping = True
     uses_motion_limits = True
     supports_context_only_decode = True
-    # This checkpoint's full source trajectory starts at the request
-    # observation. Timeline owns all stale-row trimming at commit time.
-    decode_seed_source = "observation_state"
+    # Full chunks continue the reference at observation time, preserving measured inputs.
+    decode_seed_source = "execution_reference"
     # Arm IK is independent, so process decoding can solve both sides in
     # parallel and merge them atomically.
     decode_partitions = ("left_arm", "right_arm")
@@ -389,6 +400,15 @@ class UmiDpTianjiAdapter(PolicyAdapter):
     def decode_action(self, raw, context):
         return self._decode(raw, context, ("left", "right"))
 
+    def decode_seed_time_ns(self, context):
+        if context.handoff_reference is not None and self.waypoint_handoff is not None:
+            return self.waypoint_handoff.start(
+                context.observation_time_ns + self.offset_ns,
+                context.execution_time_ns,
+                self.horizon,
+            )[0]
+        return context.observation_time_ns
+
     def decode_action_partition(self, raw, context, partition):
         if partition not in self.decode_partitions:
             raise ValueError(f"unknown UMI decode partition {partition!r}")
@@ -461,15 +481,24 @@ class UmiDpTianjiAdapter(PolicyAdapter):
         steps = raw.get("actions") if isinstance(raw, Mapping) else raw
         if not isinstance(steps, Sequence) or len(steps) != self.horizon:
             raise ValueError("UMI action horizon differs from the checkpoint")
-        if context.measured_state is None:
-            raise ValueError("UMI-DP decoding requires the request observation state")
-        if context.measured_state.monotonic_ns != context.observation_time_ns:
-            raise ValueError(
-                "UMI-DP IK seed time must equal the request observation time "
-                f"({context.measured_state.monotonic_ns} != {context.observation_time_ns})"
-            )
-        steps = self._map_gripper_steps(steps)
+        seed = context.ik_seed
+        if seed is None:
+            raise ValueError("UMI-DP decoding requires an IK seed")
         action_origin = context.observation_time_ns + self.offset_ns
+        # Keep native targets independently of gripper mapping and waypoint edits.
+        # Per-group dictionaries survive the decoder's atomic partition merge.
+        target_trace = {
+            f"{side}_arm": {
+                "schema": "umi-ee-target-trace-v1",
+                "frame": "arm_base",
+                "position_unit": "m",
+                "model_output": ee_target_trace(steps, side, action_origin, self.dt_ns),
+                "ik_seed_joints": state_vector(seed.groups[f"{side}_arm"]).tolist(),
+                "ik_seed_time_ns": seed.monotonic_ns,
+            }
+            for side in sides
+        }
+        steps = self._map_gripper_steps(steps)
         handoff = None
         if context.handoff_reference is not None and self.waypoint_handoff is not None:
             handoff = self.waypoint_handoff.plan(
@@ -482,6 +511,17 @@ class UmiDpTianjiAdapter(PolicyAdapter):
                 },
             )
             steps = self._handoff_steps(handoff.targets)
+        for side in sides:
+            ik_steps = steps
+            start_time_ns = action_origin
+            if handoff is not None:
+                pose, aperture = handoff.lead_in[f"{side}_arm"][-1]
+                ik_steps = [{f"{side}_ee_pose": matrix_pose(pose),
+                             f"{side}_ee_joint_state": np.array([aperture])}, *steps]
+                start_time_ns += handoff.join_row * self.dt_ns
+            target_trace[f"{side}_arm"]["ik_input"] = ee_target_trace(
+                ik_steps, side, start_time_ns, self.dt_ns
+            )
         groups = {}
         runtime_groups = {}
         samples_per_action = None
@@ -491,11 +531,7 @@ class UmiDpTianjiAdapter(PolicyAdapter):
             groups[group], runtime_rows, side_samples, lag = self._decode_side(
                 side,
                 steps,
-                (
-                    context.measured_state.groups[group]
-                    if handoff is None
-                    else handoff.start_state[group]
-                ),
+                seed.groups[group],
                 lead_in=None if handoff is None else handoff.lead_in[group],
             )
             if runtime_rows is not None:
@@ -538,8 +574,10 @@ class UmiDpTianjiAdapter(PolicyAdapter):
                 "measured_observation_time_ns": context.observation_time_ns,
                 "first_action_offset_ns": self.offset_ns,
                 "ik_backend": self.ik_backend,
-                "ik_seed_source": self.decode_seed_source,
-                "ik_seed_time_ns": context.measured_state.monotonic_ns,
+                "ik_seed_source": context.ik_seed_source,
+                "ik_seed_time_ns": seed.monotonic_ns,
+                "ee_target_trace": target_trace,
+                **({"ik_seed_plan_id": handoff.plan_id} if handoff is not None else {}),
                 "gripper_mapping": self.gripper_mapping.metadata(),
                 **(
                     {

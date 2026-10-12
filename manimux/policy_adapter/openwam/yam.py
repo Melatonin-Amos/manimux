@@ -122,12 +122,12 @@ class OpenWAMYamAdapter(KinematicAdapter):
             group = f"{side}_arm"
             seed = (
                 anchors[group]
-                if context.measured_state is None
-                else context.measured_state.groups[group]
+                if context.ik_seed is None
+                else context.ik_seed.groups[group]
             )
             seed = np.asarray(seed, dtype=float)
             if seed.shape != (7,) or not np.isfinite(seed).all():
-                raise ValueError("Invalid measured YAM state")
+                raise ValueError("Invalid YAM IK seed")
             current, rows = seed[:6].copy(), []
             for step in actions[group]:
                 target = pose_matrix(step[:7])

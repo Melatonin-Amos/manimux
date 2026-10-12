@@ -137,6 +137,32 @@ After changing service addresses, use `--experiment` to read the updated station
 regenerate the standalone snapshot. After changing the checkpoint, bind a new pair so
 its expected identity matches the selected artifacts. Do not bypass identity checks.
 
+## Pack-plate train-time RTC
+
+Use `manimux/configs/experiments/pack_plate/umi_dp/tianji_taccap_umi_dp_train_time_rtc.yaml`
+with the CalibWrist H32 prefix-trained pack-plate artifact. The recipe checks
+training prefix support `[0, 4, 5]`; the preset fixes `prefix_steps=5` for conditioned
+requests (`train_time_rtc.delay_estimator: fixed`, `fixed_prefix_steps: 5`). Initial
+requests and missing committed coverage use zero. Measured latency remains recorded
+but cannot increase the prefix. It uses separate strategy/history/adapter
+classes and the `train_time_rtc` sampling capability, with no PiGDM or soft-inpaint
+guidance. See [the timing contract](../advanced/inference.md#train-time-rtc).
+
+Set `paths.checkpoint` in the selected private station to the prefix-trained
+checkpoint, then validate and export the paired configs without starting services:
+
+```bash
+PYTHONPATH="$PWD:$PWD/XPolicyLab" envs/umi_dp/.venv/bin/python -m manimux.servers.umi_dp \
+  --experiment manimux/configs/experiments/pack_plate/umi_dp/tianji_taccap_umi_dp_train_time_rtc.yaml \
+  --local manimux/configs/local/station.yaml \
+  --bind-runtime-config manimux/configs/local/deployments/pack_plate_train_time_rtc.yaml
+```
+
+The template keeps arm and end-effector execution disabled. In an intended
+deployment session, use the bound experiment with the same model/camera/runtime
+launch commands below. Checkpoint binding and offline forward tests do not
+establish physical task success.
+
 ## Start the services
 
 Use the bound experiment for the model, camera and runtime roles. The following commands open services or
@@ -187,6 +213,13 @@ Tianji connection does not Home; the existing controller enables on the first ex
 command. Clear error, Return Home and manual drag are implemented by the robot assembly
 (`TianjiTaccapRobot.clear_errors/home/drag`); the idle RoboGUI session only schedules
 them. See [RoboGUI](../../../manimux-development/references/runtime-config.md) for its separate display and control interface.
+
+Pack-plate deployments must select `embodiment/robot/tianji_taccap_pack_plate.yaml`
+in `robot.config`; its Home is the saved `pack_plate_start` pose. The generic
+`tianji_taccap.yaml` retains the pass-ball Home. Check older bound local experiments
+as well: changing the source experiment does not update an existing bound copy.
+Restart the runtime service after changing `robot.config`, because idle recovery
+retains the robot configuration loaded at service startup.
 
 ## Preserved action and timing conventions
 

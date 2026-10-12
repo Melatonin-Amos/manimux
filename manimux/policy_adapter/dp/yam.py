@@ -155,9 +155,9 @@ class DPYamAdapter(KinematicAdapter):
         if any(len(rows) != self.horizon for rows in actions.values()):
             raise ValueError("DP action horizon mismatch")
         anchor = self.anchors.pop(context.request_seq, None)
-        seed_state = context.measured_state if context.measured_state is not None else anchor
+        seed_state = context.ik_seed if context.ik_seed is not None else anchor
         if seed_state is None:
-            raise ValueError("DP IK requires a measured seed")
+            raise ValueError("DP IK requires a seed")
         groups = {}
         for group in self.groups:
             seed = np.asarray(seed_state.groups[group][:6]).copy()

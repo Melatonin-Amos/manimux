@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 
@@ -15,7 +16,7 @@ import numpy as np
 from manimux.clock import Clock, SystemClock
 from manimux.embodiments.arm.tianji.arm import TianjiArm, TianjiArmSettings, TianjiController
 from manimux.embodiments.end_effector.gripper import GripperBase
-from manimux.embodiments.robot.base import RobotBase, RobotModel
+from manimux.embodiments.robot.base import HandGuidingHandler, RobotBase, RobotModel
 from manimux.kinematics.base import KinematicCoordinate, ManipulatorKinematicsBase
 from manimux.types import FloatArray, RobotCommand
 
@@ -135,7 +136,17 @@ class TianjiTaccapRobot(RobotBase):
         # Each action opens the controller itself, so it needs the bound address.
         if not (self._execute and self.controller.ip):
             return ()
-        return ("clear_error", "home", "drag")
+        return ("clear_error", "home", "drag", "release", "release_5s")
+
+    @property
+    def hand_guiding_actions(self) -> Mapping[str, HandGuidingHandler]:
+        if not self.recovery_actions:
+            return MappingProxyType({})
+        return MappingProxyType({
+            **super().hand_guiding_actions,
+            "release": self.recover_release,
+            "release_5s": partial(self.recover_release, duration_s=5.0),
+        })
 
     @property
     def drag_selections(self) -> Mapping[str, tuple[str, ...]]:
@@ -200,6 +211,72 @@ class TianjiTaccapRobot(RobotBase):
             raise RuntimeError("drag requires execute=true")
         self.clear_errors()
         self.drag(groups, stop, on_active)
+
+    def recover_release(
+        self,
+        groups: Sequence[str],
+        stop: threading.Event,
+        on_active: Callable[[], None] | None = None,
+        *,
+        duration_s: float | None = None,
+    ) -> None:
+        """Hand-guide in native cooperative release, with calibrated tool loads.
+
+        Duration starts after confirmed entry. Stop, timeout, feedback faults or
+        the five-degree joint-boundary margin all trigger controller cleanup.
+        Cameras and grippers are never opened by this recovery operation.
+        """
+        groups = tuple(dict.fromkeys(groups))
+        if not groups or set(groups) - set(self.arm_components):
+            raise ValueError("release groups must name configured arms")
+        if duration_s is not None and (not math.isfinite(duration_s) or duration_s <= 0):
+            raise ValueError("release duration_s must be finite and positive")
+        sides = tuple(self.arm_components[name].channel for name in groups)
+        with self._lock:
+            if not self._execute:
+                raise RuntimeError("release requires execute=true")
+            if self._controller_open or self._end_effector_open:
+                raise RuntimeError("release requires a disconnected robot")
+            for side in sides:
+                if self.controller.settings[side].drag_tool is None:
+                    raise ValueError(f"{side}: drag_tool is required for release")
+            if stop.is_set():
+                return
+            self.controller.clear_errors(sides)
+            if stop.is_set():
+                return
+            self.controller.connect()
+            try:
+                initial = self.controller.get_states()
+                self._check_release_limits({side: initial[side].joints for side in sides})
+                if self.controller.begin_release(sides, stop):
+                    deadline = None if duration_s is None else time.monotonic() + duration_s
+                    if on_active is not None:
+                        on_active()
+                    while not stop.is_set():
+                        remaining = None if deadline is None else deadline - time.monotonic()
+                        if remaining is not None and remaining <= 0:
+                            break
+                        self._check_release_limits(self.controller.read_release(sides))
+                        stop.wait(0.02 if remaining is None else min(0.02, remaining))
+            except Exception as error:
+                try:
+                    self.controller.close()
+                except Exception as cleanup_error:
+                    raise ExceptionGroup(
+                        "release and cleanup failed", [error, cleanup_error]
+                    ) from None
+                raise
+            self.controller.close()
+
+    def _check_release_limits(self, joints: Mapping[str, FloatArray]) -> None:
+        margin = math.radians(5.0)
+        for side, q in joints.items():
+            lower, upper = self.controller.settings[side].joint_limits
+            near = np.flatnonzero((q <= lower + margin) | (q >= upper - margin))
+            if len(near):
+                labels = ", ".join(f"J{int(index) + 1}" for index in near)
+                raise RuntimeError(f"{side}: release stopped within 5 degrees of {labels} limit")
 
     def recover_home(self, stop: threading.Event | None = None) -> None:
         """Idle Return Home, also the path after an E-stop: clear faults, then home."""

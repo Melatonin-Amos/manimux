@@ -11,8 +11,8 @@ from typing import Any, Protocol
 from manimux.clock import SystemClock
 from manimux.embodiments.robot import build_robot
 from manimux.experiment_list import ExperimentList
+from manimux.robogui.communication import ControlClient, RoboGUIPublisher, RuntimeEvent
 from manimux.runtime import RunResult, build_runtime
-from manimux.robogui.communication import ControlClient, RuntimeEvent, RoboGUIPublisher
 
 
 class _Runtime(Protocol):
@@ -49,8 +49,9 @@ def _error_text(error: BaseException) -> str:
 class _IdleRecovery:
     """Idle RoboGUI recovery protocol; the robot assembly implements every action.
 
-    The assembly's recovery_actions and drag_selections decide what RoboGUI may
-    request. Each request builds a fresh, disconnected assembly from the config.
+    The assembly's recovery_actions, hand_guiding_actions and drag_selections
+    decide what RoboGUI may request. Each request builds a fresh, disconnected
+    assembly from the config; hand-guiding mode and duration belong to the robot.
     """
 
     def __init__(self, config: dict, *, robot_factory: Callable = build_robot) -> None:
@@ -60,10 +61,11 @@ class _IdleRecovery:
         robot = self._build()
         executing = bool(self._robot_config.get("options", {}).get("execute", False))
         self.actions = tuple(robot.recovery_actions) if executing else ()
+        self._hand_guiding_actions = tuple(robot.hand_guiding_actions)
         self._drag_selections = dict(robot.drag_selections)
         self.available = bool(self.actions)
         self._busy = False
-        self._task = ""  # "home" or "drag" while the worker thread runs.
+        self._task = ""  # Robot-owned action running on the recovery worker.
         self._thread: threading.Thread | None = None
         self._thread_error = ""
         self._recovery_stop = threading.Event()
@@ -93,6 +95,9 @@ class _IdleRecovery:
         return {
             "available": self.available,
             "actions": list(self.actions),
+            "hand_guiding_actions": list(self._hand_guiding_actions),
+            "task": self._task,
+            "selections": list(self._drag_selections),
             "busy": self.busy,
             "state": self._state,
             "ack": self._ack,
@@ -102,7 +107,7 @@ class _IdleRecovery:
 
     def update(self, control: dict[str, Any]) -> None:
         self._poll()
-        if self._task == "drag" and not bool(control.get("recovery_lease", False)):
+        if self._task in self._hand_guiding_actions and not control.get("recovery_lease", False):
             self._recovery_stop.set()
             self._state = "stopping"
         request = str(control.get("recovery_request", ""))
@@ -111,7 +116,7 @@ class _IdleRecovery:
             return
         self._ack = request_id
         if request == "stop":
-            if self._task in {"drag", "home"}:
+            if self._thread is not None:
                 self._error = ""
                 self._recovery_stop.set()
                 self._state = "stopping"
@@ -135,14 +140,18 @@ class _IdleRecovery:
             self._error = f"Unsupported recovery request: {request}"
             self._state = "error"
             return
-        if action == "drag":
+        if action in self._hand_guiding_actions:
             if selection not in self._drag_selections:
-                self._error = f"Unsupported drag arm: {selection}"
+                self._error = f"Unsupported {action} arm: {selection}"
+                self._state = "error"
+                return
+            if not control.get("recovery_lease", False):
+                self._error = "Hand-guiding requires an active recovery lease"
                 self._state = "error"
                 return
             self._arm = selection
             self._state = "starting"
-            self._start("drag", self._drag, self._drag_selections[selection])
+            self._start(action, self._hand_guide, action, self._drag_selections[selection])
             return
         if action == "home":
             self._state = "homing"
@@ -178,12 +187,14 @@ class _IdleRecovery:
         self._thread = threading.Thread(target=run, name=f"robogui-recovery-{task}", daemon=True)
         self._thread.start()
 
-    def _drag_active(self) -> None:
+    def _hand_guiding_active(self) -> None:
         if not self._recovery_stop.is_set():
             self._state = "active"
 
-    def _drag(self, groups: tuple[str, ...]) -> None:
-        self._build().recover_drag(groups, self._recovery_stop, self._drag_active)
+    def _hand_guide(self, action: str, groups: tuple[str, ...]) -> None:
+        self._build().hand_guiding_actions[action](
+            groups, self._recovery_stop, self._hand_guiding_active
+        )
 
     def _home(self) -> None:
         self._build().recover_home(self._recovery_stop)
@@ -259,9 +270,7 @@ class RuntimeSessionService:
             "last_error": self._last_error,
             "last_failure_id": self._last_failure_id,
             "recovery": (
-                self._recovery.metadata()
-                if self._recovery is not None
-                else {"available": False}
+                self._recovery.metadata() if self._recovery is not None else {"available": False}
             ),
         }
 
@@ -361,12 +370,12 @@ class RuntimeSessionService:
     def serve(self, *, max_rollout_attempts: int | None = None) -> None:
         attempts = 0
         print(f"runtime service ready; run_dir={self._run_dir.resolve()}")
-        print(
-            "RoboGUI flow: Prepare -> Activate Warmup (when enabled) -> Start rollout -> "
-            "Finish & Home / Finish without homing"
-        )
+        print("RoboGUI flow: Prepare -> Activate Warmup (when enabled) -> Start rollout -> Finish")
         if self._recovery is not None and self._recovery.available:
-            print("Manual recovery is always visible: stop a rollout, drag A/B/AB, or Return Home")
+            print(
+                "Manual recovery follows the assembly declaration: "
+                + ", ".join(self._recovery.actions)
+            )
         print(
             "Use Prepare Run or Prepare Experiment in RoboGUI; experiments offer evaluation "
             "that can be saved or skipped"

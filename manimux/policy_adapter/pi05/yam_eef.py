@@ -65,9 +65,9 @@ class Pi05YamEefAdapter(PolicyAdapter):
             raise ValueError("Pi05 EEF action horizon mismatch")
         actions = {group: rows[: self.decode_steps] for group, rows in actions.items()}
         anchor = self.anchors.pop(context.request_seq, None)
-        seed_state = context.measured_state if context.measured_state is not None else anchor
+        seed_state = context.ik_seed if context.ik_seed is not None else anchor
         if seed_state is None:
-            raise ValueError("Pi05 EEF IK requires measured joints")
+            raise ValueError("Pi05 EEF IK requires a joint seed")
         groups = {}
         for group in self.groups:
             seed = np.asarray(seed_state.groups[group]).copy()

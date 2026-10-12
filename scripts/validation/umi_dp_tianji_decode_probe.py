@@ -83,7 +83,9 @@ def main():
                     repeat,
                     state.monotonic_ns,
                     state.monotonic_ns,
-                    measured_state=state,
+                    observation_state=state,
+                    ik_seed=state,
+                    ik_seed_source="observation_state",
                 ),
             )
             timings.append((time.perf_counter() - begin) * 1000)

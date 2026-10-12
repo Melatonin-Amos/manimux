@@ -18,7 +18,7 @@ drivers against the interfaces and callers; do not copy a vendor exception as a 
 | `send_commands()` / controller; `send_command()` / assembly | Accept the declared absolute joint-position targets. Tool coordinates retain their declared meaning. Returning means submission, not arrival. Surface dispatch failure. | SDK command encoding, configured limits and mode preparation; document internal interpolation and batch dispatch guarantees. |
 | `stop()` / session owner | Stop ongoing execution on owned channels; attempt all owned channels and report failures. Document completion and the state required for subsequent commands. | Vendor stop/hold and mode transitions. Do not silently equate stop with homing or releasing actuator torque. |
 | `home()` / robot assembly | Perform the explicitly defined home operation when supported. State the destination, tool behavior, completion guarantee and post-home control state. | Configured joint trajectory or a documented vendor Home operation. A RoboGUI initial pose does not define hardware Home. |
-| `recovery_actions`, `drag_selections` / robot assembly; `clear_errors()`, `drag()`, `recover_home(stop)`, `recover_drag()` | Optional idle recovery that RoboGUI may request between rollouts. `recovery_actions` declares the supported actions (`clear_error`, `home`, `drag`; none by default) and `drag_selections` maps each drag label to robot groups. The serving session only schedules them, each on a fresh, disconnected assembly constructed with its configured options. Home implementations must observe the stop event and complete cleanup before returning. | Vendor fault reset, hand-guiding mode, tool behavior and any preparation, such as clearing faults before connecting. |
+| `recovery_actions`, `hand_guiding_actions`, `drag_selections` / robot assembly; `clear_errors()`, `recover_home(stop)` | Optional idle recovery that RoboGUI may request between rollouts. `recovery_actions` declares supported actions; `hand_guiding_actions` maps cancellable action names to handlers accepting groups, a stop event and an active callback. The base maps `drag` to `recover_drag()` when advertised. `drag_selections` maps arm labels to robot groups. The session schedules each action on a fresh, disconnected assembly, cancels hand-guiding on lease loss, and signals shutdown before joining the worker. Home and hand-guiding handlers must observe cancellation and complete cleanup before returning. | Vendor fault reset, hand-guiding modes and durations, feedback monitoring, tool behavior and any preparation such as clearing faults before connecting. |
 | `close()` / resource owner | Release owned resources, including after partial startup. Repeated cleanup must be safe; incomplete cleanup remains visible and retryable. Borrowers do not close shared sessions. | SDK shutdown, worker termination and connection release. |
 
 Tianji Home targets live in the assembly's `home.joints_deg`. Its cosine trajectory
@@ -49,11 +49,20 @@ Document these lifecycle details in the integration's runbook:
 Required operations cannot be stubbed out. Optional unsupported capabilities must
 be declared and unavailable to normal callers/UI; an unexpected direct call should
 fail explicitly. The current base `home()` raises `NotImplementedError`. Idle recovery
-is declared through `recovery_actions`, which the serving session and the runtime read
-instead of a robot type; some RoboGUI layouts still branch on robot names. These are
-existing integration gaps,
-not a complete generic capability mechanism. Resolve the affected caller contract
-when adding a capability; do not invent a `supports_home` field that nobody reads.
+is declared through `recovery_actions`, `hand_guiding_actions` and `drag_selections`.
+The serving session publishes `actions`, `hand_guiding_actions`, the active `task`,
+and `selections`. RoboGUI shows clear, drag, release and idle Home from that declaration.
+Drag and both Release variants use the same declared arm selections; single-arm
+assemblies expose only their configured arm. A stale selection is rejected before
+ending a rollout or starting recovery. Return Home operates on all configured groups,
+independently of the hand-guiding selection.
+Finish leaves homing to the experiment's `home_on_close` unless idle
+recovery includes `home`, in which case Finish does not home. In-rollout Return Home
+still calls runtime `robot.home()`, and requires the episode's `home_available` only
+when idle recovery includes `home`. Do not invent a `supports_home` field that nobody reads.
+Switching from a rollout to hand-guiding always finishes without homing, including
+assemblies that do not declare idle Home. Finish is labelled **Finish rollout** because
+the GUI cannot infer the experiment's `home_on_close` from recovery capabilities.
 
 For a focused review, trace configuration -> factory -> controller/assembly ->
 runtime caller. Record the required behavior, actual SDK mapping, discrepancy and

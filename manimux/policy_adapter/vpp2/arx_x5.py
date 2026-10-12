@@ -93,7 +93,7 @@ class VPP2ArxX5Adapter(KinematicAdapter):
         )
 
     def decode_action(self, raw, context):
-        if context.measured_state is None:
+        if context.ik_seed is None:
             raise ValueError("VPP2 action needs measured joint feedback as its IK seed")
         actions = action_groups(raw, dict.fromkeys(GROUPS, 8), format="pose")
         if any(len(rows) != REPLAN_STEPS for rows in actions.values()):
@@ -101,7 +101,7 @@ class VPP2ArxX5Adapter(KinematicAdapter):
         groups = {}
         for name in GROUPS:
             model = self.kinematics.models[name]
-            seed = context.measured_state.groups[name].copy()
+            seed = context.ik_seed.groups[name].copy()
             seed[-1] = np.clip(seed[-1], 0, 1)
             rows = []
             for index, row in enumerate(actions[name]):

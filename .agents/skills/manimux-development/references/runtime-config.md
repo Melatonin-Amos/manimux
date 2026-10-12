@@ -97,6 +97,14 @@ The combination flag defaults off; standalone ACT remains enabled by its algorit
 selection regardless of that flag. Do not present a valid combination as a measured
 improvement, or change the contribution scope as a cosmetic refactor.
 
+`RequestState.expected_decode_ns` carries the shared `DecodeForecast` value at
+submission (zero for inline decoding). Strategies consume this snapshot instead
+of maintaining another decode window. Train-time RTC's `decode_max` estimator
+combines it with the last accepted request's submission-to-worker-completion time
+and current observation age, counting prefix rows from the action origin; see
+[the timing contract](../../manimux-inference/references/inference.md#train-time-rtc). The current model
+latency is not yet observable when a hard prefix must be submitted.
+
 ## AsyncSim runtime
 
 `manimux/runtime/asyncsim.py` owns one AsyncSim session, reads atomic visible
@@ -143,6 +151,13 @@ joint trajectories on the runtime clock. Keep chunk handoff here and in the
 strategy. Do not fake measured state or modify observations to implement another
 algorithm's overlap/truncation behavior.
 
+Serial scheduling uses `algorithm: serial`, `inference_schedule: serial` and
+`action_start_mode: first_step_when_ready`. It accepts inline or process decoding;
+the existing in-flight flag covers both inference and decoding. A decoded chunk
+must retain source offset zero. `ActionTimeline` limits dense runtime rows to the
+selected source prefix before shifting execution to commit time. The next request
+waits for that execution window to finish; physical measured arrival is separate.
+
 Read `manimux/runtime/executors/base.py`: an executor implements `reset(state)`,
 `horizon_steps` and `step(now_ns, state, reference) -> RobotCommand`. It consumes
 `ActionHorizon` and owns command generation/smoothing/configured limits, not model
@@ -176,27 +191,31 @@ an algorithm setting alone does not implement the model's sampling hooks.
 
 ### RTC waypoint handoff skip
 
-With `inference.algorithm: rtc`, `handoff: waypoint`, and `blend_policy_steps: 0`,
-`handoff_skip_steps: S` uses the same waypoint semantics as ManiMux/UMI-DP: model
-row `k+S` occupies source time slot `k`, without moving the handoff time. The adapter
-plans the lead-in to that shifted target before IK; the timeline verifies the
-reference seed and does not skip the already-shifted chunk a second time.
+`handoff_skip_steps: S` is an execution-only prefix crop in `ActionTimeline.commit`,
+after inference, waypoint planning and diff IK have finished. With the same request
+and outgoing reference, changing `S` must not change RTC conditions or weights,
+model output processing, IK seeds, waypoint targets, or the decoded joint path.
+UMI history alignment retains its trained first-action offset and never shifts
+conditions to compensate for a future crop.
 
-RTC places the condition for slot `k` and its weight at model row `k+S`. Leading
-skipped rows have zero guidance. Requests retain the checkpoint's full model horizon
-`H`, but a skipped waypoint plan has only `H-S` effective time slots; discarded
-prefix slots are retained for index bookkeeping, not execution. The next request
-uses this actual shorter horizon and zero-pads unknown conditioning rows to `H`.
-UMI's history wrapper also aligns against shifted slot timestamps while preserving
-the checkpoint's first-action offset. No model/server changes are needed.
+The timeline first verifies the uncut waypoint's reference and handoff clock, then
+removes `S` source rows and the corresponding duration of dense runtime samples.
+The start times stay fixed; later decoded points occupy the earlier time slots,
+and the end moves earlier by the skipped duration. No replacement lead-in is
+generated. A nonzero crop can remove the continuous waypoint seed and introduce
+a position jump; the executor still applies its configured limits. Waypoint chunks
+require `blend_policy_steps: 0`. Missing/late/changed waypoint validation remains
+independent of skip; there is no shifted-condition rejection.
 
-The first chunk is unskipped. A conditioned response with shifted guidance is
-rejected if it cannot acquire its matching waypoint handoff; executing it on the
-unshifted clock would violate its guidance. Empty overlap uses default sampling.
-Choose `S < H` and, for a numeric initial delay, `2*initial_delay_policy_steps <= H-S`.
-The measured delay remains wall-clock latency and does not include intentional skip.
+The first chunk is unskipped. Choose `S < H`; a crop that exhausts the usable decoded
+suffix is rejected. RTC keeps the original `H` decoded rows and accounts for the
+actual committed trim when reading its cursor. The next request therefore sees
+the surviving outgoing actions, without offsetting its new condition by `S`.
+An empty overlap uses default sampling. Numeric initial delay is validated against
+the model horizon (`2*initial_delay_policy_steps <= H`), not a skip-shifted mask.
+Measured delay remains wall-clock latency and excludes intentional skip.
 Acceptance events distinguish `rtc_source_horizon` (`H`), `rtc_effective_horizon`
-(`H-S` for a skipped waypoint), and `rtc_handoff_skip_steps`.
+(`H-S`, before latency trimming), and `rtc_handoff_skip_steps`.
 
 <a id="robogui-replay-and-recording"></a>
 
@@ -274,11 +293,13 @@ Record runtime evidence under `manimux/recording/`. Distinguish predicted action
 sent commands and measured motion; RoboGUI refresh rate is not control frequency.
 Do not reintroduce teleoperation or demonstration collection as part of replay.
 
-Idle recovery between rollouts (**Clear error**, **Return Home**, **Start drag**) is
+Idle recovery between rollouts (**Clear error**, **Return Home**, **Drag**, **Release**) is
 scheduled by the `manimux serve` session and implemented by the robot assembly. The
-session reads the assembly's `recovery_actions` and `drag_selections` and calls
-`clear_errors()`, `recover_home(stop)` or `recover_drag()` on a fresh, disconnected assembly
-using the configured construction options; it contains no robot-specific code. Service
+session reads the assembly's `recovery_actions`, `hand_guiding_actions` and `drag_selections`.
+It calls `clear_errors()`, `recover_home(stop)` or the selected hand-guiding handler on a
+fresh, disconnected assembly using the configured construction options. Hand-guiding
+handlers receive groups, a stop event and an active callback; the robot owns mode entry,
+duration, monitoring and cleanup. Loss of the recovery lease cancels these handlers. Service
 shutdown sets the recovery stop event before joining the worker. Idle Home implementations
 must cancel further motion and release owned resources before returning. For Tianji-TacCap,
 Home moves the arms to

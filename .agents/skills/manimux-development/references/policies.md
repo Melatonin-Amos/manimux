@@ -122,22 +122,44 @@ adapters may have different solver requirements; preserve whole-chunk rejection
 versus per-step hold behavior. SAPolicy's bounded IK must not be replaced as a
 side effect of a different model's integration.
 
-### Tianji waypoint handoff and IK seeds
+### Observation state and IK seeds
 
-The shared `TianjiAbsoluteEEAdapter` (including Pi05) supports the same
+`ActionContext.observation_state` is the real state captured with the request.
+`ActionContext.ik_seed` is the independently selected embodiment-conversion starting
+state. Adapters must use the former for observation-relative pose anchors and the
+latter for IK. The old overloaded `measured_state` field is removed.
+
+The runtime selects the seed once using `adapter.decode_seed_source`:
+`observation_state` selects the request measurement; `execution_reference` prefers
+the outgoing trajectory. `decode_seed_time_ns(context)` optionally specifies the
+exact required time. Tianji full-chunk decoders request observation time, regardless
+of blend/waypoint configuration; absent reference coverage falls back to that same
+request's measurement. Other adapters keep the default execution-start/hold policy.
+`ik_seed_source` records the actual selection, including fallback.
+The runtime owns seed selection and timing; absolute EE decoders consume that seed
+without revalidating the unused observation state or resampling the reference.
+
+### Tianji waypoint handoff
+
+Pi05 and XR-1 own their Tianji decoding in `policy_adapter/pi05/tianji.py` and
+`policy_adapter/xr1/tianji.py`, respectively. Pi05's pass-ball and pack-plate
+adapters share a private base in the Pi05 module; XR-1 does not depend on Pi05.
+Both reuse the robot kinematics, differential IK solver and the same
 `WaypointHandoff` planner as UMI-DP. Opt in with `policy.adapter.handoff_waypoint`
 (`max_pos_speed_m_s`, `max_rot_speed_rad_s`), `ik_backend: diff` and
 `execute_diff_ik_substeps: true`; select `inference.handoff: waypoint` with
 `blend_policy_steps: 0`. Both ManiMux and RTC support `handoff_skip_steps`; see the
-[runtime contract](runtime-config.md#rtc-waypoint-handoff-skip) for RTC guidance
-alignment and effective-horizon accounting. The first chunk,
-or a chunk without a valid outgoing reference window, keeps the request-observation
-IK seed. Subsequent handoffs seed from the outgoing runtime reference at the aligned
-handoff time and decode only the future source suffix plus its dense lead-in.
+[runtime contract](runtime-config.md#rtc-waypoint-handoff-skip) for post-decode
+cropping and effective-horizon accounting. When a valid waypoint window exists,
+the adapter requests the aligned handoff time for its seed and decodes only the
+future source suffix plus its dense lead-in. The planner consumes `ik_seed`; it
+does not select or override it. Waypoint mode requires `execution_reference`.
+Without a waypoint window, the full-chunk seed rule above still applies.
 This does not change measured model inputs, pose anchors or first-action offsets.
 Plan metadata records the actual `ik_seed_source`, `ik_seed_time_ns` and, for a
-reference seed, `ik_seed_plan_id`. The timeline rejects a missed handoff or a changed
-reference instead of committing a discontinuous replacement.
+waypoint reference seed, `ik_seed_plan_id`. The timeline rejects a missed handoff or a changed
+decode reference before applying any requested execution-only crop. A nonzero crop
+can remove the continuous seed without changing the decoder's lead-in.
 
 ## Model layout configuration
 

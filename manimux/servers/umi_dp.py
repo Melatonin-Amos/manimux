@@ -103,12 +103,12 @@ def main():
         # Validate full profile merge and delegate RTC constraints before writing.
         import tempfile
 
-        from manimux.policy_adapter.umi_dp.history import HistoryStrategy
+        from manimux.runtime.inference import build_inference_strategy
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", dir=output.parent) as stream:
             yaml.safe_dump(runtime, stream, sort_keys=False)
             stream.flush()
             resolved = load_config(stream.name)
-            HistoryStrategy(resolved)
+            build_inference_strategy(resolved)
             runtime["policy"]["options"] = resolved["policy"]["options"]
             runtime["policy"]["adapter"] = resolved["policy"]["adapter"]
             if local_policy_endpoint:

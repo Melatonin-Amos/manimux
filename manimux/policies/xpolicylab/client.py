@@ -42,6 +42,7 @@ from manimux.policies.xpolicylab.codec import (
     encode_observation,
 )
 from manimux.policies.xpolicylab.ws_client import XPolicyLabWsClient
+from manimux.runtime.train_time_rtc import TrainTimeRtcRequest
 from manimux.runtime.aac import AacInferenceRequest
 from manimux.runtime.autohorizon import AutoHorizonInferenceRequest
 from manimux.runtime.bid import BidInferenceRequest
@@ -293,6 +294,13 @@ class XPolicyLabWsPolicyModel:
         weights = getattr(request, "condition_weights", None)
         if (condition is None) != (weights is None):
             raise ValueError("RTC action_condition and condition_weights must be provided together")
+        if isinstance(request, TrainTimeRtcRequest):
+            return {
+                "mode": "train_time_rtc",
+                "prefix_steps": request.prefix_steps,
+                "action_condition": condition,
+                "condition_weights": weights,
+            }
         if condition is None:
             return {"mode": "default"}
 
