@@ -1,0 +1,25 @@
+policy_name: VPP2
+protocol: ws
+host: 127.0.0.1
+port: 19960
+bench_name: RoboDojo
+env_cfg_type: arx_x5
+action_type: ee
+eval_batch: false
+ckpt_name: joint2b_s100000
+deployment_adapter: robodojo_ee16
+checkpoint_path: null
+video_checkpoint_path: null
+dataset_stats_path: null
+wan_model_dir: null
+device: cuda
+mixed_precision: bf16
+action_horizon: 32
+replan_steps: 24
+num_inference_steps: 10
+sigma_shift: 1.0
+seed: 1
+history_stride: 25
+video_seed_offset: 1000003
+backend_identity:
+  fields: [policy_name, task_name, action_type, action_horizon]

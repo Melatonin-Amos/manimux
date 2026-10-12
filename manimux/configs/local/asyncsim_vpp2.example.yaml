@@ -1,0 +1,4 @@
+# Model assets are selected by the official VPP2 launcher, in its own environment.
+services:
+  policy:
+    endpoint: ws://127.0.0.1:19960

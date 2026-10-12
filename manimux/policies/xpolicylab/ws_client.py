@@ -11,7 +11,7 @@ One frame is a msgpack map (numpy arrays encoded by ``msgpack_numpy``)::
     message_type, message_id, evaluation_id, action_case_id,
     trial_id, repeat_index, step, sent_at, payload
 
-Only three request/response pairs are needed for inference:
+Request/response pairs used by policy clients:
 
 ===============  ==================  ==========================================
 request          reply               payload
@@ -19,6 +19,7 @@ request          reply               payload
 ``hello``        ``hello_ack``       ``{}``
 ``reset``        ``reset_result``    ``{"trial_id": ...}``
 ``infer``        ``infer_result``    ``{"observation": ..., "sampling": ...}``
+``call``         ``call_result``     ``{"func_name": ..., "obs": ...}``
 ===============  ==================  ==========================================
 
 The result of a ``call`` is read back from ``payload["result"]``.
@@ -43,12 +44,15 @@ RESET = "reset"
 RESET_RESULT = "reset_result"
 INFER = "infer"
 INFER_RESULT = "infer_result"
+CALL = "call"
+CALL_RESULT = "call_result"
 ERROR = "error"
 
 _EXPECTED_REPLY = {
     HELLO: HELLO_ACK,
     RESET: RESET_RESULT,
     INFER: INFER_RESULT,
+    CALL: CALL_RESULT,
 }
 
 # Three uncompressed 480x640x3 frames are ~2.8 MB, well past the 1 MiB default
@@ -193,6 +197,19 @@ class XPolicyLabWsClient:
     def reset(self) -> None:
         self.request(RESET, {"trial_id": self._trial_id})
         self._step = 0
+
+    def call(self, func_name: str, *, obs: dict[str, Any] | None = None) -> Any:
+        """Invoke an existing public backend method without automatic retries."""
+        if not isinstance(func_name, str) or not func_name or func_name.startswith("_"):
+            raise ValueError("call requires a public method name")
+        payload = {"func_name": func_name}
+        if obs is not None:
+            payload["obs"] = obs
+        reply = self.request(CALL, payload)
+        result = reply.get("payload")
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise XPolicyLabProtocolError("call reply has no successful payload")
+        return result.get("result")
 
     def infer(
         self,

@@ -111,6 +111,17 @@ class AsyncSimRuntime:
         self._instruction: str | None = None
         self._skip_unplanned_commands = bool(config["run"].get("skip_unplanned_commands", False))
         self._simulation_timeline = bool(config["run"].get("simulation_time_timeline", False))
+        self._control_period_alignment = config["run"].get("control_period_alignment", "episode")
+        if self._control_period_alignment not in {"episode", "plan"}:
+            raise ValueError("run.control_period_alignment must be episode or plan")
+        if self._control_period_alignment == "plan" and (
+            not self._simulation_timeline
+            or config["inference"]["inference_schedule"] != "serial"
+            or config["inference"]["commit_lead_s"] != 0
+            or round(config["policy"]["action_dt_s"] * 1e9) != self.dt_ns
+            or config["executor"]["type"] != "direct"
+        ):
+            raise ValueError("plan control alignment requires serial simulation timing with native control intervals")
         if self._simulation_timeline and config["inference"]["algorithm"] not in {"manimux", "rtc"}:
             raise ValueError("simulation-time timeline currently requires ManiMux or RTC inference")
         self._timeline_origin_ns: int | None = None
@@ -247,8 +258,13 @@ class AsyncSimRuntime:
                     if commit_settings is None else commit_settings.blend_steps
                 ),
             )
+        sample_ns = now_ns
+        if self._control_period_alignment == "plan":
+            active = self.timeline.active_horizon()
+            if active is not None and now_ns >= active.start_time_ns:
+                sample_ns = active.start_time_ns + ((now_ns - active.start_time_ns) // active.dt_ns) * active.dt_ns
         horizon = self.timeline.reference_horizon(
-            now_ns=now_ns, dt_ns=self.dt_ns, horizon_steps=self.executor.horizon_steps
+            now_ns=sample_ns, dt_ns=self.dt_ns, horizon_steps=self.executor.horizon_steps
         )
         if horizon is None:
             if isinstance(self.executor, SmoothExecutor) and self.executor.braking_tracking:
@@ -324,7 +340,15 @@ class AsyncSimRuntime:
             control_steps = 0
             loop_ticks = 0
             last_control_slot: int | None = None
+            last_control_origin: int | None = None
             health = self.client.health()
+
+            def control_origin_ns() -> int:
+                if self._control_period_alignment == "plan":
+                    active = self.timeline.active_horizon()
+                    if active is not None:
+                        return active.start_time_ns
+                return self._timeline_origin_ns
 
             def wait_for_poll() -> None:
                 # Wall time only paces polling; missed wall ticks never burst.
@@ -385,7 +409,11 @@ class AsyncSimRuntime:
                 observation = self.observe()
                 now_ns = self._timeline_now_ns if self._simulation_timeline else self.clock.now_ns()
                 if self._simulation_timeline:
-                    slot = (now_ns - self._timeline_origin_ns) // self.dt_ns
+                    origin_ns = control_origin_ns()
+                    if origin_ns != last_control_origin:
+                        last_control_origin = origin_ns
+                        last_control_slot = None
+                    slot = (now_ns - origin_ns) // self.dt_ns
                     if last_control_slot is not None and slot <= last_control_slot:
                         wait_for_poll()
                         continue
@@ -476,9 +504,18 @@ class AsyncSimRuntime:
                             continue
                         break
                     if self._simulation_timeline:
-                        issued_slot = round(ack["issued_sim_ts"] * 1e9) // self.dt_ns
-                        last_control_slot = max(last_control_slot, issued_slot)
+                        origin_ns = control_origin_ns()
+                        issued_slot = (
+                            self._timeline_origin_ns + round(ack["issued_sim_ts"] * 1e9) - origin_ns
+                        ) // self.dt_ns
+                        if origin_ns != last_control_origin:
+                            last_control_origin = origin_ns
+                            last_control_slot = issued_slot
+                        else:
+                            last_control_slot = max(last_control_slot, issued_slot)
                         ack["control_slot"] = issued_slot
+                        if self._control_period_alignment == "plan":
+                            ack["control_origin_ns"] = origin_ns
                     command_acks.append(ack)
                     events.append({"kind": "command_ack", **ack})
                     control_steps += 1

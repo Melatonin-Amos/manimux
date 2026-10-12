@@ -29,8 +29,38 @@ evaluation continues while inference or safe hold keeps the current target.
 atomic snapshot. `ObservationSnapshot.stream_packets` preserves their source
 identity and capture/availability timestamps for policy adapters. The canonical
 `state` remains measured executor feedback; an adapter may build a separate policy
-view when the training observation uses different semantics, such as an applied
+view when the training observation uses different semantics, such as a locally sent
 gripper control target. Model-specific mapping stays in the policy adapter.
+
+### Intermediate observation history
+
+Use the existing `inference.strategy` decorator pattern for history, as UMI and
+DP already do. Both Edge and AsyncSim pass visible observations, controller time
+and the local timeline into `build_submission`; accepted/rejected plans and reset
+use the existing strategy callbacks. No new PolicyAdapter lifecycle interfaces
+are needed. Model-specific mapping and history remain in `policy_adapter/`.
+
+The VPP2 decorator samples one visible observation per nominal 40 ms plan period,
+keeps at most 24 pending samples and never backfills missing periods. Repeated
+reads or frames are not automatically extra steps. Local plans do not prove
+command dispatch, application, convergence or success. No simulator execution
+metrics are policy inputs. `prepare_request` explicitly carries the history in a
+picklable request; RPCs and native model history remain in the worker/backend.
+Stateful request failure or an in-session history reset requires a new backend
+session rather than silently replaying observations.
+
+`run.control_period_alignment: episode` retains the default simulation-period
+gating and interpolated reference sampling. The optional `plan` setting aligns
+command periods to each committed plan and selects discrete native rows. It
+requires serial simulation-time scheduling, a direct executor, zero commit lead,
+and equal policy/control intervals. This preserves row identity for policies with
+per-action history; missed periods are still skipped, never replayed in a burst.
+In this mode command ACK `control_slot` is plan-relative and `control_origin_ns`
+identifies its origin in the evaluation log. Neither is sent to the backend.
+
+The VPP2 caller is documented in `docs/vpp2-arx-x5-runbook.md`. It supplies an
+episode anchor and 24 observations per subsequent request through the existing
+worker and WebSocket CALL protocol, leaving native history on the VPP2 backend.
 
 Read `manimux/runtime/inference.py` (`InferenceStrategy`,
 `build_inference_strategy`) and the selected strategy, such as

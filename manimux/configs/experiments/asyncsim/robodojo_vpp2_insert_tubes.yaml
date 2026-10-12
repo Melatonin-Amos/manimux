@@ -1,0 +1,69 @@
+run:
+  task: insert_tubes
+  instruction_stream: language.instruction
+  output_dir: ./data/asyncsim-vpp2-insert-tubes
+  max_control_steps: 500
+  max_command_submissions: 1000
+  skip_unplanned_commands: true
+  simulation_time_timeline: true
+  control_period_alignment: plan
+
+robot:
+  type: asyncsim
+  config: ../../embodiment/robot/arx_x5_dual.yaml
+  control_hz: 25
+  group_dims: {left_arm: 7, right_arm: 7}
+  options:
+    endpoint: ws://127.0.0.1:18865
+    state_stream: proprio.canonical_joint_state
+    state_keys: {left_arm: left_arm, right_arm: right_arm}
+    command_ttl_s: 300.0
+
+sensors:
+- name: robodojo_cameras
+  driver: asyncsim
+  options:
+    streams:
+      head: camera.cam_head.rgb
+      left_wrist: camera.cam_left_wrist.rgb
+      right_wrist: camera.cam_right_wrist.rgb
+
+policy:
+  worker: manimux.policies.xpolicylab.vpp2:build_model
+  options:
+    server: ws://127.0.0.1:19960
+    action_format: pose
+    request_timeout_s: 300.0
+  adapter:
+    type: manimux.policy_adapter.vpp2.arx_x5:VPP2ArxX5Adapter
+    camera_map: {cam_head: head, cam_left_wrist: left_wrist, cam_right_wrist: right_wrist}
+    # Bootstrap from measured opening; then use the local plan's nominal target.
+    gripper_observation: nominal_plan_target
+    action_semantics: absolute_env_relative_xyz_wxyz
+    # Fixed workspace calibration, also obtainable on a real robot.
+    base_poses:
+      left_arm: [-0.3, -0.45, 0.765, 0.7071067811865476, 0.0, 0.0, 0.7071067811865476]
+      right_arm: [0.3, -0.45, 0.765, 0.7071067811865476, 0.0, 0.0, 0.7071067811865476]
+  action_dt_s: 0.04
+  # The backend predicts 32 rows and returns its 24-row executable prefix.
+  horizon_policy_steps: 24
+  timeout_s: 300.0
+  startup_timeout_s: 1200.0
+  inference_delay_s: 0.0
+
+inference:
+  algorithm: manimux
+  strategy: manimux.policy_adapter.vpp2.history:HistoryStrategy
+  inference_schedule: serial
+  chunk_policy_steps: 24
+  action_start_mode: first_step_when_ready
+  commit_lead_s: 0.0
+  max_plan_age_s: 300.0
+  blend_policy_steps: 0
+
+executor:
+  type: direct
+
+policy_server:
+  config: ../../policy/vpp2/robodojo/joint2b_s100000.yaml
+  task_name: insert_tubes

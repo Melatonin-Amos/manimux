@@ -96,6 +96,10 @@ before adding `policy_adapter/<model-or-representation>/` code.
 `build_observation` is an optional mapping hook; it is not a place to implement
 inference-algorithm chunk handoff by changing measured observations.
 
+History adapters can reuse `inference.strategy` decorators, as UMI, DP and VPP2
+do, to collect visible control-tick samples in both Edge and AsyncSim. Explicitly
+carry history across the worker boundary; controller and worker do not share it.
+
 For a new adapter, explicitly establish:
 
 - Input images/state and camera mapping; joint order and tool coordinates.
