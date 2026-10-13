@@ -520,15 +520,14 @@ class AsyncSimRuntime:
                         break
                     if self._simulation_timeline:
                         origin_ns = control_origin_ns()
-                        issued_slot = (
-                            self._timeline_origin_ns + round(ack["issued_sim_ts"] * 1e9) - origin_ns
-                        ) // self.dt_ns
+                        # Only the sampled slot was processed, even if sending took longer.
+                        sampled_slot = (now_ns - origin_ns) // self.dt_ns
                         if origin_ns != last_control_origin:
                             last_control_origin = origin_ns
-                            last_control_slot = issued_slot
+                            last_control_slot = sampled_slot
                         else:
-                            last_control_slot = max(last_control_slot, issued_slot)
-                        ack["control_slot"] = issued_slot
+                            last_control_slot = max(last_control_slot, sampled_slot)
+                        ack["control_slot"] = sampled_slot
                         if self._control_period_alignment == "plan":
                             ack["control_origin_ns"] = origin_ns
                     command_acks.append(ack)

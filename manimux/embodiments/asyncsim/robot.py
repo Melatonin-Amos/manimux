@@ -85,7 +85,8 @@ class AsyncSimRobot:
             command.groups[name].shape != (dim,) for name, dim in self.group_dims.items()
         ):
             raise ValueError("command layout does not match AsyncSim robot")
-        now = self.client.health()["episode"]["sim_ts"]
+        # Keep the command on its sampling clock; another RPC can cross a control slot.
+        now = snapshot["sim_ts"]
         self._command_seq += 1
         issued = {
             "episode_id": self.client.episode_id,

@@ -312,6 +312,114 @@ class AsyncSimRuntimeTests(unittest.TestCase):
                 self.assertFalse(pending, "serial inference overlapped a planned command")
         self.assertEqual(run["accepted_plans"], 2)
 
+    def test_serial_rpc_latency_preserves_every_chunk_row(self):
+        class RpcAsyncSim(FakeAsyncSim):
+            def advance(self, dt_s):
+                self.sim_ts = round(self.sim_ts + dt_s, 6)
+                clock.time_ns += round(dt_s * 1e9)
+
+            def read_snapshot(self, streams):
+                self.advance(.004)
+                return super().read_snapshot(streams)
+
+            def health(self):
+                self.advance(.032)
+                return super().health()
+
+            def submit_command(self, command):
+                self.advance(.004)
+                return super().submit_command(command)
+
+        class RampWorker(DelayedWorker):
+            def poll(self):
+                response = super().poll()
+                if response is not None:
+                    gripper = np.ones(chunk_steps)
+                    gripper[1] = 0.0
+                    response.raw_action["actions"] = {
+                        name: np.column_stack((
+                            100 * response.request_seq + np.arange(chunk_steps), gripper,
+                        ))
+                        for name in response.raw_action["actions"]
+                    }
+                return response
+
+        for chunk_steps in (30, 32):
+            for alignment in ("episode", "plan"):
+                with self.subTest(chunk_steps=chunk_steps, alignment=alignment):
+                    clock = FixedClock()
+                    backend = RpcAsyncSim(clock_ns=clock.now_ns)
+                    configured = config()
+                    configured["run"].update(
+                        simulation_time_timeline=True, skip_unplanned_commands=True,
+                        control_period_alignment=alignment,
+                    )
+                    configured["robot"]["control_hz"] = 25
+                    configured["policy"].update(action_dt_s=.04, horizon_policy_steps=chunk_steps)
+                    configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
+                    configured["inference"]["inference_schedule"] = "serial"
+                    worker = RampWorker(clock)
+                    runtime = AsyncSimRuntime(configured, client=backend, clock=clock, worker=worker)
+                    run = runtime.run_policy(max_steps=2 * chunk_steps, timeout_s=5)
+                    for name in backend.commands[0]["groups"]:
+                        np.testing.assert_allclose(
+                            [item["groups"][name][0] for item in backend.commands],
+                            np.concatenate([100 * seq + np.arange(chunk_steps) for seq in (1, 2)]),
+                        )
+                        np.testing.assert_allclose(
+                            [item["groups"][name][1] for item in backend.commands],
+                            np.tile(np.where(np.arange(chunk_steps) == 1, 0.0, 1.0), 2),
+                        )
+                    self.assertEqual(run["accepted_plans"], 2)
+                    for offset in (0, chunk_steps):
+                        times = [item["issued_sim_ts"] for item in
+                                 backend.commands[offset:offset + chunk_steps]]
+                        np.testing.assert_allclose(np.diff(times), .04)
+                    second_request_sim_ns = worker.submitted[1].observation_time_ns - runtime._timeline_origin_ns
+                    self.assertGreaterEqual(
+                        second_request_sim_ns,
+                        round((backend.commands[0]["issued_sim_ts"] + chunk_steps * .04) * 1e9),
+                    )
+                    pending = False
+                    for event in run["audit"]["manimux_events"]:
+                        if event["kind"] == "inference_submitted":
+                            self.assertFalse(pending)
+                            pending = True
+                        elif event["kind"] == "inference_response":
+                            pending = False
+                        elif event["kind"] == "command_ack":
+                            self.assertFalse(pending, "serial inference overlapped a planned command")
+
+    def test_control_slots_track_sampling_not_later_issue_time(self):
+        class AdvancingSim(FakeAsyncSim):
+            def read_snapshot(self, streams):
+                self.sim_ts = round(self.sim_ts + .004, 6)
+                return super().read_snapshot(streams)
+
+        clock = FixedClock()
+        backend = AdvancingSim(clock_ns=clock.now_ns)
+        configured = config()
+        configured["run"]["simulation_time_timeline"] = True
+        configured["robot"]["control_hz"] = 25
+        configured["policy"]["action_dt_s"] = .04
+        configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
+        runtime = AsyncSimRuntime(configured, client=backend, clock=clock, worker=FakeWorker(clock))
+        send = runtime.robot.send_command
+
+        def later_issue(command):
+            ack = send(command)
+            # A later issue timestamp must not claim an unsampled control slot.
+            for key in ("issued_sim_ts", "apply_after_sim_ts", "expires_at_sim_ts"):
+                ack[key] += .04
+            return ack
+
+        runtime.robot.send_command = later_issue
+        run = runtime.run_policy(max_steps=8, timeout_s=5)
+        self.assertEqual(
+            [ack["control_slot"] for ack in run["command_acks"]],
+            [round(command["issued_sim_ts"] * 1e9) // runtime.dt_ns for command in backend.commands],
+        )
+
     def test_simulation_control_slots_are_unique_when_wall_time_is_slow(self):
         class SlowSim(FakeAsyncSim):
             def read_snapshot(self, streams):
@@ -763,6 +871,28 @@ class AsyncSimRuntimeTests(unittest.TestCase):
         runtime.step()
         self.assertEqual(backend.commands[-1]["command_seq"], 1)
         runtime.close()
+
+    def test_send_command_reuses_snapshot_time_without_health(self):
+        class NoHealth(FakeAsyncSim):
+            def health(self):
+                raise AssertionError("sending a command must not request health")
+
+        backend = NoHealth()
+        backend.reset()
+        backend.subscribe(["proprio.joint_state"])
+        backend.sim_ts = .04
+        snapshot = backend.read_snapshot(backend.streams)
+        snapshot["packets"]["proprio.joint_state"]["packet"]["capture_ts"] = .02
+        robot = AsyncSimRobot(backend, {"left_arm": 2}, {"left_arm": "left_joints"})
+        robot.use_snapshot(snapshot)
+        backend.sim_ts = .084
+        ack = robot.send_command(RobotCommand({"left_arm": np.ones(2)}, 1_000_000_000, "plan-1"))
+        issued = backend.commands[0]
+        self.assertEqual(issued["issued_sim_ts"], .04)
+        self.assertEqual(issued["apply_after_sim_ts"], .04)
+        self.assertAlmostEqual(issued["expires_at_sim_ts"], .24)
+        self.assertEqual(ack["issued_sim_ts"], .04)
+        self.assertEqual(issued["command_seq"], 1)
 
     def test_sensor_rejects_non_uint8_and_robot_rejects_wrong_layout(self):
         backend = FakeAsyncSim()
