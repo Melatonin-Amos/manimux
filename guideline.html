@@ -309,6 +309,11 @@ execution windows and ACT query intervals still limit submissions.</p>
 <td>Maximum request submission rate. A finite positive value is required for multi-inflight; other schedules may also use it. It does not change camera FPS or robot control rate.</td>
 </tr>
 <tr>
+<td><code>inference.min_execute_policy_steps</code></td>
+<td><code>0</code></td>
+<td>Minimum execution time before replacing an accepted plan, in model policy intervals. Zero keeps direct replacement. Positive values require single-inflight or multi-inflight and inline decoding. See <a href="#minimum-execution-horizon">minimum execution horizon</a>.</td>
+</tr>
+<tr>
 <td><code>policy.timeout_s</code></td>
 <td><code>1.0</code></td>
 <td>Runtime request deadline, in seconds; also sets the resubmission deadline for actual deadline scheduling.</td>
@@ -927,6 +932,44 @@ Keep its algorithm and method parameters. Streaming PAINT requires
 been replaced. PAINT also rejects replies that arrive beyond the usable conditioned
 prefix. A higher upload rate can increase such rejections; it does not remove model
 latency or guarantee uninterrupted execution.</p>
+<h3 id="minimum-execution-horizon">Minimum execution horizon</h3>
+<p>By default, both single-inflight and multi-inflight replace the current plan as
+soon as a valid reply can be committed. To let each accepted plan execute for a
+minimum time while inference continues, set a positive integer
+<code>inference.min_execute_policy_steps</code>. For example:</p>
+<pre><code class="language-yaml">inference:
+  algorithm: async
+  inference_schedule: single_inflight  # or multi_inflight
+  request_trigger: continuous
+  observation_hz: 30.0
+  min_execute_policy_steps: 4
+  action_start_mode: drop_infer_latency
+  blend_policy_steps: 0
+</code></pre>
+<p>The minimum starts at the accepted plan's execution start. Four policy intervals
+of 20 ms give an 80 ms minimum; this does not change the model horizon or control
+rate. The wait ends early if the plan's available trajectory ends. The first plan
+starts without this wait. If no valid replacement is available when the minimum
+ends, the current plan continues until its remaining actions run out.</p>
+<p>During the wait, the runtime retains the newest eligible completed reply and
+replaces it when a newer one arrives. Waiting does not occupy the single-inflight
+request slot or restart the minimum. Requests still follow the configured trigger
+and rate limit; <code>continuous</code> in this example keeps requesting throughout the
+wait. At handoff, decoding, candidate selection and latency trimming use the
+handoff time. With <code>drop_infer_latency</code>, rows that expired during the wait are
+discarded; <code>first_step_when_ready</code> deliberately starts row zero at acceptance.</p>
+<p>This option requires <code>policy.action_decoding: inline</code> and a resolved
+<code>single_inflight</code> or <code>multi_inflight</code> schedule. It also works with their
+supported algorithm combinations; keep each method's required trigger and other
+constraints. Request deadlines and <code>max_plan_age_s</code> still apply, and Pause/Home
+clears the waiting reply. RTC/PAINT reject replies conditioned on a replaced plan;
+PAINT additionally checks that the handoff stays within its anchored prefix.
+Extra waiting can therefore cause rejections. Allow for it when choosing delay
+estimates and time limits.</p>
+<p>This setting controls replacement timing. <code>rtc.min_execute_policy_steps</code>
+controls when RTC requests its next prediction, while <code>chunk_policy_steps</code>
+retains its algorithm-specific meaning. Leave the new setting at <code>0</code> to keep
+the existing behavior.</p>
 <h3 id="bid-with-aacs-execution-horizon">BID with AAC's execution horizon</h3>
 <p>Use the dedicated preset to avoid inheriting a fixed K:</p>
 <pre><code class="language-yaml">inference:

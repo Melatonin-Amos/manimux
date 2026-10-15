@@ -49,8 +49,13 @@ class PaintInferenceStrategy:
         self._execution_steps = int(paint["execution_policy_steps"])
         self._initial_delay_steps = int(paint["initial_delay_policy_steps"])
         self._delay_buffer_size = int(paint["delay_buffer_size"])
-        self._time_aligned = (
+        # A buffered single-inflight reply can outlive its conditioning plan too.
+        self._check_reference = (
             config["inference"]["inference_schedule"] == "multi_inflight"
+            or config["inference"].get("min_execute_policy_steps", 0) > 0
+        )
+        self._time_aligned = (
+            self._check_reference
             or (config["inference"].get("temporal_ensemble") or {}).get("enabled", False)
         )
         self._active_rows: np.ndarray | None
@@ -128,7 +133,7 @@ class PaintInferenceStrategy:
         }
         active = self._active_rows
         if active is None:
-            if request_state.multi_flight:
+            if self._check_reference:
                 self._request_reference_seq[request_seq] = timeline.accepted_request_seq
             self._request_started_ns[request_seq] = now_ns
             self._request_forecast[request_seq] = 0
@@ -166,7 +171,7 @@ class PaintInferenceStrategy:
         self._request_forecast[request_seq] = delay
         self._request_execution[request_seq] = executed
         self._conditioned_requests.add(request_seq)
-        if request_state.multi_flight:
+        if self._check_reference:
             self._request_reference_seq[request_seq] = timeline.accepted_request_seq
         return InferenceSubmission(
             request=request,
@@ -210,7 +215,7 @@ class PaintInferenceStrategy:
         response: InferenceResponse,
         now_ns: int,
     ) -> ActionChunk:
-        if self._config["inference"]["inference_schedule"] == "multi_inflight" and (
+        if self._check_reference and (
             self._request_reference_seq.get(response.request_seq) != self._active_request_seq
         ):
             raise ValueError("paint_condition_plan_replaced")

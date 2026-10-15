@@ -111,6 +111,21 @@ class ActionTimeline:
             return 0
         return max(0, self._runtime_active.end_time_ns - now_ns)
 
+    def replacement_ready(self, now_ns: int, minimum_policy_steps: int) -> bool:
+        """Protect policy intervals from activation, capped by available execution time.
+
+        Count from the retained plan's start, not its observation or receipt time.
+        Dense adapter trajectories still use the model's policy-step duration.
+        """
+        active, runtime = self._active, self._runtime_active
+        if not minimum_policy_steps or active is None or runtime is None:
+            return True
+        earliest = min(
+            runtime.start_time_ns + minimum_policy_steps * active.dt_ns,
+            runtime.end_time_ns,
+        )
+        return now_ns >= earliest
+
     def cursor(self, now_ns: int) -> int:
         """Return the current index in the committed plan for observers."""
         active = self._active

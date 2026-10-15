@@ -42,6 +42,13 @@ class RtcInferenceStrategy:
         self._group_order = tuple(config["robot"]["group_dims"])
         self._rtc_beta = float(rtc["beta"])
         self._min_execute_steps = rtc["min_execute_policy_steps"]
+        buffered = config["inference"].get("min_execute_policy_steps", 0) > 0
+        self._check_reference = (
+            config["inference"]["inference_schedule"] == "multi_inflight" or buffered
+        )
+        self._time_aligned = buffered or (
+            config["inference"].get("temporal_ensemble") or {}
+        ).get("enabled", False)
         self._waypoint_skip = (
             config["inference"]["handoff_skip_steps"]
             if config["inference"]["handoff"] == "waypoint"
@@ -206,18 +213,10 @@ class RtcInferenceStrategy:
                         executed_steps=executed,
                         delay_steps=delay,
                     )
-                    condition, weights = waypoint_condition(
-                        condition,
-                        weights,
-                        model_horizon=self._config["policy"]["horizon_policy_steps"],
-                        skip_steps=self._waypoint_skip,
-                    )
                     forecast_used = delay
-                    if (self._config["inference"].get("temporal_ensemble") or {}).get(
-                        "enabled", False,
-                    ):
-                        # ACT compositions condition the accepted fused timeline on
-                        # the new observation grid, including fractional intervals.
+                    if self._time_aligned:
+                        # Condition the executing timeline on the observation grid,
+                        # including fractional intervals and optional ACT fusion.
                         valid, condition = sample_reference(
                             timeline, origin_ns=snapshot.state.monotonic_ns,
                             dt_ns=int(action_interval(self._config["policy"]) * 1e9),
@@ -228,6 +227,13 @@ class RtcInferenceStrategy:
                             forecast_used = 0
                         else:
                             weights[~valid] = 0
+                    if condition is not None:
+                        condition, weights = waypoint_condition(
+                            condition,
+                            weights,
+                            model_horizon=self._config["policy"]["horizon_policy_steps"],
+                            skip_steps=self._waypoint_skip,
+                        )
         if not ready:
             return None
 
@@ -248,7 +254,7 @@ class RtcInferenceStrategy:
         self._request_started_ns[request_seq] = now_ns
         self._request_observation_ns[request_seq] = snapshot.state.monotonic_ns
         self._request_forecast[request_seq] = forecast_used
-        if request_state.multi_flight:
+        if self._check_reference:
             self._request_reference_seq[request_seq] = timeline.accepted_request_seq
         return InferenceSubmission(
             request=request,
@@ -301,7 +307,7 @@ class RtcInferenceStrategy:
         now_ns: int,
     ) -> ActionChunk:
         del now_ns
-        if self._config["inference"]["inference_schedule"] == "multi_inflight" and (
+        if self._check_reference and (
             self._request_reference_seq.get(response.request_seq) != self._active_request_seq
         ):
             raise ValueError("rtc_condition_plan_replaced")

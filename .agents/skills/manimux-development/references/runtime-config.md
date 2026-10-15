@@ -36,6 +36,21 @@ reset the scheduler together with the strategy. Warmup keeps its independent,
 reset-fenced single-request lifecycle. Request-sequence invalidation, deadlines,
 and paused/Home response filtering remain in the runtime.
 
+`inference.min_execute_policy_steps` defaults to zero (direct replacement).
+Positive values require resolved single-inflight/multi-inflight and inline decoding.
+`EdgeRuntime` retains only the newest eligible raw response until
+`ActionTimeline.replacement_ready` permits replacement: count model policy intervals
+from the active runtime trajectory's start, capped by its end. Receipt frees the
+single-inflight slot; releasing a buffered response must not free a newer request.
+Recheck the response's own deadline and accepted sequence at release. Decode,
+select/prepare and commit against the release clock, retaining the request's
+observation decode seed until then. Supersession, Pause and Home discard pending
+state through the strategy rejection lifecycle. RTC/PAINT use their reference-plan
+fence for buffered single-inflight too; prefix checks and ACT fusion use aligned
+handoff timestamps. The zero path retains its original preparation and scheduling.
+This setting does not change RTC's separate request-cadence parameter of the same
+name. Usage is in [minimum execution horizon](../../../../guideline.html#minimum-execution-horizon).
+
 `inference.strategy` still selects `module:factory` or a
 `manimux.inference_strategies` entry point. Existing history wrappers share the
 same scheduler as their delegate. Streaming/continuous custom strategies remain
