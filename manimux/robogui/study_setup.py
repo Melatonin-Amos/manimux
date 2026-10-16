@@ -56,3 +56,31 @@ def next_repeat(used: set[int], limit: int | None) -> int:
     if limit is not None and repeat > limit:
         raise ValueError(f"All {limit} repeats are scored for this layout. Choose another layout.")
     return repeat
+
+
+def unscored_experiments(root: Path | None, task: str) -> dict[str, Path]:
+    """Find completed, started study trials awaiting a human label in this method directory."""
+    choices: dict[str, Path] = {}
+    if root is None or not root.is_dir():
+        return choices
+    for path in sorted(root.glob("session-*/rollout-*/meta.json"), reverse=True):
+        episode = path.parent
+        if episode.name.endswith(".partial") or (episode / "evaluation/human-label.json").exists():
+            continue
+        try:
+            meta = json.loads(path.read_text())
+            result = json.loads((episode / "result.json").read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(meta, dict) or not isinstance(result, dict):
+            continue
+        if (not meta.get("experiment_mode") or not meta.get("identity_frozen")
+                or meta.get("task") != task or result.get("incomplete")
+                or not isinstance(result.get("steps"), int) or result["steps"] <= 0):
+            continue
+        label = (
+            f"Layout {meta.get('layout_id') or '—'} · Repeat {meta.get('repeat_id') or '—'}"
+            f" · {episode.parent.name}/{episode.name}"
+        )
+        choices[label] = episode
+    return choices

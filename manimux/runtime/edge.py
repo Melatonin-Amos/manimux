@@ -22,12 +22,15 @@ from manimux.policies import ActionDecoderClient, PolicyCapabilities, metadata_m
 from manimux.policies.base import action_interval
 from manimux.policies.worker import PolicyWorkerClient
 from manimux.policy_adapter import build_policy_adapter
+from manimux.policy_adapter.pose_output import POSE_SPACE
 from manimux.recording import EpisodeRecorder
 from manimux.recording.provenance import state_evidence
 from manimux.robogui import RoboGUIBridge
 from manimux.runtime.decode_forecast import DecodeForecast
 from manimux.runtime.diagnostics import build_plan_boundary_payload
+from manimux.runtime.execution import ExecutionPipeline
 from manimux.runtime.executors import DirectExecutor, Executor, MPCExecutor, SmoothExecutor
+from manimux.runtime.ik import step_ik_enabled, validate_ik_config
 from manimux.runtime.inference import (
     DefaultChunkStrategy,
     InferenceStrategy,
@@ -164,6 +167,8 @@ class EdgeRuntime:
         self._run_dir = run_dir
         self._clock = clock or SystemClock()
         self._control_dt_ns = int(1_000_000_000 / config["robot"]["control_hz"])
+        validate_ik_config(config)
+        self._step_ik = step_ik_enabled(config)
         self._robot = self._build_robot()
         self._sensors = [build_sensor(sensor, self._clock) for sensor in config["sensors"]]
         # Runtime reuses robot kinematics; decoding subprocesses load the offline
@@ -204,6 +209,11 @@ class EdgeRuntime:
             self._adapter, "supports_waypoint_handoff", False
         ):
             raise ValueError("adapter does not support waypoint handoff")
+        if (
+            config["inference"]["handoff"] == "waypoint"
+            and self._decode_seed_source != "execution_reference"
+        ):
+            raise ValueError("waypoint handoff requires an execution_reference IK seed")
         self._strategy = strategy or DefaultChunkStrategy(config)
         if self._strategy.name == "bid_backward" and not getattr(
             self._adapter, "supports_candidate_decoding", False,
@@ -213,8 +223,8 @@ class EdgeRuntime:
         if config["policy"]["action_decoding"] == "process":
             # A plugin may wrap the default strategy (the UMI history plugin
             # does); the constructed strategy decides, not the plugin path.
-            if self._strategy.name not in {"async", "rtc"}:
-                raise ValueError("process action decoding requires the async or rtc strategy")
+            if self._strategy.name not in {"async", "serial", "rtc", "train_time_rtc"}:
+                raise ValueError("process decoding requires async, serial, rtc or train_time_rtc")
             self._decoder = ActionDecoderClient(
                 config["robot"],
                 config["policy"],
@@ -232,6 +242,20 @@ class EdgeRuntime:
         )
         self._timeline = self._build_timeline()
         self._executor = self._build_executor()
+        self._execution = ExecutionPipeline(
+            self._executor,
+            kinematics=self._robot.kinematics,
+            ik_options=config.get("execution", {}).get("ik"),
+            control_dt_ns=self._control_dt_ns,
+        )
+        if (config["inference"].get("rtc") or {}).get("condition_source") == "executor":
+            predictor = getattr(self._executor, "predict_commands", None)
+            setter = getattr(self._strategy, "set_condition_predictor", None)
+            if not callable(predictor) or not callable(setter):
+                raise ValueError(
+                    "RTC executor conditions require a forecast-capable executor and strategy"
+                )
+            setter(predictor)
         self._launch_mode = launch_mode
         position_limit_abs = None
         if config["executor"]["type"] == "smooth":
@@ -279,6 +303,7 @@ class EdgeRuntime:
             kinematics=self._robot.kinematics,
             motion_limits=self._config["executor"]["motion_limits"],
         )
+        adapter.decode_pose_only = step_ik_enabled(self._config)
         adapter.validate(self._config["robot"], self._config["policy"])
         return adapter
 
@@ -298,8 +323,13 @@ class EdgeRuntime:
 
     def _build_timeline(self) -> ActionTimeline:
         return ActionTimeline(
-            self._config["robot"]["group_dims"],
+            ({name: 8 for name in self._config["robot"]["group_dims"]}
+             if self._step_ik else self._config["robot"]["group_dims"]),
+            action_space=POSE_SPACE if self._step_ik else "joint_position",
             max_source_steps=self._config["inference"]["max_chunk_policy_steps"],
+            blend_mode=self._config["inference"].get("blend_mode", "linear"),
+            gripper_indices=((self._config["executor"].get("smooth") or {}).get(
+                "gripper") or {}).get("group_indices", {}),
             action_start_mode=self._config["inference"]["action_start_mode"],
             hold_last_step=(
                 (
@@ -322,26 +352,81 @@ class EdgeRuntime:
         state: RobotState,
         now_ns: int,
         observation_state: RobotState | None = None,
+        *,
+        seed_time_ns: int | None = None,
     ) -> tuple[int, RobotState, str]:
         """Expected plan start and IK seed for a process decode.
 
-        Most adapters follow the active plan while decoding, so their seed is
-        the active reference at the expected start (or its final row).  An
-        adapter that decodes the complete observation-anchored source trajectory
-        can instead require the exact state captured with that observation.
+        The adapter may declare an exact seed time independently of its source.
+        Complete Tianji chunks use observation time; waypoint suffixes use the
+        aligned handoff time. Neither choice changes the request observation.
         """
+        if self._step_ik:
+            return now_ns, state, "measured_state"
         expected_decode_s = self._decode_forecast.seconds
         start_ns = now_ns + int(expected_decode_s * 1e9)
         if self._decode_seed_source == "observation_state":
             if observation_state is None:
                 raise ValueError("request observation state is unavailable for action decoding")
             return start_ns, observation_state, "observation_state"
+        if seed_time_ns is not None:
+            groups = self._timeline.sample_runtime(seed_time_ns)
+            if groups is not None:
+                seed = RobotState(groups, seed_time_ns, state.sequence)
+                return start_ns, seed, "active_reference"
+            if (
+                observation_state is not None
+                and seed_time_ns == observation_state.monotonic_ns
+            ):
+                return start_ns, observation_state, "observation_state"
+            raise ValueError("no reference covers the requested IK seed time")
         remaining_ns = self._timeline.remaining_ns(now_ns)
         if expected_decode_s > 0 and remaining_ns > 0:
             reference = self._timeline.sample(min(start_ns, now_ns + remaining_ns))
             if reference is not None:
                 return start_ns, RobotState(reference, start_ns, state.sequence), "active_reference"
         return start_ns, state, "measured_state"
+
+    def _decode_context(self, response, state, now_ns, observation_state) -> ActionContext:
+        """Keep observations intact and resolve the final IK seed once, before decoding."""
+        start_ns = now_ns + int(self._decode_forecast.seconds * 1e9)
+        handoff_reference = None
+        if self._config["inference"]["handoff"] == "waypoint" and self._strategy.decode_handoff(
+            response=response
+        ):
+            start_ns += int(self._config["inference"]["handoff_margin_s"] * 1e9)
+            handoff_reference = self._timeline.handoff_reference(
+                start_ns, round(action_interval(self._config["policy"]) * 1e9)
+            )
+        context = ActionContext(
+            request_seq=response.request_seq,
+            observation_time_ns=response.observation_time_ns,
+            created_time_ns=response.finished_time_ns,
+            execution_time_ns=(
+                start_ns
+                if self._config["inference"]["action_start_mode"] == "drop_infer_latency"
+                and (self._decoder is not None
+                     or self._strategy.name in {"async", "serial", "rtc", "train_time_rtc"})
+                else None
+            ),
+            observation_state=observation_state,
+            decode_reference=(
+                self._timeline.active_horizon()
+                if getattr(self._adapter, "uses_decode_reference", False) else None
+            ),
+            handoff_reference=handoff_reference,
+            max_source_steps=self._config["inference"]["max_chunk_policy_steps"],
+            independent_groups=self._config["inference"]["independent_group_decoding"],
+            decode_budget_ms=(
+                self._config["inference"]["decode_budget_ms"]
+                if self._config["inference"]["independent_group_decoding"] else None
+            ),
+        )
+        _, seed, source = self._decode_seed(
+            state, now_ns, observation_state,
+            seed_time_ns=self._adapter.decode_seed_time_ns(context),
+        )
+        return replace(context, ik_seed=seed, ik_seed_source=source)
 
     def _validate_policy_capabilities(self) -> None:
         capabilities = getattr(self._worker, "capabilities", PolicyCapabilities())
@@ -410,6 +495,7 @@ class EdgeRuntime:
                 "task": self._config["run"]["task"],
                 "evaluation": dict(self._evaluation),
                 "executor_kind": self._config["executor"]["type"],
+                "execution_ik": self._config.get("execution", {}).get("ik", {"mode": "chunk"}),
                 "smooth": (
                     loads(dumps(deepcopy(self._config["executor"]["smooth"]), default=str))
                     if self._config["executor"]["type"] == "smooth"
@@ -521,6 +607,7 @@ class EdgeRuntime:
                 inference_seed=capabilities.backend_metadata.get("model", {}).get("inference_seed"),
             )
             previous_command = copy_group_vector(initial_state.groups)
+            self._execution.warmup(initial_state.groups)
             last_command = copy_group_vector(initial_state.groups)
             self._state = RuntimeState.RUNNING
             robogui_episode_metadata = {
@@ -796,63 +883,19 @@ class EdgeRuntime:
                                 response.request_seq, None
                             )
                             try:
-                                start_ns, seed, seed_source = self._decode_seed(
-                                    state,
-                                    self._clock.now_ns(),
-                                    observation_state,
+                                context = self._decode_context(
+                                    response, state, self._clock.now_ns(), observation_state
                                 )
                             except ValueError as exc:
                                 response = replace(response, error=f"decode_seed_unavailable:{exc}")
                             else:
-                                handoff_reference = None
-                                if self._config["inference"][
-                                    "handoff"
-                                ] == "waypoint" and self._strategy.decode_handoff(
-                                    response=response
-                                ):
-                                    # The adapter aligns the handoff within one source row.
-                                    start_ns += int(
-                                        self._config["inference"]["handoff_margin_s"] * 1e9
-                                    )
-                                    handoff_reference = self._timeline.handoff_reference(
-                                        start_ns,
-                                        round(action_interval(self._config["policy"]) * 1e9),
-                                    )
                                 with stage("decoder_submit"):
                                     self._decoder.submit(
-                                        response,
-                                        ActionContext(
-                                            request_seq=response.request_seq,
-                                            observation_time_ns=response.observation_time_ns,
-                                            created_time_ns=response.finished_time_ns,
-                                            execution_time_ns=start_ns,
-                                            measured_state=seed,
-                                            handoff_reference=handoff_reference,
-                                            # A waypoint lead-in is planned to the skipped
-                                            # row, so the skip happens here, not at commit.
-                                            handoff_skip_steps=(
-                                                0
-                                                if handoff_reference is None
-                                                else self._config["inference"][
-                                                    "handoff_skip_steps"
-                                                ]
-                                            ),
-                                            max_source_steps=self._config["inference"][
-                                                "max_chunk_policy_steps"
-                                            ],
-                                            independent_groups=self._config["inference"][
-                                                "independent_group_decoding"
-                                            ],
-                                            decode_budget_ms=(
-                                                self._config["inference"]["decode_budget_ms"]
-                                                if self._config["inference"][
-                                                    "independent_group_decoding"
-                                                ]
-                                                else None
-                                            ),
-                                        ),
-                                        last_request_deadline_ns,
+                                        response, context, last_request_deadline_ns
                                     )
+                                seed, seed_source = context.ik_seed, context.ik_seed_source
+                                start_ns = context.execution_time_ns
+                                handoff_reference = context.handoff_reference
                                 recorder.event(
                                     "decode_submitted",
                                     request_seq=response.request_seq,
@@ -926,28 +969,8 @@ class EdgeRuntime:
                                     else decode_strategy_action(
                                         self._strategy, self._adapter,
                                         response.raw_action,
-                                        ActionContext(
-                                            request_seq=response.request_seq,
-                                            observation_time_ns=response.observation_time_ns,
-                                            created_time_ns=response.finished_time_ns,
-                                            # Only latency-trimming timelines may let the
-                                            # adapter drop elapsed rows before decoding.
-                                            execution_time_ns=(
-                                                now_ns
-                                                if self._strategy.name
-                                                in {"async", "serial", "rtc"}
-                                                and self._config["inference"]["action_start_mode"]
-                                                == "drop_infer_latency"
-                                                else None
-                                            ),
-                                            measured_state=(
-                                                observation_state
-                                                if self._decode_seed_source == "observation_state"
-                                                else state
-                                            ),
-                                            max_source_steps=self._config["inference"][
-                                                "max_chunk_policy_steps"
-                                            ],
+                                        self._decode_context(
+                                            response, state, now_ns, observation_state
                                         ),
                                     )
                                 )
@@ -979,7 +1002,7 @@ class EdgeRuntime:
                             pending_visuals.pop(response.request_seq, None)
                             chunk = None
                         now_ns = self._clock.now_ns()
-                        if chunk is not None and chunk.action_space != "joint_position":
+                        if chunk is not None and chunk.action_space != self._timeline.action_space:
                             self._strategy.on_response_rejected(response)
                             rejected_plans += 1
                             recorder.event(
@@ -987,7 +1010,7 @@ class EdgeRuntime:
                                 request_seq=response.request_seq,
                                 reason=(
                                     "invalid_action:canonical action_space must be "
-                                    f"'joint_position', got {chunk.action_space!r}"
+                                    f"{self._timeline.action_space!r}, got {chunk.action_space!r}"
                                 ),
                             )
                             with stage("robogui_publish_event"):
@@ -1098,8 +1121,13 @@ class EdgeRuntime:
                                                 self._config["inference"]["max_plan_age_s"]
                                                 * 1_000_000_000
                                             ),
-                                            current_command=commit.current_command,
+                                            current_command=self._execution.reference_from_joints(commit.current_command),
                                             blend_steps=commit.blend_steps,
+                                            command_velocity={
+                                                name: (last_command[name]-previous_command[name])
+                                                / (self._control_dt_ns/1e9)
+                                                for name in last_command
+                                            },
                                             handoff_skip_steps=self._config["inference"][
                                                 "handoff_skip_steps"
                                             ],
@@ -1109,6 +1137,9 @@ class EdgeRuntime:
                                 last_inference_ms = response.inference_ms
                                 chunk.metadata["timeline_latency_ms"] = (
                                     result.timeline_latency_ns / 1_000_000
+                                )
+                                chunk.metadata["blend_mode"] = self._config["inference"].get(
+                                    "blend_mode", "linear"
                                 )
                                 chunk.metadata["time_trimmed_steps"] = result.time_trimmed_steps
                                 chunk.metadata["handoff_skipped_steps"] = (
@@ -1162,11 +1193,6 @@ class EdgeRuntime:
                                             committed=committed,
                                         ),
                                     )
-                                # A waypoint chunk arrives with its skipped rows already
-                                # removed; RoboGUI draws them like a commit-time skip.
-                                upstream_skip = (
-                                    0 if chunk.handoff is None else chunk.handoff.skipped_steps
-                                )
                                 with stage("robogui_publish_plan"):
                                     self._robogui.publish_plan(
                                         chunk,
@@ -1174,9 +1200,7 @@ class EdgeRuntime:
                                         committed=committed,
                                         metadata={
                                             "runtime": self._strategy.name,
-                                            "raw_horizon_steps": (
-                                                chunk.horizon_steps + upstream_skip
-                                            ),
+                                            "raw_horizon_steps": chunk.horizon_steps,
                                             "committed_horizon_steps": committed.horizon_steps,
                                             "time_trimmed_steps": result.time_trimmed_steps,
                                             "handoff_skipped_steps": (
@@ -1207,7 +1231,7 @@ class EdgeRuntime:
                                             **submission_visuals,
                                             **event_fields,
                                             # After event_fields, which repeat the timeline's count.
-                                            "trimmed_steps": result.trimmed_steps + upstream_skip,
+                                            "trimmed_steps": result.trimmed_steps,
                                         },
                                     )
                                 pending_visuals.pop(response.request_seq, None)
@@ -1250,6 +1274,7 @@ class EdgeRuntime:
                         last_submitted_seq=last_submitted_seq,
                         last_deadline_ns=last_request_deadline_ns,
                         multi_flight=self._multi_inflight,
+                        expected_decode_ns=round(self._decode_forecast.seconds * 1e9),
                     )
                     with stage("policy_schedule"):
                         submission = self._scheduler.build_submission(
@@ -1269,13 +1294,12 @@ class EdgeRuntime:
                                 submission.request,
                             )
                         request_seq = submission.request.request_seq
-                        if self._decode_seed_source == "observation_state":
-                            observation_state = prepared_request.observation.state
-                            pending_observation_states[request_seq] = RobotState(
-                                groups=copy_group_vector(observation_state.groups),
-                                monotonic_ns=observation_state.monotonic_ns,
-                                sequence=observation_state.sequence,
-                            )
+                        observation_state = prepared_request.observation.state
+                        pending_observation_states[request_seq] = RobotState(
+                            groups=copy_group_vector(observation_state.groups),
+                            monotonic_ns=observation_state.monotonic_ns,
+                            sequence=observation_state.sequence,
+                        )
                         with stage("worker_submit"):
                             self._worker.submit_latest(prepared_request)
                         logger.info(
@@ -1350,15 +1374,17 @@ class EdgeRuntime:
                     reference = self._timeline.reference_horizon(
                         now_ns=now_ns,
                         dt_ns=self._control_dt_ns,
-                        horizon_steps=self._executor.horizon_steps,
+                        horizon_steps=self._execution.horizon_steps,
                     )
                 scheduled = copy_group_vector(state.groups)
                 if self._state == RuntimeState.RUNNING and reference is not None:
-                    scheduled = {
-                        name: values[0].copy() for name, values in reference.groups.items()
-                    }
-                    with stage("executor_step"):
-                        command = self._executor.step(now_ns, state, reference)
+                    execution = self._execution.step(
+                        now_ns, state, reference, last_command=last_command,
+                    )
+                    reference, command = execution.reference, execution.command
+                    scheduled = {name: values[0].copy() for name, values in reference.groups.items()}
+                    if execution.ik_status is not None and not execution.ik_status["success"]:
+                        recorder.event("step_ik_hold", step=steps, **execution.ik_status)
                     if isinstance(self._executor, SmoothExecutor) and (
                         self._config["executor"]["smooth"]["release_guard"] is not None
                         or self._executor.uses_close_latch

@@ -22,6 +22,7 @@ from scipy.spatial.transform import Rotation
 
 from manimux.policies.base import action_interval
 from manimux.policy_adapter.base import PolicyAdapter
+from manimux.policy_adapter.pose_output import pose_chunk
 from manimux.runtime.rtc.request import RtcInferenceRequest
 from manimux.types import (
     ActionChunk,
@@ -119,9 +120,13 @@ class TargetZBias:
         self.full_below_m = float(options.get("full_below_m", 0.08))
         self.zero_above_m = float(options.get("zero_above_m", 0.15))
         self.min_height_m = float(options.get("min_height_m", 0.015))
-        values = (self.offset_m, self.table_z_m, self.full_below_m, self.zero_above_m, self.min_height_m)
+        values = (
+            self.offset_m, self.table_z_m, self.full_below_m, self.zero_above_m, self.min_height_m
+        )
         if not np.isfinite(values).all() or not 0 <= self.full_below_m < self.zero_above_m:
-            raise ValueError("target_z_bias needs finite values and 0 <= full_below_m < zero_above_m")
+            raise ValueError(
+                "target_z_bias needs finite values and 0 <= full_below_m < zero_above_m"
+            )
         # Keep the map strictly increasing so the RTC condition can be inverted.
         if abs(self.offset_m) >= self.zero_above_m - self.full_below_m:
             raise ValueError("|target_z_bias.offset_m| must be below zero_above_m - full_below_m")
@@ -218,10 +223,16 @@ def _wire_endpose_to_pose(endpose: np.ndarray) -> np.ndarray:
 class SAPolicyYamAdapter(PolicyAdapter):
     """Encode YAM observations and solve SAPolicy Cartesian chunks back to joints."""
 
+    supports_step_ik = True
+
     def __init__(self, robot: dict, policy: dict, *, kinematics=None) -> None:
         from manimux.kinematics import build_kinematics
 
         self._group_order = tuple(policy["adapter"].get("group_order", DEFAULT_GROUP_ORDER))
+        seed_source = policy["adapter"].get("ik_seed_source", "runtime")
+        if seed_source not in {"runtime", "previous_plan"}:
+            raise ValueError("SAPolicy ik_seed_source must be runtime or previous_plan")
+        self.uses_decode_reference = seed_source == "previous_plan"
         self._horizon_steps = policy["horizon_policy_steps"]
         self.action_space = policy["adapter"].get("action_space", "joint_position")
         if self.action_space != "joint_position":
@@ -361,7 +372,7 @@ class SAPolicyYamAdapter(PolicyAdapter):
     def decode_action(self, raw: object, context: ActionContext) -> ActionChunk:
         return self._decode_action(raw, context)
 
-    # A decoder process owns its own kinematics; measured_state is the complete
+    # A decoder process owns its own kinematics; ik_seed is the complete
     # decode seed, so it does not need the observation-side anchor cache.
     supports_context_only_decode = True
     supports_independent_group_decode = True
@@ -431,11 +442,21 @@ class SAPolicyYamAdapter(PolicyAdapter):
                     group, actions[:, start : start + 3]
                 )
         anchor = self._anchors.pop(context.request_seq, None)
-        if anchor is None and context.measured_state is None:
+        if anchor is None and context.ik_seed is None:
             raise ValueError(
                 f"SAPolicy adapter has no observation anchor for request {context.request_seq}"
             )
 
+        if self.decode_pose_only:
+            targets = {}
+            for index, group in enumerate(self._group_order):
+                rows = actions[:, index * 8:index * 8 + 8].copy()
+                from manimux.kinematics.poses import matrix_pose
+                targets[group] = np.stack([
+                    np.r_[matrix_pose(self._kinematics_from_model[group] @ _wire_endpose_to_pose(row[:7])), row[7]]
+                    for row in rows
+                ])
+            return pose_chunk(context, targets, self._action_dt_ns)
         groups: dict[str, np.ndarray] = {}
         ik_diagnostics: dict[str, object] = {}
         raw_eef: dict[str, object] = {}
@@ -455,13 +476,24 @@ class SAPolicyYamAdapter(PolicyAdapter):
             raw_eef[group] = raw_model_actions[:, arm_index * 8 : arm_index * 8 + 8].tolist()
             state_start = arm_index * GROUP_DIM
             seed_state = None if anchor is None else anchor[state_start : state_start + GROUP_DIM]
-            if context.measured_state is not None:
-                measured = context.measured_state.groups.get(group)
-                if measured is None:
-                    raise ValueError(f"SAPolicy measured state is missing group {group!r}")
-                seed_state = np.asarray(measured, dtype=np.float64)
+            if context.ik_seed is not None:
+                selected = context.ik_seed.groups.get(group)
+                if selected is None:
+                    raise ValueError(f"SAPolicy IK seed is missing group {group!r}")
+                seed_state = np.asarray(selected, dtype=np.float64)
                 if seed_state.shape != (GROUP_DIM,) or not np.isfinite(seed_state).all():
-                    raise ValueError(f"SAPolicy measured state group {group!r} is invalid")
+                    raise ValueError(f"SAPolicy IK seed group {group!r} is invalid")
+            seed_source = "runtime"
+            reference = context.decode_reference if self.uses_decode_reference else None
+            if reference is not None:
+                position = (context.observation_time_ns + offset*self._action_dt_ns
+                            - reference.start_time_ns) / reference.dt_ns
+                rows = reference.groups[group]
+                if 0 <= position <= len(rows)-1:
+                    lower = int(np.floor(position))
+                    upper = min(lower+1, len(rows)-1)
+                    seed_state = (1-(position-lower))*rows[lower] + (position-lower)*rows[upper]
+                    seed_source = "previous_plan"
             assert seed_state is not None
             if context.independent_groups:
                 groups[group], failed_at = self._solve_arm_bounded(
@@ -474,6 +506,7 @@ class SAPolicyYamAdapter(PolicyAdapter):
                 )
                 if failed_at is not None:
                     hold_from_step[group] = failed_at
+                ik_diagnostics[group]["seed_source"] = seed_source
                 continue
             groups[group] = self._solve_arm(
                 group,
@@ -482,6 +515,7 @@ class SAPolicyYamAdapter(PolicyAdapter):
                 diagnostics=ik_diagnostics,
             )
 
+            ik_diagnostics[group]["seed_source"] = seed_source
         return ActionChunk(
             plan_id=f"sapolicy-{context.request_seq}-{uuid.uuid4().hex[:8]}",
             request_seq=context.request_seq,

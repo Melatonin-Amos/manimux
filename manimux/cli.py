@@ -285,7 +285,8 @@ def _load_config(
     return config
 
 
-def _create_run_dir(config: dict, config_path: Path, *, mode: str) -> Path:
+def _create_run_dir(config: dict, config_path: Path, *, mode: str,
+                    experiment_selection: dict | None = None) -> Path:
     from manimux.recording.provenance import (
         capture_source_provenance,
         deployment_artifact_provenance,
@@ -296,7 +297,8 @@ def _create_run_dir(config: dict, config_path: Path, *, mode: str) -> Path:
     run_dir = config["run"]["output_dir"] / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     resolved_config = config_path.expanduser().resolve()
-    config_sha256 = hashlib.sha256(resolved_config.read_bytes()).hexdigest()
+    config_sha256 = (experiment_selection["config_sha256"] if experiment_selection else
+                     hashlib.sha256(resolved_config.read_bytes()).hexdigest())
     repository_root = Path(__file__).resolve().parents[1]
     recipe = config.get("policy_server", {})
     sources = capture_source_provenance(repository_root, policy_name=recipe.get("policy_name"))
@@ -317,6 +319,7 @@ def _create_run_dir(config: dict, config_path: Path, *, mode: str) -> Path:
                 "config_path": str(resolved_config),
                 "config_sha256": config_sha256,
                 "config": loads(dumps(deepcopy(config), default=str)),
+                **({"experiment_selection": experiment_selection} if experiment_selection else {}),
             },
             handle,
             ensure_ascii=False,
@@ -355,18 +358,38 @@ def _run(
 
 
 def _serve(
-    config_path: Path, executor: str | None = None, *, local: Path | None = None,
-    control_timing: bool = False,
+    config_path: Path | None, executor: str | None = None, *, local: Path | None = None,
+    control_timing: bool = False, config_list: Path | None = None,
 ) -> int:
     # Session/recovery dependencies are only needed for the interactive service.
     from manimux.runtime.lock import RuntimeLockError
     from manimux.session import RuntimeSessionService
 
-    config = _load_config(config_path, executor, local=local, control_timing=control_timing)
+    catalog = None
+    if config_list is not None:
+        from manimux.experiment_list import load_experiment_list
+
+        catalog = load_experiment_list(
+            config_list, local=local, executor=executor, control_timing=control_timing,
+        )
+        first = catalog.choices[catalog.default_id]
+        config_path, config = first.path, deepcopy(first.config)
+    else:
+        config = _load_config(config_path, executor, local=local, control_timing=control_timing)
+
+    def create_selection_dir(choice_id: str) -> Path:
+        choice = catalog.choices[choice_id]
+        return _create_run_dir(choice.config, choice.path, mode="serve",
+                               experiment_selection=catalog.selection(choice_id))
+
     try:
         with _runtime_lock(config, config_path, mode="serve"):
-            run_dir = _create_run_dir(config, config_path, mode="serve")
-            RuntimeSessionService(config, run_dir).serve()
+            run_dir = (create_selection_dir(catalog.default_id) if catalog else
+                       _create_run_dir(config, config_path, mode="serve"))
+            RuntimeSessionService(
+                config, run_dir, experiment_list=catalog,
+                selection_dir_factory=create_selection_dir if catalog else None,
+            ).serve()
     except KeyboardInterrupt:
         print("runtime service stopped by operator")
         return 130
@@ -388,8 +411,12 @@ def _runtime_lock(
     return RuntimeInstanceLock(identity, mode=mode, config_path=config_path)
 
 
-def _add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", type=Path, required=True)
+def _add_runtime_arguments(parser: argparse.ArgumentParser, *, allow_list: bool = False) -> None:
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path)
+    if allow_list:
+        source.add_argument("--config-list", type=Path,
+                            help="Select compatible experiments in RoboGUI without restarting services")
     parser.add_argument(
         "--local", type=Path,
         help="Station bindings (default: manimux/configs/local/station.yaml)",
@@ -415,7 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = subparsers.add_parser(
         "serve", help="keep one runtime service available for RoboGUI-controlled rollouts"
     )
-    _add_runtime_arguments(serve_parser)
+    _add_runtime_arguments(serve_parser, allow_list=True)
     return parser
 
 
@@ -434,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         return _serve(
             args.config, args.executor, local=args.local, control_timing=args.control_timing,
+            config_list=args.config_list,
         )
     raise AssertionError(f"unhandled command {args.command}")
 
@@ -531,6 +559,11 @@ def prepare_experiment(**options) -> dict:
         values["control_profile"] = Path(values["control_profile"])
     if values.get("local") is not None:
         values["local"] = Path(values["local"])
+    from manimux.runtime.ik import ik_parameters
+    execution = values.setdefault("execution", {})
+    if set(execution) - {"ik"}:
+        raise ValueError("execution supports only the ik section")
+    execution["ik"] = ik_parameters(**(execution.get("ik") or {}))
     values["run"] = run_parameters(**values["run"])
     values["robot"] = robot_parameters(**values["robot"])
     values["policy"] = policy_parameters(**values["policy"])

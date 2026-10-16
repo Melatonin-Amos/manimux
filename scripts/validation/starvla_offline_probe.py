@@ -138,7 +138,11 @@ def probe_observations(client, adapter, config, report, outputs, *, deterministi
         raw = client.infer(request)
         elapsed = time.perf_counter() - started
         chunk = adapter.decode_action(
-            raw, ActionContext(index, now, time.monotonic_ns(), measured_state=state)
+            raw,
+            ActionContext(
+                index, now, time.monotonic_ns(), observation_state=state,
+                ik_seed=state, ik_seed_source="observation_state",
+            ),
         )
         rows = np.concatenate(list(chunk.groups.values()), axis=-1)
         if not np.isfinite(rows).all():

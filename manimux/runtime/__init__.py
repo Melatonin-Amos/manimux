@@ -78,6 +78,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
     from manimux.runtime.rtc.strategy import rtc_parameters
     from manimux.runtime.scheduling import resolve_request_schedule
     from manimux.runtime.temporal_ensemble import temporal_ensemble_parameters
+    from manimux.runtime.train_time_rtc import train_time_rtc_parameters
 
     unsupported = {
         "chunk_steps", "blend_steps", "max_chunk_steps", "commit_lead_s", "dvac",
@@ -99,12 +100,14 @@ def inference_parameters(*, executor: dict, **options) -> dict:
         options.get("algorithm") == "act_temporal_ensemble"
         and options.get("inference_schedule") == "serial"
     )
-    # Serial ACT consumes this field directly as its execution prefix, not a query interval.
-    if options.get("chunk_policy_steps") is not None and not serial_act:
+    progress_async = options["algorithm"] == "async" and options.get("request_trigger") == "progress"
+    # Serial ACT and progress-triggered Async consume the shared step count directly.
+    if options.get("chunk_policy_steps") is not None and not (serial_act or progress_async):
         paths = {
             "async": (None, "max_chunk_policy_steps"),
             "serial": (None, "max_chunk_policy_steps"),
             "rtc": ("rtc", "min_execute_policy_steps"),
+            "train_time_rtc": ("train_time_rtc", "min_execute_policy_steps"),
             "paint": ("paint", "execution_policy_steps"),
             "bid_backward": ("bid", "replan_policy_steps"),
             "act_temporal_ensemble": ("temporal_ensemble", "query_interval_policy_steps"),
@@ -135,6 +138,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
         "handoff_skip_steps": 0,
         "max_plan_age_s": 1.0,
         "blend_policy_steps": 2,
+        "blend_mode": "linear",
         "action_start_mode": "drop_infer_latency",
         # Chunk handoff: blend joints at commit, or an adapter EE waypoint before dense IK.
         "handoff": "blend",
@@ -146,6 +150,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
         "decode_forecast_size": 0,
         "decode_forecast_mode": "max",
         "rtc": {},
+        "train_time_rtc": {},
         "temporal_ensemble": {},
         "aac": {},
         "bid": {},
@@ -154,6 +159,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
     }
     if values.get("rtc") is not None:
         values["rtc"] = rtc_parameters(**values["rtc"])
+    values["train_time_rtc"] = train_time_rtc_parameters(**values["train_time_rtc"])
     if values.get("temporal_ensemble") is not None:
         values["temporal_ensemble"] = temporal_ensemble_parameters(**values["temporal_ensemble"])
     if values.get("aac") is not None:
@@ -180,6 +186,8 @@ def inference_parameters(*, executor: dict, **options) -> dict:
 
 def validate_runtime_parameters(config: dict) -> None:
     """Preserve constraints between scheduling, action decoding and execution limits."""
+    from manimux.runtime.ik import validate_ik_config
+    validate_ik_config(config)
     settings = config["inference"]
     if settings["min_execute_policy_steps"] and config["policy"]["action_decoding"] != "inline":
         raise ValueError("min_execute_policy_steps requires inline action decoding")
@@ -226,16 +234,21 @@ def validate_runtime_parameters(config: dict) -> None:
             raise ValueError("shared motion_limits currently support direct and smooth, not mpc")
     if (
         config["inference"]["inference_schedule"] == "serial"
-        and config["policy"]["action_decoding"] != "inline"
+        and config["inference"]["action_start_mode"] != "first_step_when_ready"
     ):
         raise ValueError(
-            "serial scheduling requires inline action decoding without latency trimming"
+            "serial scheduling requires action_start_mode=first_step_when_ready"
         )
     if (
         config["inference"]["chunk_policy_steps"] is not None
         and config["inference"]["chunk_policy_steps"] > config["policy"]["horizon_policy_steps"]
     ):
         raise ValueError("inference.chunk_policy_steps must not exceed policy.horizon_policy_steps")
+    if (
+        config["inference"]["request_trigger"] == "progress"
+        and config["inference"]["chunk_policy_steps"] >= config["policy"]["horizon_policy_steps"]
+    ):
+        raise ValueError("progress chunk_policy_steps must be smaller than policy.horizon_policy_steps")
     if (
         config["inference"]["handoff"] == "waypoint"
         and config["policy"]["action_decoding"] != "process"
@@ -251,6 +264,22 @@ def validate_runtime_parameters(config: dict) -> None:
         and config["policy"]["action_decoding"] != "process"
     ):
         raise ValueError("inference.expected_decode_s requires process action decoding")
+    if (config["inference"].get("rtc") or {}).get("condition_source") == "executor":
+        smooth = config["executor"].get("smooth") or {}
+        gripper = smooth.get("gripper")
+        if (config["inference"]["algorithm"] != "rtc"
+                or (config["inference"].get("temporal_ensemble") or {}).get("enabled")
+                or config["executor"]["type"] != "smooth"
+                or smooth.get("release_guard") or smooth.get("grasp_guard")
+                or (gripper and gripper["mode"] not in {"continuous", "curve"})):
+            raise ValueError(
+                "RTC executor conditions require standalone RTC and smooth without gripper guards"
+            )
+    if (
+        (config["inference"].get("rtc") or {}).get("condition_source", "canonical") != "canonical"
+        and config["inference"]["handoff_skip_steps"]
+    ):
+        raise ValueError("timeline/executor RTC conditions do not support handoff row skipping")
     # A positive expected_decode_s already implies process decoding, checked above.
     if (
         config["inference"]["decode_forecast_size"]
@@ -275,8 +304,15 @@ def validate_runtime_parameters(config: dict) -> None:
                 raise ValueError(
                     f"executor.command_safety group {group!r} must have {dimension} values"
                 )
-    if config["inference"]["algorithm"] == "rtc":
-        delay = config["inference"]["rtc"]["initial_delay_policy_steps"]
+    if config["inference"]["algorithm"] in {"rtc", "train_time_rtc"}:
+        section = config["inference"]["algorithm"]
+        delay_field = (
+            "fixed_prefix_steps"
+            if section == "train_time_rtc"
+            and config["inference"][section]["delay_estimator"] == "fixed"
+            else "initial_delay_policy_steps"
+        )
+        delay = config["inference"][section][delay_field]
         skip = (
             config["inference"]["handoff_skip_steps"]
             if config["inference"]["handoff"] == "waypoint"
@@ -287,13 +323,8 @@ def validate_runtime_parameters(config: dict) -> None:
             raise ValueError("RTC waypoint handoff_skip_steps must be smaller than the horizon")
         if delay is not None and 2 * delay > config["policy"]["horizon_policy_steps"]:
             raise ValueError(
-                "RTC requires 2 * initial_delay_policy_steps "
+                f"RTC requires 2 * {delay_field} "
                 "<= policy.horizon_policy_steps"
-            )
-        if delay is not None and skip and 2 * delay > horizon - skip:
-            raise ValueError(
-                "RTC requires 2 * initial_delay_policy_steps <= "
-                "policy.horizon_policy_steps - handoff_skip_steps for waypoint handoff"
             )
     if (
         config["inference"]["algorithm"] == "act_temporal_ensemble"
@@ -390,13 +421,28 @@ def validate_inference_parameters(values: dict, executor: dict, *, provided=froz
         raise ValueError(f"inference.decode_forecast_mode must be one of {FORECAST_MODES}")
     if values["handoff"] not in {"blend", "waypoint"}:
         raise ValueError("inference.handoff must be blend or waypoint")
+    if values["blend_mode"] not in {"linear", "command_cubic"}:
+        raise ValueError("inference.blend_mode must be linear or command_cubic")
+    if values["blend_mode"] == "command_cubic" and (
+        values["handoff"] != "blend" or values["blend_policy_steps"] < 2
+        or values["algorithm"] not in {"async", "rtc"}
+        or values["inference_schedule"] == "serial"
+        or executor["type"] != "smooth"
+        or (values.get("temporal_ensemble") or {}).get("enabled")
+        or values["independent_group_decoding"]
+    ):
+        raise ValueError(
+            "command_cubic requires standalone async/rtc with smooth, complete groups, "
+            "and at least two blend rows"
+        )
     if not values["handoff_margin_s"] >= 0:
         raise ValueError("inference.handoff_margin_s must be non-negative")
     if values["handoff"] == "waypoint" and (
-        values["algorithm"] not in {"async", "rtc"} or values["blend_policy_steps"] != 0
+        values["algorithm"] not in {"async", "rtc", "train_time_rtc"}
+        or values["blend_policy_steps"] != 0
     ):
         raise ValueError(
-            "inference.handoff=waypoint requires the async or rtc algorithm and "
+            "inference.handoff=waypoint requires async, rtc or train_time_rtc and "
             "blend_policy_steps=0"
         )
     # The handoff time lies on the source row grid, which first_step_when_ready discards.
@@ -417,6 +463,14 @@ def validate_inference_parameters(values: dict, executor: dict, *, provided=froz
         or executor["type"] not in {"smooth", "direct", "mpc"}
     ):
         raise ValueError("max_chunk_policy_steps requires the Serial/Async joint timeline")
+    if values["algorithm"] == "train_time_rtc" and (
+        values["blend_policy_steps"] != 0 or values["handoff_skip_steps"] != 0
+        or values["action_start_mode"] != "drop_infer_latency"
+    ):
+        raise ValueError(
+            "train_time_rtc requires drop_infer_latency, blend_policy_steps=0 "
+            "and handoff_skip_steps=0 to preserve the fixed prefix clock"
+        )
     if (values["algorithm"] == "aac" or bid_aac) and not values["aac"]["ee_stats_path"]:
         raise ValueError("inference.aac.ee_stats_path is required by AAC")
     if values["algorithm"] == "aac":

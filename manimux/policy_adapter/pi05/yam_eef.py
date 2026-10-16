@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation
 
 from manimux.policies.actions import action_groups
 from manimux.policy_adapter.base import PolicyAdapter
+from manimux.policy_adapter.pose_output import pose_chunk
 from manimux.types import ActionChunk, InferenceRequest
 
 
@@ -18,6 +19,8 @@ class EefRequest(InferenceRequest):
 
 
 class Pi05YamEefAdapter(PolicyAdapter):
+    supports_step_ik = True
+
     def __init__(self, robot, policy, *, kinematics=None):
         from manimux.embodiments.robot.base import RobotModel
 
@@ -65,9 +68,14 @@ class Pi05YamEefAdapter(PolicyAdapter):
             raise ValueError("Pi05 EEF action horizon mismatch")
         actions = {group: rows[: self.decode_steps] for group, rows in actions.items()}
         anchor = self.anchors.pop(context.request_seq, None)
-        seed_state = context.measured_state if context.measured_state is not None else anchor
+        seed_state = context.ik_seed if context.ik_seed is not None else anchor
         if seed_state is None:
-            raise ValueError("Pi05 EEF IK requires measured joints")
+            raise ValueError("Pi05 EEF IK requires a joint seed")
+        if self.decode_pose_only:
+            poses = {name: rows.copy() for name, rows in actions.items()}
+            for rows in poses.values():
+                rows[:, 7] = np.clip(rows[:, 7], 0, 1)
+            return pose_chunk(context, poses, self.dt)
         groups = {}
         for group in self.groups:
             seed = np.asarray(seed_state.groups[group]).copy()

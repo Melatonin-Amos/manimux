@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
 from manimux.plugins import load_plugin
+from manimux.policies.base import attach_sampling_stats
 from manimux.policy_adapter.base import PolicyAdapter
 from manimux.runtime.safety import RuntimeState
 from manimux.runtime.timeline import ActionTimeline, CommitResult
@@ -25,6 +26,8 @@ class RequestState:
     last_submitted_seq: int
     last_deadline_ns: int
     multi_flight: bool = False
+    # Shared process-decode forecast at submission time; zero for inline decoding.
+    expected_decode_ns: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +152,7 @@ class DefaultChunkStrategy:
 
     def __init__(self, config: dict) -> None:
         self._config = config
+        self.reset()
 
     @property
     def discard_plans_while_paused(self) -> bool:
@@ -167,7 +171,7 @@ class DefaultChunkStrategy:
         return frozenset({"default"})
 
     def reset(self) -> None:
-        pass
+        self._active_source_offset: int | None = None
 
     def build_submission(
         self,
@@ -182,6 +186,20 @@ class DefaultChunkStrategy:
         runtime_state: RuntimeState,
     ) -> InferenceSubmission | None:
         # RequestScheduler owns transport admission and ordinary refill timing.
+        progress_fields = {}
+        if self._config["inference"].get("request_trigger") == "progress":
+            if runtime_state != RuntimeState.RUNNING:
+                return None
+            # Same source clock as RTC/PAINT: latency-trimmed rows count as progress.
+            # Keep the complete trajectory available while the next request runs.
+            progress = (
+                0 if self._active_source_offset is None
+                else self._active_source_offset + timeline.cursor(now_ns)
+            )
+            threshold = self._config["inference"]["chunk_policy_steps"]
+            if self._active_source_offset is not None and progress < threshold:
+                return None
+            progress_fields = {"source_progress_steps": progress, "chunk_policy_steps": threshold}
         deadline_ns = now_ns + int(self._config["policy"]["timeout_s"] * 1_000_000_000)
         request = InferenceRequest(
             session_id=session_id,
@@ -191,7 +209,7 @@ class DefaultChunkStrategy:
             observation=adapter.build_observation(snapshot),
             instruction=self._config["run"]["task"],
         )
-        return InferenceSubmission(request=request)
+        return InferenceSubmission(request=request, event_fields=progress_fields)
 
     def commit_settings(
         self,
@@ -200,11 +218,12 @@ class DefaultChunkStrategy:
         measured: GroupVector,
         last_command: GroupVector,
     ) -> CommitSettings:
-        del response, last_command
+        del response
+        command_blend = self._config["inference"].get("blend_mode") == "command_cubic"
         return CommitSettings(
-            current_command=copy_group_vector(measured),
+            current_command=copy_group_vector(last_command if command_blend else measured),
             blend_steps=self._config["inference"]["blend_policy_steps"],
-            anchor_source="measured_state",
+            anchor_source="last_command" if command_blend else "measured_state",
         )
 
     def decode_handoff(self, *, response: InferenceResponse) -> bool:
@@ -230,7 +249,8 @@ class DefaultChunkStrategy:
         response: InferenceResponse,
         now_ns: int,
     ) -> dict[str, object]:
-        del chunk, response, now_ns
+        del response, now_ns
+        self._active_source_offset = chunk.source_offset_steps + result.trimmed_steps
         return {"trimmed_steps": result.trimmed_steps}
 
     def on_response_rejected(self, response: InferenceResponse) -> None:
@@ -251,6 +271,7 @@ _STRATEGY_BUILTINS: dict[str, InferenceStrategyFactory | str] = {
     "async": DefaultChunkStrategy,
     "serial": DefaultChunkStrategy,
     "rtc": "manimux.runtime.rtc.strategy:RtcInferenceStrategy",
+    "train_time_rtc": "manimux.runtime.train_time_rtc:TrainTimeRtcInferenceStrategy",
     "act_temporal_ensemble": "manimux.runtime.temporal_ensemble:ACTTemporalEnsembleStrategy",
     "aac": "manimux.runtime.aac:AacInferenceStrategy",
     "bid_backward": "manimux.runtime.bid:BidBackwardStrategy",
@@ -356,5 +377,6 @@ def decode_strategy_action(
 ) -> ActionChunk:
     """Let candidate selectors reuse adapter decoding; ordinary strategies decode once."""
     if isinstance(strategy, StrategyActionDecoder):
+        # Candidate selection owns metadata of the selected candidate.
         return strategy.decode_action(raw, context, adapter=adapter)
-    return adapter.decode_action(raw, context)
+    return attach_sampling_stats(adapter.decode_action(raw, context), raw)

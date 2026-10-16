@@ -25,6 +25,8 @@ run:
     max_frame_age_s: 0.5
     startup_timeout_s: 5.0
     shutdown_timeout_s: 2.0
+evaluation:
+  config: ../../../evaluation/stack_blocks_small.yaml
 robot:
   config: ../../../embodiment/robot/yam_dual.yaml
   control_hz: 100.0

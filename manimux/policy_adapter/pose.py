@@ -11,6 +11,7 @@ from manimux.kinematics.poses import matrix_pose, pose_matrix
 from manimux.policies.actions import action_groups
 from manimux.policies.base import action_interval
 from manimux.policy_adapter.kinematics import KinematicAdapter
+from manimux.policy_adapter.pose_output import pose_chunk
 from manimux.types import ActionChunk, InferenceRequest
 
 
@@ -29,6 +30,8 @@ class PoseAdapter(KinematicAdapter):
     """
 
     supports_context_only_decode = True
+
+    supports_step_ik = True
 
     def __init__(self, robot, policy, *, kinematics=None):
         super().__init__(robot, policy, kinematics=kinematics)
@@ -161,14 +164,19 @@ class PoseAdapter(KinematicAdapter):
             raise ValueError("Pose action semantics mismatch")
         if any(len(rows) != self.horizon for rows in actions.values()):
             raise ValueError("Pose action horizon mismatch")
-        if context.measured_state is None:
-            raise ValueError("Pose IK requires measured joints as the decode seed")
+        if context.ik_seed is None:
+            raise ValueError("Pose IK requires a decode seed")
+        if self.semantics.startswith("delta_observation_") and context.observation_state is None:
+            raise ValueError("Observation-relative poses require the request observation state")
         groups = {}
         for group in selected_groups:
             rows = actions[group]
             model = self.kinematics.models[group]
-            seed = np.array(context.measured_state.groups[group], dtype=float, copy=True)
-            anchor = model.fk(seed)
+            seed = np.array(context.ik_seed.groups[group], dtype=float, copy=True)
+            anchor = model.fk(
+                context.observation_state.groups[group]
+                if self.semantics.startswith("delta_observation_") else seed
+            )
             solved = []
             for step, row in enumerate(rows[: self.decode_steps]):
                 target = pose_matrix(row[:7])
@@ -183,6 +191,9 @@ class PoseAdapter(KinematicAdapter):
                 }:
                     target[:3, 3] += anchor[:3, 3]
                     target[:3, :3] = target[:3, :3] @ anchor[:3, :3]
+                if self.decode_pose_only:
+                    solved.append(np.r_[matrix_pose(target), aperture])
+                    continue
                 result = model.ik(
                     target, seed, fixed_coordinates={model.coordinates[-1].name: aperture}
                 )
@@ -197,6 +208,8 @@ class PoseAdapter(KinematicAdapter):
                 # A timeline segment needs two endpoints. Hold the one decoded
                 # command for one action interval; do not consume another delta.
                 groups[group] = np.repeat(groups[group], 2, axis=0)
+        if self.decode_pose_only:
+            return pose_chunk(context, groups, self.dt_ns)
         return ActionChunk(
             f"pose-{context.request_seq}-{uuid.uuid4().hex[:8]}",
             context.request_seq,

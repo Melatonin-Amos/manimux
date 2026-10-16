@@ -15,7 +15,7 @@ from manimux.runtime.inference import (
     InferenceSubmission,
     RequestState,
 )
-from manimux.runtime.rtc.mask import inpainting_condition, waypoint_condition
+from manimux.runtime.rtc.mask import inpainting_condition
 from manimux.runtime.rtc.request import RtcInferenceRequest
 from manimux.runtime.safety import RuntimeState
 from manimux.runtime.timeline import ActionTimeline, CommitResult
@@ -41,6 +41,8 @@ class RtcInferenceStrategy:
         rtc = config["inference"]["rtc"]
         self._group_order = tuple(config["robot"]["group_dims"])
         self._rtc_beta = float(rtc["beta"])
+        self._condition_source = rtc.get("condition_source", "canonical")
+        self._condition_predictor = None
         self._min_execute_steps = rtc["min_execute_policy_steps"]
         buffered = config["inference"].get("min_execute_policy_steps", 0) > 0
         self._check_reference = (
@@ -49,11 +51,6 @@ class RtcInferenceStrategy:
         self._time_aligned = buffered or (
             config["inference"].get("temporal_ensemble") or {}
         ).get("enabled", False)
-        self._waypoint_skip = (
-            config["inference"]["handoff_skip_steps"]
-            if config["inference"]["handoff"] == "waypoint"
-            else 0
-        )
         initial_delay = rtc["initial_delay_policy_steps"]
         self._initial_delay_steps = None if initial_delay is None else int(initial_delay)
         self._delay_buffer_size = int(rtc["delay_buffer_size"])
@@ -71,6 +68,10 @@ class RtcInferenceStrategy:
         self._loop_ms: list[float]
         self._last_report_step: int
         self.reset()
+
+    def set_condition_predictor(self, predictor) -> None:
+        """Runtime injects an executor-owned, non-mutating command forecast."""
+        self._condition_predictor = predictor
 
     @property
     def name(self) -> str:
@@ -146,12 +147,6 @@ class RtcInferenceStrategy:
             condition, weights = inpainting_condition(
                 rows, executed_steps=executed, delay_steps=delay
             )
-            condition, weights = waypoint_condition(
-                condition,
-                weights,
-                model_horizon=horizon,
-                skip_steps=self._waypoint_skip,
-            )
         request = RtcInferenceRequest(
             session_id=session_id,
             request_seq=request_seq,
@@ -214,26 +209,26 @@ class RtcInferenceStrategy:
                         delay_steps=delay,
                     )
                     forecast_used = delay
-                    if self._time_aligned:
+                    if self._condition_source != "canonical" or self._time_aligned:
                         # Condition the executing timeline on the observation grid,
                         # including fractional intervals and optional ACT fusion.
-                        valid, condition = sample_reference(
-                            timeline, origin_ns=snapshot.state.monotonic_ns,
+                        arguments = dict(origin_ns=snapshot.state.monotonic_ns,
                             dt_ns=int(action_interval(self._config["policy"]) * 1e9),
-                            steps=horizon, group_order=self._group_order,
-                        )
+                            steps=horizon, group_order=self._group_order)
+                        if self._condition_source == "executor":
+                            if self._condition_predictor is None:
+                                raise RuntimeError(
+                                    "RTC executor condition requires a command predictor"
+                                )
+                            valid, condition = self._condition_predictor(
+                                timeline=timeline, now_ns=now_ns, **arguments)
+                        else:
+                            valid, condition = sample_reference(timeline, **arguments)
                         if condition is None or not valid[:delay].all():
                             condition = weights = None
                             forecast_used = 0
                         else:
                             weights[~valid] = 0
-                    if condition is not None:
-                        condition, weights = waypoint_condition(
-                            condition,
-                            weights,
-                            model_horizon=self._config["policy"]["horizon_policy_steps"],
-                            skip_steps=self._waypoint_skip,
-                        )
         if not ready:
             return None
 
@@ -247,6 +242,7 @@ class RtcInferenceStrategy:
             instruction=self._config["run"]["task"],
             action_condition=None if condition is None else condition.astype(np.float64),
             condition_weights=None if weights is None else weights.astype(np.float64),
+            action_condition_space=timeline.action_space,
             rtc_beta=self._rtc_beta,
         )
         if condition is not None:
@@ -262,9 +258,8 @@ class RtcInferenceStrategy:
                 "executed_steps": executed,
                 "forecast_delay": forecast_used,
                 "conditioned": condition is not None,
-                "condition_handoff_skip_steps": (
-                    self._waypoint_skip if condition is not None else 0
-                ),
+                "condition_source": self._condition_source,
+                "condition_handoff_skip_steps": 0,
             },
         )
 
@@ -311,18 +306,7 @@ class RtcInferenceStrategy:
             self._request_reference_seq.get(response.request_seq) != self._active_request_seq
         ):
             raise ValueError("rtc_condition_plan_replaced")
-        skipped = 0 if chunk.handoff is None else chunk.handoff.skipped_steps
-        if chunk.handoff is not None and skipped != self._waypoint_skip:
-            raise ValueError("RTC waypoint handoff skip differs from the configured skip")
-        if (
-            self._waypoint_skip
-            and response.request_seq in self._conditioned_requests
-            and chunk.handoff is None
-        ):
-            # The model received a shifted condition. Without the matching
-            # waypoint, its guided rows would execute at the wrong timestamps.
-            raise ValueError("RTC shifted condition requires its waypoint handoff")
-        source_horizon = chunk.source_offset_steps + chunk.horizon_steps + skipped
+        source_horizon = chunk.source_offset_steps + chunk.horizon_steps
         if source_horizon != self._config["policy"]["horizon_policy_steps"]:
             raise ValueError("RTC decoded suffix must retain the configured source horizon")
         if chunk.hold_from_step:
@@ -338,9 +322,9 @@ class RtcInferenceStrategy:
         now_ns: int,
     ) -> dict[str, object]:
         rows = np.concatenate([chunk.groups[name] for name in self._group_order], axis=1)
-        # Restore executable time-slot indices, not skipped model-row indices.
-        # A waypoint puts source row k+skip in slot k; its tail loses skip slots.
-        # Do not fabricate a repeated/zero-weight executable tail to restore H.
+        # Keep the original decoded rows. The committed cursor plus trim offset
+        # selects the actual surviving suffix; never shift the next request's
+        # condition to compensate for its eventual execution-only skip.
         self._active_rows = np.pad(rows, ((chunk.source_offset_steps, 0), (0, 0)))
         self._active_offset = chunk.source_offset_steps + result.trimmed_steps
         self._active_request_seq = response.request_seq
@@ -367,10 +351,8 @@ class RtcInferenceStrategy:
             "server_ms": round(response.inference_ms, 1),
             "trimmed_steps": result.trimmed_steps,
             "rtc_source_horizon": self._config["policy"]["horizon_policy_steps"],
-            "rtc_effective_horizon": len(self._active_rows),
-            "rtc_handoff_skip_steps": (
-                0 if chunk.handoff is None else chunk.handoff.skipped_steps
-            ),
+            "rtc_effective_horizon": len(self._active_rows) - result.handoff_skipped_steps,
+            "rtc_handoff_skip_steps": result.handoff_skipped_steps,
             "rtc_executed_steps_at_commit": self._active_offset,
             "request_to_commit_ms": (now_ns - started_ns) / 1e6,
             "rtc_delay_ms": delay_ns / 1e6,
@@ -441,6 +423,9 @@ def rtc_parameters(**options) -> dict:
         "initial_delay_policy_steps": 4,
         "delay_buffer_size": 10,
         "beta": 5.0,
+        "condition_source": "canonical",
         **options,
     }
+    if values["condition_source"] not in {"canonical", "timeline", "executor"}:
+        raise ValueError("rtc.condition_source must be canonical, timeline, or executor")
     return values

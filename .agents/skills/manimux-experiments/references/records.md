@@ -65,6 +65,24 @@ For a concise metric-to-input map, read [What evaluation actually reads](../../.
 
 ## Offline experiment replay
 
+### Late human labels in RoboGUI
+
+The scoring form displays expanded, mutually exclusive score choices from the saved
+rubric: explicit stage scores, count / target scores, or binary 1 / 0 when partial
+credit is not configured. No outcome is selected by default. Invalid excludes a
+trial and disables score selection; an ordinary task failure should receive its
+applicable score instead.
+
+When the runtime is idle, **New rollout → Unscored experiment → Score selected experiment**
+reopens the existing scoring form. Candidates are started, finalized study trials without
+a human label, matching the current task under the same method output directory. The list
+includes the session and rollout ID to distinguish repeated layout/repeat values.
+It uses the episode's saved rubric; do not retrofit current YAML rules into old metadata.
+Ordinary Run records, partial attempts and unstarted trials are excluded. Opening the form
+does not issue a runtime or hardware command. Saving writes only the human evaluation.
+
+### Trajectory replay
+
 Replay is separate from the live dashboard. Select a finalized episode directory:
 
 ```bash

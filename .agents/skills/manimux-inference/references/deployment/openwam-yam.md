@@ -124,6 +124,8 @@ manimux run --config /path/to/deployment/openwam.yaml
 
 For RoboDojo simulation, use the policy's standard `eval.sh` and
 `setup_eval_*` scripts. YAM real-robot task evaluation uses ManiMux, not an
-ARX simulator. Ordinary chunk inference is supported; RTC/AAC/PAINT are not
-implemented for OpenWAM. CPU/dummy tests do not establish GPU inference,
+ARX simulator. The YAM full-horizon adapter also supports AAC and local RTC/PAINT/AutoHorizon
+sampler hooks. Specialized modes require eager execution and CFG scale 1.
+RTC can use native DiT caching via `dit_cache_modes: [default, rtc]`; PAINT and
+AutoHorizon remain uncached. See the [cache settings and commands](../../../../guideline.html#openwam-rtc-cache). CPU/dummy tests do not establish GPU inference,
 training convergence, task success, or real-robot safety.

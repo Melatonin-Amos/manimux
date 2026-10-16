@@ -65,3 +65,63 @@ actual wire path with fake servers and validate configurations through `load_con
 The [reproduction records](reproductions/README.md) separate reference formulas,
 local adaptations and real-model/robot evidence. Runtime compatibility and offline
 checks alone do not establish hardware performance.
+
+### Train-time RTC
+
+`algorithm: train_time_rtc` uses a prefix-trained sampler instead of inference-time
+PiGDM/soft-inpaint guidance. `TrainTimeRtcInferenceStrategy` reuses RTC scheduling
+and accepted-plan feedback. The pack-plate preset selects
+`train_time_rtc.delay_estimator: fixed` and `fixed_prefix_steps: 5`. Every conditioned
+request fixes exactly five action rows, regardless of model/decode latency or
+warmup samples; the initial-delay and E2E-window settings do not change this count.
+First requests, reset and unavailable committed prefixes still use unconditioned
+sampling (`prefix_steps: 0`). Submission and acceptance events record
+`prefix_delay_estimator: fixed` and `configured_prefix_steps: 5`, alongside the
+actual `prefix_steps` on submissions and measured latency on acceptance. A late
+response can have some or all fixed rows trimmed at commit; fixing the mask does
+not guarantee latency coverage. The configured count must satisfy `2*prefix <= H`
+for the RTC scheduler's feasibility constraint.
+
+For dynamic operation, `train_time_rtc.delay_estimator: decode_max` (the generic default)
+uses the ordinary ManiMux process-decode forecast (`decode_forecast_size: 10`,
+`decode_forecast_mode: max`, bounded below by `expected_decode_s`). Only decode
+latencies enter this maximum. At submission, the prefix forecast is:
+
+`ceil(max(0, current_observation_age + last_model_trip + decode_forecast + handoff_margin - first_action_offset) / action_dt)`.
+
+Here `last_model_trip` runs from the previous accepted request's submission to
+worker completion, including preparation, queueing, transport and inference, but
+excluding IK. This is a causal estimate: ordinary waypoint handoff knows the
+current model latency after receiving its response, whereas trained-prefix
+sampling needs its prefix before inference starts. One long model request affects
+the next prediction; it is not retained for ten predictions. The first-action
+offset (or explicit `adapter.execution_offset_s`) aligns the count to source row
+0, as in the old waypoint join-row analysis. Neither the prefix length nor the
+predicted switch time is a guarantee that inference will finish on time.
+
+`initial_delay_policy_steps` defaults to 5 until a model-trip sample is available;
+it is not a clamp or a permanent lower bound. Reset clears model-trip history.
+An aggregate warmup E2E duration cannot seed this split estimator. The explicit
+`delay_estimator: end_to_end_max` retains the previous behavior, including E2E
+warmup calibration and `train_time_rtc.delay_buffer_size` (default 10); that window
+setting has no effect in `decode_max` mode. `chunk_policy_steps` keeps RTC's
+minimum-query-window meaning and the existing feasibility check.
+
+Submission and acceptance events record `prefix_delay_estimator`, the observation
+age, model/decode forecasts, margin, action offset and `predicted_prefix_steps`.
+Acceptance also records `request_to_model_ms` and `measured_prefix_steps` from the
+same source-row origin. The existing `measured_delay` / `rtc_delay_ms` remain E2E
+diagnostics; they do not feed the `decode_max` prefix predictor.
+
+The UMI trained-prefix history strategy reads the committed execution reference
+(including dense IK samples) at each new model target timestamp. It never
+interpolates the binary mask or extrapolates missing commands. An incomplete
+prefix falls back to unconditioned sampling with a recorded reason. First chunks
+and reset also have no prefix. Training support such as `[0, 4, 5]` is metadata,
+not a clamp on dynamic inference lengths; submission events record
+`prefix_in_training_support` when the checkpoint provides this metadata.
+
+The initial integration requires `blend_policy_steps: 0`, `handoff_skip_steps: 0`
+and `action_start_mode: drop_infer_latency`. The timeline trims elapsed rows once;
+there is no additional crop by prefix length. Waypoint handoff remains an explicit
+execution choice. See the [pack-plate deployment example](deployment/umi-dp-tianji-taccap.md#pack-plate-train-time-rtc).

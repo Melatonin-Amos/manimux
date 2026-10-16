@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from manimux.policy_adapter.pose_output import POSE_SPACE, interpolate_pose
 from manimux.types import (
     ACTION_START_MODES,
     ActionChunk,
@@ -27,9 +28,17 @@ class CommitResult:
     trimmed_steps: int = 0  # Rows removed from this chunk at commit.
     timeline_latency_ns: int = 0
     time_trimmed_steps: int = 0
-    # Intentional skip. A waypoint chunk skipped these rows before decoding,
-    # so they are not part of trimmed_steps.
+    # Intentional post-decode prefix crop, included in trimmed_steps.
     handoff_skipped_steps: int = 0
+
+
+@dataclass(slots=True)
+class _CommandBlend:
+    start_ns: int
+    end_ns: int
+    position: GroupVector
+    velocity: GroupVector
+    gripper_indices: dict[str, int]
 
 
 @dataclass(slots=True)
@@ -44,6 +53,13 @@ class _ActivePlan:
     observation_time_ns: int | None = None
     hold_last_step: bool = False
 
+    command_blend: _CommandBlend | None = None
+    action_space: str = "joint_position"
+
+    @property
+    def activation_time_ns(self) -> int:
+        return self.start_time_ns if self.command_blend is None else self.command_blend.start_ns
+
     @property
     def horizon_steps(self) -> int:
         return int(next(iter(self.groups.values())).shape[0])
@@ -55,7 +71,30 @@ class _ActivePlan:
 
 
 def _sample_plan(plan: _ActivePlan, time_ns: int) -> GroupVector | None:
-    if not plan.start_time_ns <= time_ns <= plan.end_time_ns:
+    blend = plan.command_blend
+    if blend is not None and blend.start_ns <= time_ns < blend.end_ns:
+        duration = (blend.end_ns - blend.start_ns) / 1e9
+        u = (time_ns - blend.start_ns) / (blend.end_ns - blend.start_ns)
+        end_index = int(round((blend.end_ns - plan.start_time_ns) / plan.dt_ns))
+        result = {}
+        for name, rows in plan.groups.items():
+            target = rows[end_index]
+            end_velocity = (
+                (rows[end_index + 1] - target) / (plan.dt_ns / 1e9)
+                if end_index + 1 < len(rows) else np.zeros_like(target)
+            )
+            value = ((2*u**3 - 3*u**2 + 1) * blend.position[name]
+                     + (u**3 - 2*u**2 + u) * duration * blend.velocity[name]
+                     + (-2*u**3 + 3*u**2) * target
+                     + (u**3 - u**2) * duration * end_velocity)
+            if name in blend.gripper_indices:
+                index = blend.gripper_indices[name]
+                # Apertures use a monotone transition, without cubic overshoot.
+                weight = u*u*(3 - 2*u)
+                value[index] = (1-weight)*blend.position[name][index] + weight*target[index]
+            result[name] = value
+        return result
+    if not plan.activation_time_ns <= time_ns <= plan.end_time_ns:
         return None
     if plan.hold_last_step and time_ns >= plan.end_time_ns:
         return None
@@ -64,7 +103,9 @@ def _sample_plan(plan: _ActivePlan, time_ns: int) -> GroupVector | None:
     upper = min(lower + 1, plan.horizon_steps - 1)
     alpha = min(position - lower, 1.0)
     return {
-        name: (1.0 - alpha) * values[lower] + alpha * values[upper]
+        name: (interpolate_pose(values[lower], values[upper], alpha)
+               if plan.action_space == POSE_SPACE else
+               (1.0 - alpha) * values[lower] + alpha * values[upper])
         for name, values in plan.groups.items()
     }
 
@@ -76,14 +117,26 @@ class ActionTimeline:
         self,
         group_dims: dict[str, int],
         *,
+        action_space: str = "joint_position",
         max_source_steps: int | None = None,
         action_start_mode: str = "drop_infer_latency",
         hold_last_step: bool = False,
+        blend_mode: str = "linear",
+        gripper_indices: dict[str, int] | None = None,
     ) -> None:
         if max_source_steps is not None and max_source_steps < 2:
             raise ValueError("max_source_steps must be at least two")
         if action_start_mode not in ACTION_START_MODES:
             raise ValueError(f"action_start_mode must be one of {sorted(ACTION_START_MODES)}")
+        if blend_mode not in {"linear", "command_cubic"}:
+            raise ValueError("unknown timeline blend_mode")
+        if action_space not in {"joint_position", POSE_SPACE}:
+            raise ValueError("unknown timeline action space")
+        if action_space == POSE_SPACE and blend_mode != "linear":
+            raise ValueError("pose timelines require linear/SLERP blending")
+        self.action_space = action_space
+        self._blend_mode = blend_mode
+        self._gripper_indices = dict(gripper_indices or {})
         self._max_source_steps = max_source_steps
         # first_step_when_ready starts the untrimmed chunk at commit; drop_infer_latency
         # keeps the source row grid, so a plan may start up to one row after the commit.
@@ -121,7 +174,7 @@ class ActionTimeline:
         if not minimum_policy_steps or active is None or runtime is None:
             return True
         earliest = min(
-            runtime.start_time_ns + minimum_policy_steps * active.dt_ns,
+            runtime.activation_time_ns + minimum_policy_steps * active.dt_ns,
             runtime.end_time_ns,
         )
         return now_ns >= earliest
@@ -139,12 +192,18 @@ class ActionTimeline:
         active = self._active
         if active is None:
             return None
+        groups = {name: values.copy() for name, values in active.groups.items()}
+        if active.command_blend is not None:
+            samples = [_sample_plan(active, active.start_time_ns + i * active.dt_ns)
+                       for i in range(active.horizon_steps)]
+            groups = {name: np.stack([sample[name] for sample in samples]) for name in groups}
         return ActionHorizon(
             start_time_ns=active.start_time_ns,
             dt_ns=active.dt_ns,
             plan_id=active.plan_id,
-            groups={name: values.copy() for name, values in active.groups.items()},
+            groups=groups,
             observation_time_ns=active.observation_time_ns,
+            action_space=self.action_space,
         )
 
     def commit(
@@ -156,10 +215,15 @@ class ActionTimeline:
         current_command: GroupVector,
         blend_steps: int,
         handoff_skip_steps: int = 0,
+        command_velocity: GroupVector | None = None,
     ) -> CommitResult:
         """Validate, time-align, trim, and activate a new action chunk."""
         if type(handoff_skip_steps) is not int or handoff_skip_steps < 0:
             raise ValueError("handoff_skip_steps must be a non-negative integer")
+        if chunk.action_space != self.action_space:
+            return CommitResult(False, "action_space_mismatch")
+        if self.action_space == POSE_SPACE and (chunk.runtime_trajectory is not None or chunk.handoff is not None):
+            return CommitResult(False, "joint_handoff_on_pose_timeline")
         if chunk.request_seq <= self._accepted_request_seq:
             return CommitResult(False, "stale_request_seq")
         if now_ns - chunk.observation_time_ns > max_plan_age_ns:
@@ -189,12 +253,11 @@ class ActionTimeline:
                 raise ValueError(
                     "waypoint handoff chunks require action_start_mode=drop_infer_latency"
                 )
-            # The adapter planned the lead-in to the skipped row; it cannot be trimmed here.
-            if chunk.handoff.skipped_steps != handoff_skip_steps:
-                return CommitResult(False, "handoff_skip_mismatch")
             # A waypoint handoff already replaced the blend before embodiment decoding.
             if blend_steps:
                 raise ValueError("waypoint handoff chunks must not be blended again")
+            # Validate the uncut decode seed and clock. A requested final prefix
+            # crop may remove that continuous seed; it must not replan the lead-in.
             reason = self._check_handoff(chunk, earliest_ns)
             if reason is not None:
                 return CommitResult(False, reason)
@@ -211,8 +274,8 @@ class ActionTimeline:
         # Skip source actions without moving the time at which the new plan starts.
         # The first plan has no outgoing chunk to hand off from.
         handoff_skipped_steps = handoff_skip_steps if self._active is not None else 0
-        # Rows this commit removes for the skip; a waypoint chunk arrives already skipped.
-        row_skip_steps = 0 if chunk.handoff is not None else handoff_skipped_steps
+        # All adapters finish decoding before the execution-only crop is applied.
+        row_skip_steps = handoff_skipped_steps
         trimmed_steps = time_trimmed_steps + row_skip_steps
         end = chunk.horizon_steps
         if self._max_source_steps is not None:
@@ -237,12 +300,14 @@ class ActionTimeline:
             if step < end
         }
         actual_blend_steps = min(blend_steps, next(iter(groups.values())).shape[0])
-        if actual_blend_steps:
+        if actual_blend_steps and self._blend_mode == "linear":
             current = copy_group_vector(current_command)
             for name, values in groups.items():
                 for index in range(actual_blend_steps):
                     alpha = (index + 1) / actual_blend_steps
-                    values[index] = (1.0 - alpha) * current[name] + alpha * values[index]
+                    values[index] = (interpolate_pose(current[name], values[index], alpha)
+                                     if self.action_space == POSE_SPACE else
+                                     (1.0 - alpha) * current[name] + alpha * values[index])
 
         new_plan = _ActivePlan(
             plan_id=chunk.plan_id,
@@ -254,7 +319,27 @@ class ActionTimeline:
             unblended_groups=unblended_groups,
             observation_time_ns=chunk.observation_time_ns,
             hold_last_step=self._hold_last_step,
+            action_space=self.action_space,
         )
+
+        if self._blend_mode == "command_cubic" and blend_steps:
+            if runtime is not None or chunk.handoff is not None or self._hold_last_step:
+                raise ValueError("command_cubic requires an ordinary continuous joint timeline")
+            if actual_blend_steps < 2:
+                return CommitResult(False, "insufficient_blend_horizon")
+            velocity = command_velocity or {
+                name: np.zeros_like(q) for name, q in current_command.items()
+            }
+            if set(velocity) != set(self._group_dims) or any(
+                velocity[name].shape != current_command[name].shape
+                or not np.isfinite(velocity[name]).all() for name in self._group_dims
+            ):
+                raise ValueError("invalid command velocity")
+            new_plan.command_blend = _CommandBlend(
+                now_ns, start_time_ns + (actual_blend_steps - 1) * chunk.dt_ns,
+                copy_group_vector(current_command), copy_group_vector(velocity),
+                self._gripper_indices,
+            )
 
         runtime_plan = new_plan
         if runtime is not None:
@@ -266,7 +351,16 @@ class ActionTimeline:
             )
             if self._starts_at_commit:
                 runtime_time_index = 0
-                runtime_end_index = runtime.horizon_steps
+                # Cap dense rows on their original clock before retiming to commit.
+                # Inference/decode latency must not consume a serial prefix.
+                source_prefix_end_ns = (
+                    chunk.observation_time_ns
+                    + (chunk.source_offset_steps + end - 1) * chunk.dt_ns
+                )
+                runtime_end_index = min(
+                    runtime.horizon_steps,
+                    (source_prefix_end_ns - runtime.start_time_ns) // runtime.dt_ns + 1,
+                )
                 runtime_start_time_ns = earliest_ns
             else:
                 runtime_age_ns = max(0, earliest_ns - runtime.start_time_ns)
@@ -335,6 +429,7 @@ class ActionTimeline:
                 unblended_groups=unblended_runtime_groups,
                 observation_time_ns=chunk.observation_time_ns,
                 hold_last_step=self._hold_last_step,
+                action_space=self.action_space,
             )
         self._outgoing = self._retain_outgoing(self._outgoing, self._active, new_plan, now_ns)
         self._runtime_outgoing = self._retain_outgoing(
@@ -408,21 +503,21 @@ class ActionTimeline:
         prior = list(outgoing)
         if active is not None:
             prior.append(active)
-        prior = [plan for plan in prior if plan.start_time_ns < incoming.start_time_ns]
+        prior = [plan for plan in prior if plan.activation_time_ns < incoming.activation_time_ns]
         # Keep even an expired owner: falling back to an older, longer plan
         # would resurrect a trajectory that a started plan already superseded.
-        started = [index for index, plan in enumerate(prior) if plan.start_time_ns <= now_ns]
+        started = [index for index, plan in enumerate(prior) if plan.activation_time_ns <= now_ns]
         return prior[started[-1]:] if started else prior
 
     def _plan_at(self, time_ns: int) -> _ActivePlan | None:
         """The plan that owns ``time_ns``: the outgoing one until _active starts."""
         active = self._active
-        if active is not None and time_ns < active.start_time_ns:
+        if active is not None and time_ns < active.activation_time_ns:
             # A grid-anchored or waypoint plan starts slightly in the future. Keep
             # executing the outgoing plan across that window; dropping to a
             # measured-state hold would yank the command back by the tracking error.
             return next(
-                (plan for plan in reversed(self._outgoing) if plan.start_time_ns <= time_ns),
+                (plan for plan in reversed(self._outgoing) if plan.activation_time_ns <= time_ns),
                 None,
             )
         return active
@@ -430,11 +525,11 @@ class ActionTimeline:
     def _runtime_plan_at(self, time_ns: int) -> _ActivePlan | None:
         """Runtime plan owning ``time_ns``; it may use denser adapter samples."""
         active = self._runtime_active
-        if active is not None and time_ns < active.start_time_ns:
+        if active is not None and time_ns < active.activation_time_ns:
             return next(
                 (
                     plan for plan in reversed(self._runtime_outgoing)
-                    if plan.start_time_ns <= time_ns
+                    if plan.activation_time_ns <= time_ns
                 ),
                 None,
             )
@@ -448,6 +543,10 @@ class ActionTimeline:
     def _sample_runtime(self, time_ns: int) -> GroupVector | None:
         plan = self._runtime_plan_at(time_ns)
         return None if plan is None else _sample_plan(plan, time_ns)
+
+    def sample_runtime(self, time_ns: int) -> GroupVector | None:
+        """Sample the executed reference grid, returning None outside its coverage."""
+        return self._sample_runtime(time_ns)
 
     def reference_horizon(
         self,
@@ -479,6 +578,7 @@ class ActionTimeline:
             groups={name: np.stack(values) for name, values in samples.items()},
             tracking_groups=self._tracking_sample(now_ns),
             observation_time_ns=active.observation_time_ns,
+            action_space=self.action_space,
             # Stop before interpolation/feedforward could enter an invalid row.
             hold_groups=tuple(
                 name

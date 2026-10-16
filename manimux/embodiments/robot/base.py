@@ -14,10 +14,10 @@ import yaml
 from scipy.spatial.transform import Rotation
 
 from manimux.clock import Clock, SystemClock
-from manimux.embodiments.layout import assembly_action_contract, group_layouts
 from manimux.embodiments.arm.base import ArmBase, ArmController, ArmModel
 from manimux.embodiments.end_effector.base import EndEffectorModel
 from manimux.embodiments.end_effector.gripper import GripperBase, GripperCommand
+from manimux.embodiments.layout import assembly_action_contract, group_layouts
 from manimux.embodiments.sensor.base import SensorBase
 from manimux.kinematics.base import FloatArray, ManipulatorKinematicsBase, rigid_transform
 from manimux.kinematics.composed import ComposedManipulatorKinematics
@@ -27,6 +27,8 @@ from manimux.kinematics.tool import FixedToolGeometry
 from manimux.plugins import load_plugin
 from manimux.timing import stage, timed, timed_lock, timing_scope
 from manimux.types import RobotCommand, RobotState, SensorFrame
+
+HandGuidingHandler = Callable[[Sequence[str], threading.Event, Callable[[], None] | None], None]
 
 
 class RobotBase(ABC):
@@ -226,12 +228,19 @@ class RobotBase(ABC):
 
     @property
     def recovery_actions(self) -> tuple[str, ...]:
-        """Supported idle recovery actions: any of "clear_error", "home" and "drag"."""
+        """Supported idle actions, including any robot-owned hand-guiding handlers."""
         return ()
 
     @property
+    def hand_guiding_actions(self) -> Mapping[str, HandGuidingHandler]:
+        """Cancellable recovery handlers; each owns entry, monitoring and cleanup."""
+        return MappingProxyType(
+            {"drag": self.recover_drag} if "drag" in self.recovery_actions else {}
+        )
+
+    @property
     def drag_selections(self) -> Mapping[str, tuple[str, ...]]:
-        """RoboGUI drag choices, mapping each label to the robot groups it moves."""
+        """RoboGUI hand-guiding choices, mapping labels to robot groups."""
         return MappingProxyType({})
 
     def clear_errors(self) -> None:
@@ -567,8 +576,10 @@ class RobotModel:
                 home_joints[group_name] = q
         kin = RobotKinematics({key: value.kinematics for key, value in groups.items()})
         contract = assembly_action_contract(source)
-        layouts = (group_layouts({name: model.num_coordinates for name, model in kin.models.items()},
-                                contract) if contract else {})
+        layouts = (
+            group_layouts({name: model.num_coordinates for name, model in kin.models.items()},
+                         contract) if contract else {}
+        )
         return cls(
             name,
             MappingProxyType(groups),

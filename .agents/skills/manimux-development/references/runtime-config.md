@@ -4,6 +4,28 @@
 
 Source paths below are relative to the repository root.
 
+## Experiment lists and idle selection
+
+`manimux/experiment_list.py` loads a finite catalog through the existing CLI loader.
+`serve --config-list` accepts entries with unique IDs, config paths relative to the
+list, and optional display labels. Task/method/rubric still belong to each resolved
+experiment. The first entry is selected initially. All entries must share model
+initialization, policy I/O, camera and robot contracts; output directories must differ.
+
+`RuntimeSessionService` accepts selection requests only in its idle polling loop,
+after evaluation and recovery. Requests carry the current run_dir; stale Prepare
+requests also have to match the selected ID. The GUI retains a selection request
+until acknowledgement, disables Prepare while pending, and refreshes task, rubric,
+reference layout and progress together. Each selection creates a separate session
+manifest with list/selection provenance and a frozen resolved config. Each Prepare
+constructs a fresh runtime using the existing worker reset/warmup lifecycle.
+
+The model and camera servers are external and stay alive; this is not model hot
+reload. Keep identity/capability validation. Multi-task recipes keep deployment
+identity fixed and supply the actual prompt via run.task in each observation.
+Changing model initialization or YAML on disk requires restarting the affected
+service. Public operation and paths: [Task & method switching](../../../../guideline.html#experiment-lists).
+
 ## Inference algorithm versus executor
 
 Current experiment entries explicitly select `executor.type: direct` for every
@@ -26,6 +48,15 @@ strategy only when transport admission allows a request. The strategy retains
 algorithm readiness (RTC/PAINT execution windows, ACT query interval, selected
 AAC/AutoHorizon prefix), sampling fields, chunk preparation and response feedback.
 Do not reimplement transport busy checks in each algorithm.
+
+Ordinary Async can opt into `request_trigger: progress` with `single_inflight`.
+The shared `chunk_policy_steps` becomes its source-progress threshold rather than
+`max_chunk_policy_steps`; retain the full model horizon. `DefaultChunkStrategy`
+updates its source offset only on accepted plans and adds `timeline.cursor(now)`
+to count latency-trimmed rows like RTC/PAINT. Reset clears accepted progress;
+warmup and rejected responses do not advance it. The scheduler still owns capacity,
+and this mode does not consult `refill_threshold_s`. Validate K < H, no source cap,
+`drop_infer_latency`, and no waypoint or skipped-row handoff.
 
 On each eligible control tick, the scheduler calls the optional
 `observe_snapshot(snapshot)` hook **before** admission checks. DP/UMI history plugins
@@ -90,10 +121,25 @@ The combination flag defaults off; standalone ACT remains enabled by its algorit
 selection regardless of that flag. Do not present a valid combination as a measured
 improvement, or change the contribution scope as a cosmetic refactor.
 
+`RequestState.expected_decode_ns` carries the shared `DecodeForecast` value at
+submission (zero for inline decoding). Strategies consume this snapshot instead
+of maintaining another decode window. Train-time RTC's `decode_max` estimator
+combines it with the last accepted request's submission-to-worker-completion time
+and current observation age, counting prefix rows from the action origin; see
+[the timing contract](../../manimux-inference/references/inference.md#train-time-rtc). The current model
+latency is not yet observable when a hard prefix must be submitted.
+
 `manimux/runtime/timeline.py` owns `ActionTimeline`: committing and sampling decoded
 joint trajectories on the runtime clock. Keep chunk handoff here and in the
 strategy. Do not fake measured state or modify observations to implement another
 algorithm's overlap/truncation behavior.
+
+Serial scheduling uses `algorithm: serial`, `inference_schedule: serial` and
+`action_start_mode: first_step_when_ready`. It accepts inline or process decoding;
+the existing in-flight flag covers both inference and decoding. A decoded chunk
+must retain source offset zero. `ActionTimeline` limits dense runtime rows to the
+selected source prefix before shifting execution to commit time. The next request
+waits for that execution window to finish; physical measured arrival is separate.
 
 Read `manimux/runtime/executors/base.py`: an executor implements `reset(state)`,
 `horizon_steps` and `step(now_ns, state, reference) -> RobotCommand`. It consumes
@@ -128,27 +174,31 @@ an algorithm setting alone does not implement the model's sampling hooks.
 
 ### RTC waypoint handoff skip
 
-With `inference.algorithm: rtc`, `handoff: waypoint`, and `blend_policy_steps: 0`,
-`handoff_skip_steps: S` uses the same waypoint semantics as ManiMux/UMI-DP: model
-row `k+S` occupies source time slot `k`, without moving the handoff time. The adapter
-plans the lead-in to that shifted target before IK; the timeline verifies the
-reference seed and does not skip the already-shifted chunk a second time.
+`handoff_skip_steps: S` is an execution-only prefix crop in `ActionTimeline.commit`,
+after inference, waypoint planning and diff IK have finished. With the same request
+and outgoing reference, changing `S` must not change RTC conditions or weights,
+model output processing, IK seeds, waypoint targets, or the decoded joint path.
+UMI history alignment retains its trained first-action offset and never shifts
+conditions to compensate for a future crop.
 
-RTC places the condition for slot `k` and its weight at model row `k+S`. Leading
-skipped rows have zero guidance. Requests retain the checkpoint's full model horizon
-`H`, but a skipped waypoint plan has only `H-S` effective time slots; discarded
-prefix slots are retained for index bookkeeping, not execution. The next request
-uses this actual shorter horizon and zero-pads unknown conditioning rows to `H`.
-UMI's history wrapper also aligns against shifted slot timestamps while preserving
-the checkpoint's first-action offset. No model/server changes are needed.
+The timeline first verifies the uncut waypoint's reference and handoff clock, then
+removes `S` source rows and the corresponding duration of dense runtime samples.
+The start times stay fixed; later decoded points occupy the earlier time slots,
+and the end moves earlier by the skipped duration. No replacement lead-in is
+generated. A nonzero crop can remove the continuous waypoint seed and introduce
+a position jump; the executor still applies its configured limits. Waypoint chunks
+require `blend_policy_steps: 0`. Missing/late/changed waypoint validation remains
+independent of skip; there is no shifted-condition rejection.
 
-The first chunk is unskipped. A conditioned response with shifted guidance is
-rejected if it cannot acquire its matching waypoint handoff; executing it on the
-unshifted clock would violate its guidance. Empty overlap uses default sampling.
-Choose `S < H` and, for a numeric initial delay, `2*initial_delay_policy_steps <= H-S`.
-The measured delay remains wall-clock latency and does not include intentional skip.
+The first chunk is unskipped. Choose `S < H`; a crop that exhausts the usable decoded
+suffix is rejected. RTC keeps the original `H` decoded rows and accounts for the
+actual committed trim when reading its cursor. The next request therefore sees
+the surviving outgoing actions, without offsetting its new condition by `S`.
+An empty overlap uses default sampling. Numeric initial delay is validated against
+the model horizon (`2*initial_delay_policy_steps <= H`), not a skip-shifted mask.
+Measured delay remains wall-clock latency and excludes intentional skip.
 Acceptance events distinguish `rtc_source_horizon` (`H`), `rtc_effective_horizon`
-(`H-S` for a skipped waypoint), and `rtc_handoff_skip_steps`.
+(`H-S`, before latency trimming), and `rtc_handoff_skip_steps`.
 
 <a id="robogui-replay-and-recording"></a>
 
@@ -226,11 +276,13 @@ Record runtime evidence under `manimux/recording/`. Distinguish predicted action
 sent commands and measured motion; RoboGUI refresh rate is not control frequency.
 Do not reintroduce teleoperation or demonstration collection as part of replay.
 
-Idle recovery between rollouts (**Clear error**, **Return Home**, **Start drag**) is
+Idle recovery between rollouts (**Clear error**, **Return Home**, **Drag**, **Release**) is
 scheduled by the `manimux serve` session and implemented by the robot assembly. The
-session reads the assembly's `recovery_actions` and `drag_selections` and calls
-`clear_errors()`, `recover_home(stop)` or `recover_drag()` on a fresh, disconnected assembly
-using the configured construction options; it contains no robot-specific code. Service
+session reads the assembly's `recovery_actions`, `hand_guiding_actions` and `drag_selections`.
+It calls `clear_errors()`, `recover_home(stop)` or the selected hand-guiding handler on a
+fresh, disconnected assembly using the configured construction options. Hand-guiding
+handlers receive groups, a stop event and an active callback; the robot owns mode entry,
+duration, monitoring and cleanup. Loss of the recovery lease cancels these handlers. Service
 shutdown sets the recovery stop event before joining the worker. Idle Home implementations
 must cancel further motion and release owned resources before returning. For Tianji-TacCap,
 Home moves the arms to
@@ -336,6 +388,16 @@ waits for the in-flight request, then acknowledged backend reset; only a fresh s
 observation enters formal execution. Warmup timings remain separate from formal metrics.
 The control mailbox suppresses activation/selection on stale transport snapshots.
 
+PAINT implements `build_warmup_submission()` for ordinary and anchored-prefix requests.
+Its `warmup_required_calls` requests two successful calls per branch: the first compiles
+that branch, the second supplies a steady end-to-end sample. An early Start remains in
+the draining phase while these calls finish, then waits for reset acknowledgement.
+Failed required calls cannot release formal execution. Metadata reports required and
+completed branch counts and `branches_ready`; warmup plans never enter the Timeline.
+The delay buffer uses the selected algorithm's window. PAINT's `seed_warmup()` preserves
+ceil-rounded steady samples across reset, with its explicit initial delay as a floor;
+first calls of both branches remain visible but are excluded from calibration.
+
 ## Opt-in inference composition
 
 The factory retains one base strategy and optionally wraps it with `EnsembleStrategy`
@@ -360,3 +422,140 @@ retains the accepted-plan identity with each condition and rejects replaced refe
 The streaming wrapper accepts existing PAINT/AutoHorizon sampler modes without changing
 XPolicyLab. See [the composition timing contract](../../manimux-inference/references/inference.md#optional-algorithm-composition)
 for reference history, horizon validity and unsupported combinations.
+
+
+## Command-continuous handoff and RTC command prediction
+
+`inference.blend_mode: command_cubic` explicitly selects a Hermite bridge from the
+last issued joint command and nominal-control-tick velocity at commit to source row
+`trim + blend_policy_steps - 1` and its outgoing tangent. The source row grid and
+RTC execution cursor are unchanged. The plan activates at commit, before its first
+retained source row if necessary. Sampling and recorded committed rows include the
+bridge; canonical raw rows remain untouched. Gripper indices use a monotone smoothstep.
+`linear` remains the default. Cubic requires standalone Async/RTC with Smooth, complete-group decoding and at least
+two blend rows; it rejects adapter runtime trajectories, waypoint handoffs and serial holds.
+
+RTC `condition_source` selects `canonical` (default), `timeline`, or `executor`.
+The optional strategy `set_condition_predictor(callable)` hook receives the executor's
+`predict_commands(timeline, origin_ns, dt_ns, steps, group_order, now_ns)` callable.
+It returns a valid-row mask and packed absolute joint rows without mutating live state.
+Smooth predicts by copying its filter state and stepping the accepted timeline at
+nominal control cadence. Its recent command history covers observation timestamps
+before the latest command. Reset/hold clear this history. Missing delay-prefix history
+falls back to unconditioned inference; missing future rows get zero weight. Feedback
+pose guards and latched/discrete grippers are unsupported. This predicts commands,
+not measured motion, and does not anticipate a replacement plan or control jitter.
+
+`ActionContext.decode_reference` carries a separately timestamped accepted joint
+horizon to inline and process adapters. SAPolicy's opt-in
+`policy.adapter.ik_seed_source: previous_plan` interpolates the first decoded row's
+seed from that horizon, falling back to the existing runtime seed outside coverage.
+Later IK rows retain sequential seeding. Measured observations are not modified.
+This reduces seed-time mismatch; it does not enforce branch continuity or cap steps.
+
+
+## Chunk IK and execution-time IK
+
+`execution.ik.mode` is an experiment setting: `chunk` (default) retains adapter
+chunk decoding, while `step` keeps an absolute TCP trajectory until each control
+tick. `execution.ik.budget_ms` is optional and defaults to half the control period.
+It must be positive and less than one control period.
+
+The step path is adapter pose decoding -> pose ActionTimeline -> one sampled
+pose per group -> ExecutionPipeline (optional PoseSpeedLimiter -> StepIKResolver
+-> DirectExecutor) -> existing safety/send path.
+A pose row is `[x, y, z, qw, qx, qy, qz, gripper]`, in each robot group's base frame,
+with the configured TCP and normalized gripper. Decode relative outputs against
+the request observation anchor, never against a later execution seed. Timeline
+interpolation and blending use linear xyz/gripper and shortest-arc quaternion
+SLERP. Record `absolute_tcp_pose` plan chunks; scheduled/command rows remain joints.
+RoboGUI draws pose-plan positions directly, without FK on pose rows.
+
+The execution stages are built once and IK is warmed before the control loop. IK starts from
+the current control tick's measured joint state and solves only the current target.
+The pipeline receives the last sent command separately for failure holds and
+optional target limiting; the IK solver does not choose fallback commands. A shared budget
+covers all arms. If any arm fails, is nonfinite, or returns late, hold all groups
+at the last command and reset executor velocity history. `step_ik_hold` records
+failures; `run.control_timing: true` records the `step_ik` stage. YAM checks a
+cooperative deadline between native solver iterations. Other native solvers are
+checked after return; a long native call cannot be preempted. This is a soft
+budget, not a hard real-time guarantee or proof of physical tracking.
+
+Step mode requires direct execution, inline pose decoding, atomic groups, and
+linear blend handoff. Smooth/MPC future-joint references, joint candidate scoring,
+temporal ensembling, command-cubic blending, waypoint handoff and decoder diffIK
+substeps are rejected explicitly. Use the robot's native IK (`ik_backend: analytic`
+where that adapter exposes the option); do not silently substitute it for diffIK.
+Ordinary joint adapters need no IK mode and reject `step`.
+
+Serial/async support all pose-producing IK adapter families. RTC/PAINT require an
+explicit pose condition codec: OpenWAM YAM and XR1 YAM support both; Pi05 Tianji,
+XR1 Tianji and UMI-DP Tianji support RTC. The other adapters reject conditioned
+step modes. RTC executor forecasts are unsupported. `InferenceRequest` carries
+`action_condition_space` explicitly, since Tianji joint and dual-pose arrays can
+both have width 16. A pose condition goes directly back to model coordinates;
+conditioning does not solve future IK.
+
+Example: `configs/experiments/put_bottles/openwam/yam_openwam_serial_step30000_step_ik.yaml`.
+Existing presets retain chunk IK; the new example is not activated automatically.
+
+
+### Optional pose target speed limit
+
+`execution.ik.pose_speed_limit` defaults to `null` (off), including in step mode.
+An enabled mapping accepts `max_linear_m_s` and `max_angular_rad_s`; provide at
+least one positive finite number, leaving the other absent/null if unrestricted.
+This option requires step mode. It does not modify legacy chunk IK.
+
+The independent `PoseSpeedLimiter` limits the current sampled TCP target before IK. Its reference is
+FK of the last actually sent joint command, while the IK initial configuration
+is the measured state. One interpolation fraction bounds translation and shortest
+rotation by speed times the nominal control period. A stalled tick does not earn
+a larger catch-up step. The gripper remains governed by its existing executor
+limits. The limiter keeps no independent cursor: failed IK and executor limiting
+cannot advance a hidden target. Pose FK and limiting are skipped when disabled.
+
+This is a target-increment limit, not a guarantee on measured velocity or the
+joint path between targets. IK tolerances and downstream joint limiting still
+apply. It does not stretch Timeline timestamps, rewrite RTC/PAINT conditions, or
+wait for limited targets to be reached. Under sustained limiting, execution may
+lag and intermediate source targets may be skipped; evaluate that tracking error
+before using it in a timing-sensitive rollout. This intentionally differs from
+ManiUniCon's waypoint-time stretching. `ExecutionResult.ik_status` includes
+`pose_speed_limited` fractions for the affected groups; hold events include them.
+
+```yaml
+execution:
+  ik:
+    mode: step
+    pose_speed_limit:  # omit this mapping, or set null, to disable
+      max_linear_m_s: 0.25
+      max_angular_rad_s: 0.6
+```
+
+
+### Execution component responsibilities
+
+`runtime/execution.py:ExecutionPipeline.step` is the active-tick execution entry.
+It does not receive model responses, accept chunks, change Timeline timestamps,
+perform safety validation, or send hardware commands. The control loop retains
+those orchestration/lifecycle duties and records returned execution diagnostics.
+
+- `runtime/pose_limits.py:PoseSpeedLimiter` clips one TCP target per group. It owns
+  no IK, executor, trajectory clock, or independent progress cursor. It is absent
+  when limiting is disabled.
+- `runtime/ik.py:StepIKResolver` solves that target from measured joints. It returns
+  a joint reference on complete success, or `None` if any group fails. It does not
+  limit target speed, select a hold command, reset an executor, or send commands.
+- `ExecutionPipeline` composes the optional stages and the existing joint executor.
+  It includes pose limiting and all arm solves in one deadline. On IK failure it
+  resets executor velocity history and returns an atomic last-command hold.
+- The existing `Executor` receives only joint references, including its unchanged
+  full reference horizon in chunk/joint mode. It owns joint command generation.
+
+The pipeline returns `ExecutionResult(reference, command, ik_status)` so scheduled
+joint recording and failure events remain visible without reproducing execution
+logic in the control loop. The same executor instance remains available for
+existing pause, gap hold, reset and forecast behavior. No waypoint scheduling or
+waypoint-time stretching is introduced by this component split.

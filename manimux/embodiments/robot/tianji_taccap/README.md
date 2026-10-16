@@ -84,6 +84,15 @@ on the first execution command. Both arms share one target batch; grippers are c
 Configured joint limits, tracking-error, stale-feedback and controller-fault checks remain in place.
 `stop()` requests owned components to stop; failed `close()` calls can be retried.
 
+Marvin submits command batches asynchronously. Its `clear_set()` can return false
+while the previous batch is queued or being sent; this is a busy send buffer, not
+the robot's fault-clear operation. The controller waits up to 20 ms (or the shorter
+configured readiness timeout), polling every 1 ms, before writing any new batch
+fields. The same wait applies to position commands, disable commands and drag
+transitions. A buffer that stays busy raises a timeout; `send_cmd()` failures are
+still surfaced without replaying a possibly submitted command. Feedback, fault
+and state-transition checks remain required.
+
 Recovery lives on the assembly, not in the session. `clear_errors()` clears latched
 controller faults over a short SDK session before `connect()`. `home()` moves the
 connected arms to `home.joints_deg` on a 9 deg/s cosine profile, settles within 0.5
@@ -91,7 +100,7 @@ degrees and then fully opens the grippers when end-effector control is enabled.
 `drag(groups, stop)` opens only the arm controller, enters Marvin joint-space drag with
 each arm's `drag_tool` load from the assembly YAML, and disables the arms on exit.
 With execution enabled and a bound controller IP, `recovery_actions` offers
-`clear_error`, `home` and `drag`; `drag_selections` maps the Marvin labels A, B and AB
+`clear_error`, `home`, `drag`, `release` and `release_5s`; `drag_selections` maps A, B and AB
 to the left, right and both arm groups. The idle recovery entry points
 `recover_home(stop)` and `recover_drag()` clear latched faults first, because `connect()`
 rejects faulted arms. Idle Home restores grippers within the assembly, without changing
@@ -99,6 +108,22 @@ the caller's configuration. The stop event cancels trajectory, settling and grip
 the owned components are stopped and closed before recovery returns. Task experiments
 select `tianji_taccap_pass_ball.yaml` or `tianji_taccap_pack_plate.yaml`; the shared
 `tianji_taccap.yaml` preserves the original pass-ball Home.
+
+RoboGUI's **Release** button opens a choice of **Continuous release** or **Release 5s**,
+with an A / B / AB arm selector. Both call the assembly's `recover_release()` through
+`hand_guiding_actions`. It clears selected-arm faults, sends the selected arms' calibrated
+UMI `drag_tool` parameters, confirms their SDK readback, and enters native cooperative
+release (`state=4`). This is separate from joint-space drag (`state=3`) and does not
+force the brakes open. Cameras and grippers remain closed.
+
+Continuous release lasts until **Exit release**, recovery lease loss or service shutdown.
+The five-second duration starts after confirmed mode entry and can also be stopped early.
+The assembly monitors controller feedback and stops on faults, stale feedback, an
+unexpected mode change, or a joint entering the five-degree margin of its configured
+limits. Every exit closes the owned arm controller, disabling enabled arms first;
+cleanup failures are reported in RoboGUI. Mode selection, duration and cleanup live in
+the Tianji assembly/controller; the session only dispatches cancellable handlers. During
+a rollout, **Stop rollout & release** finishes it without homing before starting recovery.
 
 Camera startup is independent of `connect()`. New UMI experiments still subscribe to the existing camera server without automatically calling
 `robot.start_sensors()`. Subscription maps `left_wrist/right_wrist` to
@@ -115,5 +140,5 @@ before running. See `.agents/skills/manimux-inference/references/deployment/umi-
 Tests cover registry-to-adapter wiring, numerical regression, display/control frame separation, subprocess decoding parity,
 existing timing/motion constraints and read-only/execution dispatch with fake SDKs. No real hardware or model service was started.
 RoboGUI loads visuals and independent display transforms from the same `RobotModel`.
-Clear error, Return Home and drag recovery are implemented by `TianjiTaccapRobot`; the
+Clear error, Return Home drag and release recovery are implemented by `TianjiTaccapRobot`; the
 idle RoboGUI session only schedules them.

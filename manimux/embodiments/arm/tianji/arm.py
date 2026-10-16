@@ -22,8 +22,11 @@ from manimux.kinematics.base import FlangeKinematicsBase, FloatArray, KinematicC
 _CONTROL_SESSION = threading.Lock()
 _ARM = {"left": ("A", 0), "right": ("B", 1)}
 _TORQUE_MODE = 3
+_RELEASE_MODE = 4
 _DRAG_HZ = 250.0
 _DRAG_TRACK_RATE_DEG_S = 15.0
+_COMMAND_BUFFER_TIMEOUT_S = 0.02
+_COMMAND_BUFFER_POLL_S = 0.001
 
 
 def resolve_rate_contract(
@@ -117,7 +120,8 @@ class TianjiController(ArmController):
 
     Connect requires disabled arms and advancing feedback. First command enables
     position mode at measured joints and confirms speed settings before targets.
-    Each target batch uses one clear_set/send_cmd. Stop disables owned arms;
+    Each target batch waits briefly for clear_set before one send_cmd. The SDK
+    drains submitted batches asynchronously. Stop disables owned arms;
     close retains the connection if disabling cannot be confirmed. Imports and
     construction do not load the control SDK. This class never handles grippers.
     """
@@ -198,8 +202,8 @@ class TianjiController(ArmController):
                     ) from None
                 raise
 
-    def clear_errors(self) -> None:
-        """Clear configured arms' controller faults; call while disconnected.
+    def clear_errors(self, sides: tuple[str, ...] | None = None) -> None:
+        """Clear selected arms' faults (all by default); call while disconnected.
 
         connect() rejects faulted arms, so recovery clears them over a short
         session first. Marvin can return false while accepting an asynchronous
@@ -207,6 +211,9 @@ class TianjiController(ArmController):
         engaged physical E-stop keeps the fault and fails after four attempts.
         """
         with self._lock:
+            sides = tuple(self.settings) if sides is None else tuple(dict.fromkeys(sides))
+            if not sides or set(sides) - self.settings.keys():
+                raise ValueError("clear_error sides must name configured arms")
             if self._owns_session:
                 raise RuntimeError("clear_errors requires a disconnected controller")
             ipaddress.IPv4Address(self._ip)
@@ -222,7 +229,7 @@ class TianjiController(ArmController):
                         if not data:
                             raise RuntimeError("Marvin feedback unavailable")
                         faults = {}
-                        for name in self.settings:
+                        for name in sides:
                             status = data["states"][_ARM[name][1]]
                             if int(status["err_code"]) or int(status["cur_state"]) == 100:
                                 faults[name] = (int(status["err_code"]), int(status["cur_state"]))
@@ -286,8 +293,25 @@ class TianjiController(ArmController):
         if not self._ready:
             raise RuntimeError("TianjiController is not connected")
 
+    def _begin_batch(self) -> None:
+        # Marvin rejects OnClearSet while the previous batch is queued/sending.
+        # No new fields may be written until it succeeds; never retry send_cmd,
+        # whose failure leaves delivery uncertain.
+        timeout_s = min(_COMMAND_BUFFER_TIMEOUT_S, self._ready_timeout)
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Marvin clear_set timed out after {timeout_s * 1000:g} ms: "
+                    "previous command batch is still pending"
+                )
+            if self._robot.clear_set():
+                return
+            time.sleep(min(_COMMAND_BUFFER_POLL_S, remaining))
+
     def _write(self, joints: Mapping[str, FloatArray], states: Mapping[str, int]) -> None:
-        self._check(self._robot.clear_set(), "clear_set")
+        self._begin_batch()
         for name in self.settings:
             arm, _ = _ARM[name]
             if name in joints:
@@ -404,7 +428,7 @@ class TianjiController(ArmController):
                     raise ValueError(f"{name}: drag_tool is not configured")
             self._enabled.update(sides)
             try:
-                self._check(self._robot.clear_set(), "clear_set")
+                self._begin_batch()
                 for name in sides:
                     arm, tool = _ARM[name][0], self.settings[name].drag_tool
                     # Feedback readback below, not these return values, confirms the mode.
@@ -421,7 +445,7 @@ class TianjiController(ArmController):
                             f"{name}: failed to enter torque mode (state {modes[name]})"
                         )
 
-                self._check(self._robot.clear_set(), "clear_set")
+                self._begin_batch()
                 for name in sides:
                     self._robot.set_drag_space(_ARM[name][0], 1)
                 self._check(self._robot.send_cmd(), "send_cmd")
@@ -439,7 +463,7 @@ class TianjiController(ArmController):
                 while not stop.is_set():
                     # _read also rejects faults and stale feedback.
                     measured, modes, _ = self._read()
-                    self._check(self._robot.clear_set(), "clear_set")
+                    self._begin_batch()
                     for name in sides:
                         if modes[name] != _TORQUE_MODE:
                             raise RuntimeError(f"{name}: left drag torque mode")
@@ -461,8 +485,59 @@ class TianjiController(ArmController):
                 raise
             self._exit_drag(sides)
 
+    def begin_release(self, sides: tuple[str, ...], stop: threading.Event) -> bool:
+        """Verify tool loads, then enter cooperative release on the selected arms.
+
+        The robot owns the duration and must close this controller on every exit,
+        including a partial mode transition. This never forces the brakes open.
+        """
+        with self._lock:
+            self._require_ready()
+            if not sides or set(sides) - self.settings.keys():
+                raise ValueError("release sides must name configured arms")
+            _, modes, _ = self._read()
+            for name in sides:
+                if name in self._enabled or modes[name] != 0:
+                    raise RuntimeError(f"{name}: release requires a disabled arm")
+                if self.settings[name].drag_tool is None:
+                    raise ValueError(f"{name}: drag_tool is required for release")
+            if stop.is_set():
+                return False
+            self._begin_batch()
+            for name in sides:
+                tool = self.settings[name].drag_tool
+                self._robot.set_tool(_ARM[name][0], list(tool["kine"]), list(tool["dynamic"]))
+            self._check(self._robot.send_cmd(), "send release tool parameters")
+            self._wait(lambda modes, data: all(
+                np.allclose(
+                    data["inputs"][_ARM[name][1]][field],
+                    self.settings[name].drag_tool[key], rtol=0, atol=0.000051,
+                )
+                for name in sides
+                for field, key in (("tool_kine", "kine"), ("tool_dyn", "dynamic"))
+            ))
+            if stop.is_set():
+                return False
+            self._enabled.update(sides)
+            self._begin_batch()
+            for name in sides:
+                self._robot.set_state(_ARM[name][0], _RELEASE_MODE)
+            self._check(self._robot.send_cmd(), "request cooperative release")
+            self._wait(lambda modes, data: all(modes[name] == _RELEASE_MODE for name in sides))
+            return not stop.is_set()
+
+    def read_release(self, sides: tuple[str, ...]) -> Mapping[str, FloatArray]:
+        """Read fresh, fault-free joints and confirm release remains active."""
+        with self._lock:
+            self._require_ready()
+            joints, modes, _ = self._read()
+            for name in sides:
+                if modes[name] != _RELEASE_MODE:
+                    raise RuntimeError(f"{name}: left cooperative release (state {modes[name]})")
+            return {name: joints[name] for name in sides}
+
     def _exit_drag(self, sides: tuple[str, ...]) -> None:
-        self._check(self._robot.clear_set(), "clear_set")
+        self._begin_batch()
         for name in sides:
             self._robot.set_drag_space(_ARM[name][0], 0)
         self._check(self._robot.send_cmd(), "send_cmd")

@@ -112,7 +112,7 @@ class MeasuredHistory:
 
 
 def align_rtc_condition(
-    request, timeline, now_ns, *, offset_ns, dt_ns, group_order, horizon, handoff_skip_steps=0
+    request, timeline, now_ns, *, offset_ns, dt_ns, group_order, horizon
 ):
     """Sample the actual committed trajectory at the new model's target times.
 
@@ -125,14 +125,12 @@ def align_rtc_condition(
     if active is None:
         raise ValueError("RTC condition has no committed trajectory")
     old = np.concatenate([active.groups[name] for name in group_order], axis=1)
-    # The delegate already moved the mask to model-row indices. Row k+skip
-    # executes in slot k, including for UMI's non-zero first-action offset.
-    slots = np.arange(horizon) - handoff_skip_steps
+    slots = np.arange(horizon)
     target = request.observation_time_ns + offset_ns + slots * dt_ns
     old_times = active.start_time_ns + np.arange(len(old)) * active.dt_ns
     weight_times = (
         active.start_time_ns
-        + (timeline.cursor(now_ns) + np.arange(len(request.condition_weights)) - handoff_skip_steps)
+        + (timeline.cursor(now_ns) + np.arange(len(request.condition_weights)))
         * dt_ns
     )
     rows = np.column_stack(
@@ -140,7 +138,6 @@ def align_rtc_condition(
     )
     weights = np.interp(target, weight_times, request.condition_weights, left=0.0, right=0.0)
     weights[(target < old_times[0]) | (target > old_times[-1])] = 0
-    weights[:handoff_skip_steps] = 0
     request.action_condition = rows
     request.condition_weights = weights
 
@@ -171,8 +168,8 @@ class HistoryStrategy:
                 raise ValueError(f"Bind UMI checkpoint {key} before constructing history")
         history = config["inference"]["history"]
         delegate_name = config["inference"]["algorithm"]
-        if delegate_name not in {"async", "serial", "rtc"}:
-            raise ValueError("UMI history supports the existing async, serial and rtc strategies")
+        if delegate_name not in {"async", "serial", "rtc", "train_time_rtc"}:
+            raise ValueError("UMI history supports async, serial, rtc and train_time_rtc")
         delegate_config = deepcopy(config)
         delegate_config["inference"]["strategy"] = None
         # Configuration defaults are resolved; recheck only timing and action constraints after switching delegates.
@@ -192,11 +189,6 @@ class HistoryStrategy:
         self.dt_ns = round(action_interval(config["policy"]) * 1e9)
         self.group_order = tuple(config["robot"]["group_dims"])
         self.horizon = config["policy"]["horizon_policy_steps"]
-        self.handoff_skip_steps = (
-            config["inference"]["handoff_skip_steps"]
-            if config["inference"]["handoff"] == "waypoint"
-            else 0
-        )
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -222,7 +214,6 @@ class HistoryStrategy:
                 dt_ns=self.dt_ns,
                 group_order=self.group_order,
                 horizon=self.horizon,
-                handoff_skip_steps=self.handoff_skip_steps,
             )
             weights = getattr(submission.request, "condition_weights", None)
             if weights is not None and not np.any(weights > 0):

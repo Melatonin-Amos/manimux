@@ -93,6 +93,8 @@ class InferenceRequest:
     deadline_ns: int
     observation: ObservationSnapshot
     instruction: str = ""
+    # Explicit because joint and pose conditions can share the same width.
+    action_condition_space: str = field(default="joint_position", kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,18 +106,18 @@ class ActionContext:
     # adapters may use this to discard source waypoints that are already in the
     # past before doing expensive or failure-prone embodiment conversion (IK).
     execution_time_ns: int | None = None
-    # Robot state selected by the runtime as the embodiment-conversion seed.
-    # Most adapters receive the response-time state/reference; adapters whose
-    # full trajectory starts at row 0 may request the request-observation state.
-    measured_state: RobotState | None = None
+    # Selected embodiment-conversion starting state, independent of observations.
+    ik_seed: RobotState | None = None
+    # The real state captured with this request; never replaced by a reference.
+    observation_state: RobotState | None = None
+    ik_seed_source: str | None = None
     max_source_steps: int | None = None
     decode_budget_ms: float | None = None
     independent_groups: bool = False
     # Outgoing runtime rows around execution_time_ns for a waypoint handoff.
     handoff_reference: ActionHorizon | None = None
-    # Source rows a waypoint handoff skips: row join+skip occupies the join row's
-    # time and later rows move up with it; the handoff time does not change.
-    handoff_skip_steps: int = 0
+    # Timestamped accepted joint trajectory; independent of measured model input.
+    decode_reference: ActionHorizon | None = None
 
 
 @dataclass(slots=True)
@@ -143,7 +145,6 @@ class AppliedHandoff:
     plan_id: str  # Runtime plan the handoff starts from.
     time_ns: int  # Handoff time; the outgoing plan runs until then.
     reference: GroupVector  # Outgoing command at time_ns used as the decode seed.
-    skipped_steps: int = 0  # Source rows the adapter skipped before planning the lead-in.
 
 
 @dataclass(slots=True)
@@ -205,6 +206,7 @@ class ActionHorizon:
     # Unblended joint reference at start_time_ns for measured tracking checks.
     tracking_groups: GroupVector | None = None
     observation_time_ns: int | None = None
+    action_space: str = "joint_position"
 
     def __post_init__(self) -> None:
         if self.dt_ns <= 0:
