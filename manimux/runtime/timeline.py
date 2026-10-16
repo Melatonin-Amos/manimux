@@ -167,7 +167,7 @@ class ActionTimeline:
     def replacement_ready(self, now_ns: int, minimum_policy_steps: int) -> bool:
         """Protect policy intervals from activation, capped by available execution time.
 
-        Count from the retained plan's start, not its observation or receipt time.
+        Count from activation (including a command blend), not observation time.
         Dense adapter trajectories still use the model's policy-step duration.
         """
         active, runtime = self._active, self._runtime_active

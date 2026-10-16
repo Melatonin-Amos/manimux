@@ -287,6 +287,9 @@ class PiperController(ArmController):
     def validate_commands(self, targets: Mapping[str, FloatArray]) -> None:
         self.calibration.validate(targets)
 
+    def command_bounds(self) -> dict[str, FloatArray]:
+        return {self.channel: np.vstack((self.calibration.bounds, [0.0, 1.0]))}
+
     def _require_enabled_motors(self) -> None:
         if self._driver is None:
             raise RuntimeError("PiPER is not connected")

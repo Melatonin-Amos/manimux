@@ -133,6 +133,24 @@ interfaces, camera serials, endpoints and checkpoint roots. Preserve component n
 <p><code>config:</code> paths resolve relative to the containing YAML; mappings merge and lists replace.
 Experiment <code>run.output_dir</code> is relative to the launch directory. Station-local paths resolve
 relative to the station file; <code>paths.output_dir</code> can override the recording directory.</p>
+<h3 id="command-limits">Command limits and receive-only validation</h3>
+<p>PiPER's configured station <code>joint_limits</code> (radians) and normalized gripper
+range [0, 1] are shared automatically with the runtime. If
+<code>executor.command_safety</code> also defines position bounds, its existing 0.001 coordinate-unit
+tolerance is applied before intersecting with the strict station bounds and the executor's
+optional symmetric position cap. An empty intersection is an error. Other controllers can declare bounds through the same
+interface; undeclared bounds continue to use the existing configured limits.</p>
+<p>Smooth uses these per-coordinate bounds together with its own velocity and acceleration
+limits and any stricter command-safety rates. It brakes before a boundary,
+retains the velocity of the emitted command, and rejects an infeasible state instead of
+clipping it into range. Inference-gap holds also respect these limits. Raw policy predictions remain
+available unchanged in the recording. Direct and MPC commands pass the same final
+validation; this does not add smoothing to those executors.</p>
+<p>With <code>robot.options.execute: false</code>, command shape, configured safety limits
+and the controller's pure command validation still apply, without command transmission.
+This does not test motor readiness or successful physical execution. The resolved shared
+bounds, scalar cap, command-safety rates and control period are saved as
+<code>meta.json: command_limits</code>.</p>
 <p>Use the same <code>--local PATH</code> on entry points that support station binding. Pi05, camera and runtime
 support it; RoboGUI network options remain separate. A model launcher taking only <code>--config</code>
 must use the recipe paired with the experiment. See <a href=".agents/skills/manimux-station-setup/references/station.md#scope-and-remaining-independent-entry-points">entry-point scope</a>.</p>
@@ -835,8 +853,35 @@ example or use an absolute path.</p>
   blend_policy_steps: 0
 </code></pre>
 <p>The policy chooses the execution length; omit fixed chunk limits. There is no
-runtime <code>autohorizon</code> parameter block. Model-side settings belong to the
-<a href=".agents/skills/manimux-inference/references/inference-matrix.md">model recipe and sampling matrix</a>.</p>
+runtime <code>inference.autohorizon</code> block. Optionally configure the selector in
+the experiment's existing <code>policy_server</code> section:</p>
+<pre><code class="language-yaml">policy_server:
+  # Keep the existing model recipe/config reference and add:
+  autohorizon:
+    hold_thr: 0.3
+    run_len: 1
+    max_entropy_q: 0.9
+</code></pre>
+<table>
+<thead><tr><th>Parameter</th><th>Default</th><th>Meaning and constraints</th></tr></thead>
+<tbody>
+<tr><td><code>hold_thr</code></td><td>0.3</td><td>Attention-pointer increment threshold for a plateau; finite and nonnegative.</td></tr>
+<tr><td><code>run_len</code></td><td>1</td><td>Consecutive plateau rows; integer at least 1 and smaller than the model action horizon.</td></tr>
+<tr><td><code>max_entropy_q</code></td><td>0.9</td><td>Entropy quantile for reliable attention rows; in [0, 1]. The selector caps values above 0.999 at 0.999.</td></tr>
+</tbody>
+</table>
+<p>Omitted fields retain their defaults. Attention is always taken from the third
+denoising step; the model needs at least three denoising evaluations. These settings
+apply to serial and supported asynchronous AutoHorizon schedules.</p>
+<p>Overrides require the ManiMux websocket wrapper and a supported Pi05 JAX, XR1,
+LingBot-VLA2 or OpenWAM AutoHorizon backend. Restart the policy server after changing
+them. Pi05 loads the experiment with
+<code>python -m manimux.servers.pi05 --experiment path/to/experiment.yaml</code>
+in its model environment. With a standalone server recipe, put <code>autohorizon</code>
+at the recipe's top level and launch through the ManiMux wrapper; direct
+<code>XPolicyLab/setup_policy_server.py</code> does not apply these overrides.
+See the <a href=".agents/skills/manimux-inference/references/inference-matrix.md">model recipe and sampling matrix</a>
+for backend constraints.</p>
 </section>
 <section aria-labelledby="bid-backward" class="guide-page" data-page-id="bid-backward" data-title="BID backward-only" hidden=""><h2 id="bid-backward">BID backward-only</h2>
 <pre><code class="language-yaml">inference:
@@ -1012,7 +1057,8 @@ minimum time while inference continues, set a positive integer
   action_start_mode: drop_infer_latency
   blend_policy_steps: 0
 </code></pre>
-<p>The minimum starts at the accepted plan's execution start. Four policy intervals
+<p>The minimum starts at the accepted plan's execution start, including the start
+of a <code>command_cubic</code> blend when enabled. Four policy intervals
 of 20 ms give an 80 ms minimum; this does not change the model horizon or control
 rate. The wait ends early if the plan's available trajectory ends. The first plan
 starts without this wait. If no valid replacement is available when the minimum
@@ -1485,6 +1531,15 @@ new YAML rules do not replace historical scoring rules. Free runs and partial at
 </tbody>
 </table>
 <h3 id="evaluation-inputs">What evaluation actually reads</h3>
+<p>For a validation or dispatch failure, inspect <code>command_rejected</code> in the aborted
+rollout's <code>.partial/events.jsonl</code>. It records the attempted command, measured state
+and timestamps, coordinate names/units, channel mapping, shared limits, plan/request identity,
+failure stage and exception causes. <code>dispatch.submitted_channels</code> lists batches that
+returned successfully; <code>dispatch.attempting_channels</code> may have been partly submitted
+before failure. <code>dispatch.dispatch_attempted</code> indicates an attempted dispatch, not
+confirmed execution. If optional channel or coordinate diagnostics cannot be read,
+<code>diagnostic_error</code> explains the missing fields while the core attempt is still saved.
+The failed attempt is excluded from successful tick data.</p>
 <p><strong>Read results first, traces second.</strong> Human labels hold task outcomes; metadata identifies the trial. Zarr holds numerical motion data. Events explain lifecycle changes, inference and handoffs; they are not the score sheet.</p>
 <table><thead><tr><th>Question / metric</th><th>Files and fields</th><th>Current use</th></tr></thead><tbody>
 <tr><td>Which trial and method?</td><td><code>meta.json</code>: task, layout_id, repeat_id, policy_backend, evaluation; <code>session-manifest.json</code>: config. The task report config selects the cohort and expected identities.</td><td>Validate grouping and rule consistency before aggregation.</td></tr>

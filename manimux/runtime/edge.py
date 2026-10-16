@@ -241,21 +241,6 @@ class EdgeRuntime:
             config["policy"], self._session_id, multi_inflight=self._multi_inflight,
         )
         self._timeline = self._build_timeline()
-        self._executor = self._build_executor()
-        self._execution = ExecutionPipeline(
-            self._executor,
-            kinematics=self._robot.kinematics,
-            ik_options=config.get("execution", {}).get("ik"),
-            control_dt_ns=self._control_dt_ns,
-        )
-        if (config["inference"].get("rtc") or {}).get("condition_source") == "executor":
-            predictor = getattr(self._executor, "predict_commands", None)
-            setter = getattr(self._strategy, "set_condition_predictor", None)
-            if not callable(predictor) or not callable(setter):
-                raise ValueError(
-                    "RTC executor conditions require a forecast-capable executor and strategy"
-                )
-            setter(predictor)
         self._launch_mode = launch_mode
         position_limit_abs = None
         if config["executor"]["type"] == "smooth":
@@ -271,7 +256,23 @@ class EdgeRuntime:
             max_velocity=command_safety["max_velocity"],
             max_acceleration=command_safety["max_acceleration"],
             control_dt_s=self._control_dt_ns / 1_000_000_000,
+            device_bounds=getattr(self._robot, "command_bounds", lambda: {})() or {},
         )
+        self._executor = self._build_executor()
+        self._execution = ExecutionPipeline(
+            self._executor,
+            kinematics=self._robot.kinematics,
+            ik_options=config.get("execution", {}).get("ik"),
+            control_dt_ns=self._control_dt_ns,
+        )
+        if (config["inference"].get("rtc") or {}).get("condition_source") == "executor":
+            predictor = getattr(self._executor, "predict_commands", None)
+            setter = getattr(self._strategy, "set_condition_predictor", None)
+            if not callable(predictor) or not callable(setter):
+                raise ValueError(
+                    "RTC executor conditions require a forecast-capable executor and strategy"
+                )
+            setter(predictor)
         self._robogui = RoboGUIBridge(
             enabled=config["robogui"]["enabled"],
             robot=config["robogui"]["robot"],
@@ -312,7 +313,10 @@ class EdgeRuntime:
         if self._config["executor"]["type"] == "direct":
             return DirectExecutor(self._config["executor"]["motion_limits"], control_dt_s)
         if self._config["executor"]["type"] == "smooth":
-            return SmoothExecutor(self._config["executor"]["smooth"], control_dt_s)
+            return SmoothExecutor(
+                self._config["executor"]["smooth"], control_dt_s,
+                command_limits=self._safety.execution_limits(),
+            )
         if self._config["executor"]["type"] == "mpc":
             if self._config["executor"]["motion_limits"] is not None:
                 raise ValueError(
@@ -473,6 +477,51 @@ class EdgeRuntime:
             return "missing_action"
         return None
 
+    def _send_command(
+        self, command: RobotCommand, state: RobotState, recorder: EpisodeRecorder, *, step: int,
+    ) -> None:
+        """Validate and dispatch; retain a failed attempt outside successful tick data."""
+        failure_stage = "safety_validation"
+        try:
+            with stage("safety_command"):
+                self._safety.validate_command(command)
+            failure_stage = "robot_dispatch"
+            self._robot.send_command(command)
+        except Exception as exc:
+            # A controller can fail after submitting only part of its batch.
+            # Never label such a failure as a successfully sent command.
+            try:
+                fields = dict(
+                    step=step, monotonic_ns=command.monotonic_ns, stage=failure_stage,
+                    plan_id=command.plan_id, request_seq=self._timeline.accepted_request_seq,
+                    attempted_command={
+                        name: np.asarray(q).tolist() for name, q in command.groups.items()
+                    },
+                    measured_state={
+                        name: np.asarray(q).tolist() for name, q in state.groups.items()
+                    },
+                    measured_time_ns=state.monotonic_ns,
+                    limits=self._safety.execution_limits(), error=_exception_detail(exc),
+                    dispatch={"dispatch_attempted": False}
+                    if failure_stage == "safety_validation" else {},
+                )
+                try:
+                    dispatch = dict(getattr(self._robot, "command_status", lambda: {})() or {})
+                    fields["channels"] = dispatch.pop("group_channels", {})
+                    if failure_stage == "robot_dispatch":
+                        fields.update(stage=dispatch.get("stage", failure_stage), dispatch=dispatch)
+                    fields["coordinates"] = {
+                        name: [{"name": c.name, "unit": c.unit} for c in model.coordinates]
+                        for name, model in getattr(self._robot.kinematics, "models", {}).items()
+                    }
+                except Exception as diagnostic_error:
+                    fields["diagnostic_error"] = _exception_detail(diagnostic_error)
+                recorder.event("command_rejected", **fields)
+            except Exception:
+                logger.exception("failed to record rejected command")
+            logger.exception("command_rejected stage=%s plan=%s", failure_stage, command.plan_id)
+            raise
+
     def run(self) -> RunResult:  # noqa: C901 - the safety-critical loop stays linear
         started_wall = time.perf_counter()
         sensor_reader = SensorReader(
@@ -506,6 +555,7 @@ class EdgeRuntime:
                 "request_trigger": self._scheduler.trigger,
                 "observation_hz": self._config["inference"]["observation_hz"],
                 "min_execute_policy_steps": self._min_execute_steps,
+                "command_limits": self._safety.execution_limits(),
                 "policy_label": self._config["robogui"]["policy_label"],
                 "policy_worker": self._config["policy"]["worker"],
                 "policy_adapter": self._config["policy"]["adapter"]["type"],
@@ -789,9 +839,7 @@ class EdgeRuntime:
                     self._executor.reset(state)
                     command = self._hold_command(self._clock.now_ns(), state.groups)
                     self._safety.reset(state)
-                    with stage("safety_command"):
-                        self._safety.validate_command(command)
-                    self._robot.send_command(command)
+                    self._send_command(command, state, recorder, step=steps)
                     previous_command = copy_group_vector(last_command)
                     last_command = copy_group_vector(command.groups)
                     with stage("robogui_publish_state"):
@@ -1397,9 +1445,9 @@ class EdgeRuntime:
                             groups=self._executor.gripper_diagnostics,
                         )
                 elif self._state == RuntimeState.RUNNING:
-                    # Every strategy holds the last sent command during a timeline gap.
-                    # Reset executor velocity history to the held command, so a new
-                    # chunk does not resume with velocity left over before the wait.
+                    # During a timeline gap, target the last sent command. Bounded
+                    # Smooth decelerates while retaining the emitted velocity;
+                    # other executors retain their existing hold/reset behavior.
                     held_state = RobotState(
                         groups=copy_group_vector(last_command),
                         monotonic_ns=now_ns,
@@ -1423,8 +1471,6 @@ class EdgeRuntime:
                             state.sequence,
                         )
                     )
-                with stage("safety_command"):
-                    self._safety.validate_command(command)
                 log_dispatch = (
                     command.plan_id != last_dispatch_plan_id
                     or now_ns - last_dispatch_log_ns >= 1_000_000_000
@@ -1442,19 +1488,7 @@ class EdgeRuntime:
                             for name, values in command.groups.items()
                         },
                     )
-                try:
-                    self._robot.send_command(command)
-                except Exception:
-                    logger.exception(
-                        "command_dispatch_failed runtime_state=%s plan=%s execute=%s "
-                        "end_effector_control=%s groups=%s",
-                        self._state.value,
-                        command.plan_id,
-                        self._config["robot"]["options"].get("execute"),
-                        self._config["robot"]["options"].get("end_effector_control"),
-                        list(command.groups),
-                    )
-                    raise
+                self._send_command(command, state, recorder, step=steps)
                 if log_dispatch:
                     logger.info(
                         "command_sent plan=%s physical_dispatch=%s",

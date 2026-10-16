@@ -71,7 +71,8 @@ and paused/Home response filtering remain in the runtime.
 Positive values require resolved single-inflight/multi-inflight and inline decoding.
 `EdgeRuntime` retains only the newest eligible raw response until
 `ActionTimeline.replacement_ready` permits replacement: count model policy intervals
-from the active runtime trajectory's start, capped by its end. Receipt frees the
+from the active runtime trajectory's activation, capped by its end. A command-cubic
+blend activates at its blend start. Receipt frees the
 single-inflight slot; releasing a buffered response must not free a newer request.
 Recheck the response's own deadline and accepted sequence at release. Decode,
 select/prepare and commit against the release clock, retaining the request's
@@ -201,6 +202,34 @@ Acceptance events distinguish `rtc_source_horizon` (`H`), `rtc_effective_horizon
 (`H-S`, before latency trimming), and `rtc_handoff_skip_steps`.
 
 <a id="robogui-replay-and-recording"></a>
+
+## Shared command constraints and failed submissions
+
+`EdgeRuntime` resolves `RobotBase.command_bounds()` into `SafetyGuard` before
+constructing its executor. Resolve the existing command-safety profile tolerance
+first, then intersect strict device bounds and the optional scalar position cap.
+An empty intersection is a configuration error. `execution_limits()` supplies the
+same effective intervals to validation and Smooth reset/step; it includes the
+scalar cap and rate-check period for diagnostics. Smooth applies these resolved
+bounds and the stricter of its own/shared rates after shaping, before updating
+history. `bounded_step` reuses
+`braking_velocity` and intersects feasible velocity intervals, including per-tick
+acceleration. An infeasible state raises; final roundoff clipping does not repair
+an infeasible increment. Stored velocity is the emitted position delta / dt.
+Bounded holds retain this history; gripper command diagnostics reflect the final
+bounded command. Without shared position bounds the original Smooth path is
+unchanged. Direct/MPC retain their generation and final guard.
+
+The shared runtime `_send_command` path covers warmup and formal ticks. On guard
+or dispatch failure it writes `command_rejected` before re-raising, retaining
+attempted commands, measured state, clocks, units/channels, plan/request IDs,
+shared limits, dispatch progress and `_exception_detail` causes. A safety rejection
+must not inherit the previous submission's dispatch progress. Failed attempts are
+events only; `record_tick` still follows successful submission. Optional status or
+coordinate lookup failures add `diagnostic_error` without losing the core attempt.
+Recorder failure must not replace the original exception. Metadata saves
+`command_limits`, with other executor-specific settings recorded separately.
+User operation is described in [command limits](../../../../guideline.html#command-limits).
 
 ## RoboGUI, replay and recording
 
