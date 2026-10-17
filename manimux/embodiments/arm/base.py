@@ -82,6 +82,14 @@ class ArmController(ABC):
         """
         return None
 
+    def command_bounds(self) -> Mapping[str, FloatArray]:
+        """Declared lower/upper pairs in command coordinates, indexed by channel.
+
+        This is an offline query, not hardware discovery. An empty mapping leaves
+        the existing configured runtime limits in charge.
+        """
+        return {}
+
     @abstractmethod
     def send_commands(self, targets: Mapping[str, FloatArray]) -> None:
         """Submit a validated batch; returning does not imply arrival."""

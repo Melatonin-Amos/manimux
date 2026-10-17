@@ -35,6 +35,17 @@ ABC no longer advertises `paint`; its separate `rtc` hook remains inference-time
 guidance. The mount-compensation adapter transforms the generic action condition
 through the same joint/frame mapping as observations and decoded actions.
 
+ManiMux's websocket server wrapper accepts `policy_server.autohorizon` with
+`hold_thr`, `run_len` and `max_entropy_q`; standalone server recipes place that
+block at their top level. `manimux/policies/xpolicylab/autohorizon.py` binds the existing
+selector through a call-local context for Pi05 JAX and the shared XR1/LingBot/OpenWAM
+path. XPolicyLab files, third-step attention capture and runtime alignment stay
+unchanged. Omitted configuration leaves the original model method in place.
+Response metadata reports the effective thresholds. Validate `run_len < H` against
+the attention matrix: the pinned selector's full-horizon convolution can collapse
+to a scalar. Direct XPolicyLab launchers do not apply the wrapper options. See
+[AutoHorizon usage](../../../../guideline.html#autohorizon) for defaults and YAML.
+
 ## Selecting configurations
 
 Use `scripts/experiments/build_inference_matrix.py` from the repository root.

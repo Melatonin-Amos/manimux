@@ -85,6 +85,17 @@ and `ArmModel`. Put a vendor implementation and its assets under
   controller is one resource owner, not one independently opened session per arm.
   Follow the assembly's lifecycle deduplication and batch dispatch. State the SDK's
   actual dispatch guarantees; a batch API does not prove simultaneous motion.
+- `ArmController.command_bounds()` optionally returns per-channel `(coordinates, 2)`
+  lower/upper pairs in command units, without hardware I/O; the default is empty.
+  PiPER returns its station calibration bounds plus normalized gripper range.
+  `RobotBase.command_bounds()` maps these into group order, appending [0, 1] for a
+  separate gripper. Do not substitute model-training envelopes for device bounds.
+- `validate_commands()` must be pure: `RobotBase.send_command()` runs it for all
+  controller batches before either receive-only return or any physical dispatch.
+  Device readiness remains in the execution path. `command_status()` returns a
+  copied diagnostic of the last attempt: stage, completed and attempting channels,
+  dispatch-attempt flag and group/channel mapping. A failing batch may be partly
+  submitted; completed submission is not measured arrival.
 - `ArmState` is measured feedback with its timestamp/sequence. A submitted target
   is not measured state, and command return is not arrival at the target.
 - Keep SDK address/channel conversion in this component. Document connect, stop,

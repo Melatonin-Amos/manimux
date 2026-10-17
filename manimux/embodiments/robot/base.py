@@ -96,6 +96,7 @@ class RobotBase(ABC):
         self._execute = execute is True
         self._end_effector_control = end_effector_control is True
         self._lock = threading.RLock()
+        self._command_status: dict = {}
 
     @property
     def arm_components(self) -> Mapping[str, ArmBase]:
@@ -117,6 +118,30 @@ class RobotBase(ABC):
     def ik(self, targets, seed, *, fixed_coordinates):
         """Solve per-arm-base TCP targets; fixed tool coordinates include aperture."""
         return self.kinematics.ik(targets, seed, fixed_coordinates=fixed_coordinates)
+
+    def command_bounds(self) -> dict[str, FloatArray]:
+        """Map controller limits into the same grouped coordinates as commands."""
+        bounds = {controller: controller.command_bounds() for controller in self._controllers}
+        grouped = {}
+        for name, arm in self.arm_components.items():
+            if arm.channel in bounds[arm.controller]:
+                rows = np.array(bounds[arm.controller][arm.channel], dtype=float, copy=True)
+                if rows.shape != (arm.num_joints, 2):
+                    raise ValueError(f"{name}: controller command bounds do not match arm layout")
+                grouped[name] = (
+                    np.vstack((rows, [0.0, 1.0])) if name in self.end_effectors else rows
+                )
+        return grouped
+
+    def command_status(self) -> dict:
+        """Last submission attempt; a failed controller batch may be partly sent."""
+        return {
+            **{
+                key: list(value) if isinstance(value, list) else value
+                for key, value in self._command_status.items()
+            },
+            "group_channels": {name: arm.channel for name, arm in self.arm_components.items()},
+        }
 
     def connect(self) -> None:
         with self._lock:
@@ -180,6 +205,10 @@ class RobotBase(ABC):
     @timed("robot_send_command")
     def send_command(self, command: RobotCommand) -> None:
         with timing_scope("robot_send_command"), timed_lock(self._lock, "assembly_lock_wait"):
+            self._command_status = {
+                "stage": "robot_validation", "submitted_channels": [],
+                "attempting_channels": [], "dispatch_attempted": False,
+            }
             self._require_ready()
             if set(command.groups) != set(self.arm_components):
                 raise ValueError("command must contain all configured groups, without extras")
@@ -195,24 +224,38 @@ class RobotBase(ABC):
                 batches[arm.controller][arm.channel] = q[: arm.num_joints]
                 if name in self.end_effectors:
                     tool_commands[name] = GripperCommand(float(q[arm.num_joints]))
-            # A read-only experiment still checks action shapes, but never enables
-            # an arm or end effector. FK/IK and measured observations remain usable.
-            if not self._execute:
-                return
             for controller, batch in batches.items():
                 controller.validate_commands(batch)
+            # Pure device validation is identical in receive-only and executing
+            # runs. Motor readiness and physical submission remain execution-only.
+            if not self._execute:
+                self._command_status["stage"] = "validated_only"
+                return
             try:
+                self._command_status["stage"] = "feedback_validation"
                 self.get_state()
                 for index, (controller, batch) in enumerate(batches.items()):
+                    self._command_status.update(
+                        stage="controller_dispatch", attempting_channels=list(batch),
+                        dispatch_attempted=True,
+                    )
                     name = f"controller_{index}.send_commands"
                     with (
                         stage(name, controller_type=type(controller).__name__),
                         timing_scope(name),
                     ):
                         controller.send_commands(batch)
+                    self._command_status["submitted_channels"].extend(batch)
+                    self._command_status["attempting_channels"] = []
                 if self._end_effector_control:
                     for name, tool_command in tool_commands.items():
+                        self._command_status.update(
+                            stage="tool_dispatch", attempting_channels=[f"{name}.gripper"],
+                        )
                         self.end_effectors[name].send_command(tool_command)
+                        self._command_status["submitted_channels"].append(f"{name}.gripper")
+                        self._command_status["attempting_channels"] = []
+                self._command_status["stage"] = "submitted"
             except Exception as error:
                 try:
                     self.stop()
