@@ -67,7 +67,12 @@ reset the scheduler together with the strategy. Warmup keeps its independent,
 reset-fenced single-request lifecycle. Request-sequence invalidation, deadlines,
 and paused/Home response filtering remain in the runtime.
 
-`inference.min_execute_policy_steps` defaults to zero (direct replacement).
+`inference.min_plan_hold_policy_steps` defaults to zero (direct replacement).
+Its primary purpose is to prevent rapid plan replacement during continuous
+multi-inflight inference; continuous single-inflight can use it too. It is an
+optional replacement gate, not a request cadence, model horizon or control rate.
+Ordinary Serial/RTC presets should leave it at zero unless an additional hold is
+explicitly needed. Existing nested RTC execution/request parameters are unchanged.
 Positive values require resolved single-inflight/multi-inflight and inline decoding.
 `EdgeRuntime` retains only the newest eligible raw response until
 `ActionTimeline.replacement_ready` permits replacement: count model policy intervals

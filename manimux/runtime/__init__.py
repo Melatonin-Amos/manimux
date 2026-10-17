@@ -80,6 +80,12 @@ def inference_parameters(*, executor: dict, **options) -> dict:
     from manimux.runtime.temporal_ensemble import temporal_ensemble_parameters
     from manimux.runtime.train_time_rtc import train_time_rtc_parameters
 
+    if "min_execute_policy_steps" in options:
+        raise ValueError(
+            "inference.min_execute_policy_steps is ambiguous; use "
+            "inference.min_plan_hold_policy_steps for replacement timing, or "
+            "inference.rtc.min_execute_policy_steps for RTC request timing"
+        )
     unsupported = {
         "chunk_steps", "blend_steps", "max_chunk_steps", "commit_lead_s", "dvac",
     }.intersection(options)
@@ -134,7 +140,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
         "refill_threshold_s": 0.4,
         "observation_hz": None,
         "request_trigger": None,
-        "min_execute_policy_steps": 0,
+        "min_plan_hold_policy_steps": 0,
         "handoff_skip_steps": 0,
         "max_plan_age_s": 1.0,
         "blend_policy_steps": 2,
@@ -189,8 +195,8 @@ def validate_runtime_parameters(config: dict) -> None:
     from manimux.runtime.ik import validate_ik_config
     validate_ik_config(config)
     settings = config["inference"]
-    if settings["min_execute_policy_steps"] and config["policy"]["action_decoding"] != "inline":
-        raise ValueError("min_execute_policy_steps requires inline action decoding")
+    if settings["min_plan_hold_policy_steps"] and config["policy"]["action_decoding"] != "inline":
+        raise ValueError("min_plan_hold_policy_steps requires inline action decoding")
     ensemble = (settings.get("temporal_ensemble") or {}).get("enabled", False)
     candidate_aac = settings["algorithm"] == "aac" and (
         settings["inference_schedule"] != "serial" or ensemble
@@ -352,11 +358,11 @@ def validate_inference_parameters(values: dict, executor: dict, *, provided=froz
     from manimux.runtime.scheduling import validate_request_schedule
 
     validate_request_schedule(values, provided=provided)
-    minimum = values["min_execute_policy_steps"]
+    minimum = values["min_plan_hold_policy_steps"]
     if type(minimum) is not int or minimum < 0:
-        raise ValueError("inference.min_execute_policy_steps must be a non-negative integer")
+        raise ValueError("inference.min_plan_hold_policy_steps must be a non-negative integer")
     if minimum and values["inference_schedule"] not in {"single_inflight", "multi_inflight"}:
-        raise ValueError("min_execute_policy_steps requires single_inflight or multi_inflight")
+        raise ValueError("min_plan_hold_policy_steps requires single_inflight or multi_inflight")
     ensemble = (values.get("temporal_ensemble") or {}).get("enabled", False)
     if type(ensemble) is not bool:
         raise ValueError("temporal_ensemble.enabled must be boolean")

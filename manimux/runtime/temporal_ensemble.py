@@ -237,7 +237,7 @@ class ACTTemporalEnsembleStrategy:
         response: InferenceResponse,
         now_ns: int,
     ) -> ActionChunk:
-        if self._config["inference"].get("min_execute_policy_steps", 0):
+        if self._config["inference"].get("min_plan_hold_policy_steps", 0):
             origin = (
                 now_ns if self._config["inference"]["action_start_mode"] == "first_step_when_ready"
                 else chunk.observation_time_ns

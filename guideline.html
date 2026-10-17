@@ -332,9 +332,9 @@ execution windows and ACT query intervals still limit submissions.</p>
 <td>Maximum request submission rate. A finite positive value is required for multi-inflight; other schedules may also use it. It does not change camera FPS or robot control rate.</td>
 </tr>
 <tr>
-<td><code>inference.min_execute_policy_steps</code></td>
+<td><code>inference.min_plan_hold_policy_steps</code></td>
 <td><code>0</code></td>
-<td>Minimum execution time before replacing an accepted plan, in model policy intervals. Zero keeps direct replacement. Positive values require single-inflight or multi-inflight and inline decoding. See <a href="#minimum-execution-horizon">minimum execution horizon</a>.</td>
+<td>Minimum plan hold time before replacing an accepted plan, in model policy intervals. Primarily for continuous multi-inflight inference. Zero keeps direct replacement. Positive values require single-inflight or multi-inflight and inline decoding. See <a href="#minimum-execution-horizon">minimum plan hold time</a>.</td>
 </tr>
 <tr>
 <td><code>policy.timeout_s</code></td>
@@ -1043,17 +1043,27 @@ Keep its algorithm and method parameters. Streaming PAINT requires
 been replaced. PAINT also rejects replies that arrive beyond the usable conditioned
 prefix. A higher upload rate can increase such rejections; it does not remove model
 latency or guarantee uninterrupted execution.</p>
-<h3 id="minimum-execution-horizon">Minimum execution horizon</h3>
+<h3 id="minimum-execution-horizon">Minimum plan hold time for continuous inference</h3>
+<p><strong>Primary use: continuous multi-inflight inference</strong>, where completed
+predictions can replace the executing plan in quick succession. Continuous
+single-inflight can also benefit when inference completes rapidly. This advanced,
+opt-in setting limits how soon a plan may be replaced; it does not limit request
+frequency, change robot control frequency, or select the model prediction horizon.</p>
+<p>For ordinary Serial or RTC workflows, keep this setting at zero unless you
+specifically need an additional replacement delay. Existing
+<code>chunk_policy_steps</code> and <code>rtc.min_execute_policy_steps</code> retain
+their algorithm-specific execution/request roles. Adding a hold to RTC may be
+redundant and can make a buffered response expire or invalidate its conditioned prefix.</p>
 <p>By default, both single-inflight and multi-inflight replace the current plan as
 soon as a valid reply can be committed. To let each accepted plan execute for a
 minimum time while inference continues, set a positive integer
-<code>inference.min_execute_policy_steps</code>. For example:</p>
+<code>inference.min_plan_hold_policy_steps</code>. For example:</p>
 <pre><code class="language-yaml">inference:
   algorithm: async
-  inference_schedule: single_inflight  # or multi_inflight
+  inference_schedule: multi_inflight  # also supports continuous single_inflight
   request_trigger: continuous
   observation_hz: 30.0
-  min_execute_policy_steps: 4
+  min_plan_hold_policy_steps: 4
   action_start_mode: drop_infer_latency
   blend_policy_steps: 0
 </code></pre>

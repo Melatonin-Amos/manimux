@@ -55,7 +55,7 @@ class PaintInferenceStrategy:
         # A buffered single-inflight reply can outlive its conditioning plan too.
         self._check_reference = (
             config["inference"]["inference_schedule"] == "multi_inflight"
-            or config["inference"].get("min_execute_policy_steps", 0) > 0
+            or config["inference"].get("min_plan_hold_policy_steps", 0) > 0
         )
         self._time_aligned = (
             self._check_reference

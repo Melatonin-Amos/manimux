@@ -44,7 +44,7 @@ class RtcInferenceStrategy:
         self._condition_source = rtc.get("condition_source", "canonical")
         self._condition_predictor = None
         self._min_execute_steps = rtc["min_execute_policy_steps"]
-        buffered = config["inference"].get("min_execute_policy_steps", 0) > 0
+        buffered = config["inference"].get("min_plan_hold_policy_steps", 0) > 0
         self._check_reference = (
             config["inference"]["inference_schedule"] == "multi_inflight" or buffered
         )

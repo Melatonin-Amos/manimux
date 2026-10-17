@@ -188,7 +188,7 @@ class EdgeRuntime:
             raise ValueError("inference composition requires complete absolute-joint decoding")
         self._scheduler = RequestScheduler(config["inference"])
         self._multi_inflight = self._scheduler.multi_inflight
-        self._min_execute_steps = config["inference"].get("min_execute_policy_steps", 0)
+        self._min_execute_steps = config["inference"].get("min_plan_hold_policy_steps", 0)
         if self._multi_inflight and not getattr(self._adapter, "supports_multi_inflight", False):
             raise ValueError("multi_inflight requires an adapter with streaming-safe decoding")
         self._decode_seed_source = getattr(
@@ -554,7 +554,7 @@ class EdgeRuntime:
                 "inference_schedule": self._scheduler.mode,
                 "request_trigger": self._scheduler.trigger,
                 "observation_hz": self._config["inference"]["observation_hz"],
-                "min_execute_policy_steps": self._min_execute_steps,
+                "min_plan_hold_policy_steps": self._min_execute_steps,
                 "command_limits": self._safety.execution_limits(),
                 "policy_label": self._config["robogui"]["policy_label"],
                 "policy_worker": self._config["policy"]["worker"],
