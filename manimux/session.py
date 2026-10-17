@@ -249,6 +249,7 @@ class RuntimeSessionService:
     def _ready_metadata(self) -> dict[str, object]:
         return {
             "run_dir": str(self._run_dir.resolve()),
+            "history_sessions": self._config["run"].get("history_sessions", []),
             "experiment_choices": self._experiment_list.metadata() if self._experiment_list else [],
             "experiment_id": self._selection_id,
             "selection_error": self._selection_error,
@@ -354,6 +355,9 @@ class RuntimeSessionService:
             return False
         try:
             choice = self._experiment_list.choices[requested]
+            from manimux.collections import service_contract
+            if service_contract(choice.config) != service_contract(self._config):
+                raise ValueError("Service configuration differs. Restart affected services and runtime with --experiment-id " + requested)
             run_dir = self._selection_dir_factory(requested)
         except (KeyError, TypeError, OSError, ValueError) as exc:
             self._selection_error = f"Cannot select experiment: {exc}"
@@ -382,6 +386,7 @@ class RuntimeSessionService:
         )
         while max_rollout_attempts is None or attempts < max_rollout_attempts:
             request = self._wait_for_rollout_request()
+            self._refresh_record_index()
             attempts += 1
             self._last_error = ""
             self._last_failure_id = ""
@@ -419,6 +424,17 @@ class RuntimeSessionService:
                 )
                 continue
             self._last_episode_dir = result.episode_dir
+            self._refresh_record_index()
             print(
                 f"rollout completed; reason={result.terminal_reason}; episode={result.episode_dir}"
             )
+
+    def _refresh_record_index(self) -> None:
+        collection = self._config.get("collection")
+        if collection is None:
+            return
+        from manimux.collections import write_inventory
+        try:
+            write_inventory(Path(collection["root"]) / collection["id"])
+        except (OSError, ValueError) as error:
+            print(f"Record index refresh failed; raw recordings are intact: {error}")

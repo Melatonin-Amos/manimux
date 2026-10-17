@@ -52,7 +52,7 @@ bindings for the local installation:
 | `services.camera.endpoint` | Timestamped camera subscription address, normally PUB `tcp://127.0.0.1:5556` |
 | `services.camera.request_endpoint` | Camera request address, normally REP `tcp://127.0.0.1:5555` |
 | `paths.checkpoint` | Trusted UMI artifact path to bind |
-| `paths.output_dir` | Optional run-output override |
+| Collection `recording.root` | Recording root; station output overrides are not allowed for collections |
 
 Gripper firmware serials and camera UVC serials are separate identifiers. Establish
 physical left/right placement before assigning them; enumeration order is not a mapping.
@@ -139,7 +139,7 @@ its expected identity matches the selected artifacts. Do not bypass identity che
 
 ## Pack-plate train-time RTC
 
-Use `manimux/configs/experiments/pack_plate/umi_dp/tianji_taccap_umi_dp_train_time_rtc.yaml`
+Use `manimux/configs/experiments/umi_dp-tianji-pack_plate-train_time_rtc/pack_plate/train_time_rtc.yaml`
 with the CalibWrist H32 prefix-trained pack-plate artifact. The recipe checks
 training prefix support `[0, 4, 5]`; the preset fixes `prefix_steps=5` for conditioned
 requests (`train_time_rtc.delay_estimator: fixed`, `fixed_prefix_steps: 5`). Initial
@@ -153,7 +153,7 @@ checkpoint, then validate and export the paired configs without starting service
 
 ```bash
 PYTHONPATH="$PWD:$PWD/XPolicyLab" envs/umi_dp/.venv/bin/python -m manimux.servers.umi_dp \
-  --experiment manimux/configs/experiments/pack_plate/umi_dp/tianji_taccap_umi_dp_train_time_rtc.yaml \
+  --experiment manimux/configs/experiments/umi_dp-tianji-pack_plate-train_time_rtc/pack_plate/train_time_rtc.yaml \
   --local manimux/configs/local/station.yaml \
   --bind-runtime-config manimux/configs/local/deployments/pack_plate_train_time_rtc.yaml
 ```

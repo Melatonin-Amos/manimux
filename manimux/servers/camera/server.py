@@ -334,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Camera recipe with cameras.<stream>.config, component and options",
     )
     source.add_argument("--experiment", type=Path, help="Experiment with named camera components")
+    source.add_argument("--collection", type=Path, help="Resolve cameras from an experiment collection")
+    parser.add_argument("--experiment-id", help="Required if collection camera configurations differ")
+    parser.add_argument("--check", action="store_true", help="Print resolved cameras without opening devices")
     parser.add_argument(
         "--local", type=Path,
         help="Station bindings (default: manimux/configs/local/station.yaml)",
@@ -347,12 +350,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--heartbeat-sec", type=float, default=DEFAULT_HEARTBEAT_SEC)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
-    local = resolve_local_path(args.experiment or args.config, args.local)
-    if args.experiment is not None:
+    local = resolve_local_path(args.collection or args.experiment or args.config, args.local)
+    if args.experiment_id and not args.collection:
+        parser.error("--experiment-id requires --collection")
+    if args.collection is not None:
+        from manimux.collections import select_service
+        experiment = select_service(args.collection, "camera_server", local=local, experiment=args.experiment_id)
+    elif args.experiment is not None:
         experiment = read_experiment(args.experiment, local=local)
     else:
         experiment = bind_station({"camera_server": read_camera_recipe(args.config)}, local)
     resolved_cameras = camera_config(experiment)
+    if args.check:
+        import json
+        print(json.dumps({"cameras": resolved_cameras, "service": experiment["camera_server"]}, default=str, indent=2))
+        return 0
     service = experiment["camera_server"]
     # Explicit CLI addresses override the station's shared service bindings.
     args.rep_endpoint = args.rep_endpoint or service.get("rep_endpoint", DEFAULT_REP_ENDPOINT)

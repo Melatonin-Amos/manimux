@@ -57,7 +57,7 @@ OpenWAM's entire generated comparison disables compilation and DiT caching.
 
 ```bash
 PYTHONPATH=. envs/yam/.venv/bin/python scripts/experiments/build_inference_matrix.py \
-  --base manimux/configs/experiments/put_bottles/pi05/yam_pi05_serial_joint_step30000.yaml \
+  --base manimux/configs/experiments/pi05-yam-put-bottles-joint-step30000/put_bottles/serial_joint_step30000.yaml \
   --output-dir data/configs/pi05-inference \
   --execution-steps 16 --paint-delay-steps 4 --async-trigger progress \
   --methods serial async act rtc paint autohorizon
@@ -80,16 +80,16 @@ compositions through the [composition guide](../../../../guideline.html#optional
 
 Existing inputs for the remaining families:
 
-- XR1: `manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_manimux_step30000.yaml`.
+- XR1: `manimux/configs/experiments/xiaomi-xr1-yam-finetune-put-bottles-step30000/put_bottles/manimux_step30000.yaml`.
   Supply `--policy-server manimux/configs/policy/xiaomi-xr1/yam/finetune-put-bottles-step30000.yaml`
   when the base only describes the client. H=30; example K=12, d=4.
 - LingBot: `manimux/configs/examples/lingbot_vla2_yam_sampling.yaml`.
   This example binds an existing screwdriver checkpoint and disables robot
   execution. It does not restore the retired task into the experiment register.
   H=50; example K=16, d=4.
-- DP: `manimux/configs/experiments/put_bottles/dp/yam_dp_serial_eef_step100000.yaml`.
+- DP: `manimux/configs/experiments/dp-yam-put-bottles-eef-step100000/put_bottles/serial_eef_step100000.yaml`.
   H=6; example K=3. PAINT and AutoHorizon are reported as not generated.
-- OpenWAM: `manimux/configs/experiments/put_bottles/openwam/yam_openwam_serial_step30000.yaml`.
+- OpenWAM: `manimux/configs/experiments/openwam-custom/put_bottles/serial_step30000.yaml`.
   Supply `--policy-server manimux/configs/policy/openwam/yam/finetune-put-bottles-step30000.yaml`.
   H=32; example K=12, d=4.
 

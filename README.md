@@ -180,20 +180,20 @@ as configured; use the runbook matching your actual setup.
 
 ## Run an experiment campaign
 
-A config list exposes **Task → Method / Config → Layout** in RoboGUI. Switch while
+A collection exposes **Task → Method / Config → Layout** in RoboGUI. Switch while
 idle after finishing recovery and evaluation; compatible entries reuse the camera
 and model services. `serve` does not start those services for you.
 
 ```bash
 # From the repository root, after starting cameras, RoboGUI and the matching model:
 envs/yam/.venv/bin/python -m manimux serve \
-  --config-list manimux/configs/experiments/pi05-latest300ep-step30000/step32/catalog.yaml
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
 ```
 
-Study configs live under `manimux/configs/experiments/<study>/`; recordings mirror their setting/task/method directories under `data/experiments/<study>/`. Restarting adds a session, not another dated config. See the [storage protocol](guideline.html#study-storage-protocol).
+Collection entries live in `manimux/configs/collections/`; reusable variants live in `experiments/<model-checkpoint>/<task>/`, with shared definitions in `tasks/`. The collection owns `recording.root`. Output is `<root>/<collection>/<task>/<variant>/session-…`; restarting resumes the same progress. See the [storage protocol](guideline.html#study-storage-protocol).
 
 
-The current list has **five tasks × six methods**: coin, medium blocks, bottles,
+The current collection has **five tasks × six methods**, plus explicit conveyor starting-pose variants: coin, medium blocks, bottles,
 rotating clock and moving cube; Serial, Async, RTC, AutoHorizon, PAINT and
 backward-only BID. All entries use Direct. Checkpoint paths are deployment-specific.
 [Complete launch commands](guideline.html#latest300ep-launch) ·

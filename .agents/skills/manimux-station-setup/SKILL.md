@@ -10,6 +10,31 @@ editing and use the [station walkthrough](references/station.md) for commands an
 binding schemas. Paths are relative to the checkout. A clone does not install SDKs,
 create CAN interfaces, download weights or identify the user's devices.
 
+## Agent-assisted setup
+
+Own the local setup work; do not hand the user a template and ask them to fill YAML.
+First inspect existing station bindings, intended Python environments, model assets,
+OS device/interface listings and occupied service ports using non-actuating checks.
+Reuse verified values. Ask only for facts that cannot be established reliably, such
+as which physical camera is front/left/right, an unknown controller address, a remote
+model host or the user's intended artifact location. Enumeration order is not placement.
+
+After answers arrive, create or update the private station file, preserving unrelated
+bindings. Prepare missing dependencies in the intended environment within the user's
+authorized scope; do not replace working environments or substitute model weights.
+If an SDK, credential or artifact requires user action, state the specific missing
+item and continue independent setup rather than handing off the whole task.
+
+Validate resolved device mappings, checkpoint/normalization paths, client/server
+addresses and interpreter imports. Check existing listeners before suggesting ports;
+do not silently kill processes, rename CAN interfaces or reconfigure networking.
+For a collection, reject any station output override; recording.root belongs to the
+collection. Help the user choose it once, then reuse it on subsequent launches. Keep secrets and machine bindings out of shared YAML.
+
+Return the written station path, a short binding summary, remaining unverified items
+and matched launch commands. Distinguish static validation from device connectivity
+and actual motion. Setup alone does not authorize launching services or moving hardware.
+
 ## Bind an existing deployment
 
 1. Inspect the chosen experiment, robot assembly and existing station. Confirm only
@@ -34,8 +59,12 @@ create CAN interfaces, download weights or identify the user's devices.
   grippers share arm CAN; TacCap gripper serials are separate from camera serials.
 - Camera mapping is physical device → component → server stream → runtime sensor →
   `policy.adapter.camera_map`. A RoboGUI preview does not change model input mapping.
-- Use one experiment/station across runtime, camera and supported model launchers.
-  Selection precedence is CLI `--local`, experiment `local:`, then the default station.
+- Use one collection/station across runtime, camera and model launchers for studies.
+  If services differ across entries, pass the same explicit `--experiment-id`; do not
+  select an arbitrary child config for cameras. Legacy standalone examples use one
+  experiment/station.
+  Selection precedence is CLI `--local`, collection `local:`, then the default station.
+  Standalone examples use experiment `local:` instead.
   CLI paths are cwd-relative; experiment references and station paths have their own
   file-relative bases. Read the walkthrough's scope table for unsupported entry points.
 - Pi05 `paths.checkpoints` relocates a root; its recipe still selects checkpoint and

@@ -36,7 +36,7 @@ No camera, policy or robot service is started by configuration loading or `--che
 Default recipe/experiment:
 
 - `manimux/configs/policy/pi05/tianji/pass_ball/zero-pose-step20000.yaml`
-- `manimux/configs/experiments/pass_ball/pi05/tianji_taccap_pi05_zero_pose_step20000.yaml`
+- `manimux/configs/experiments/pi05-tianji-pass_ball-zero-pose-step20000/pass_ball/zero_pose_step20000.yaml`
 
 The fixed held-out validation selected step 20000; this is not a robot success result.
 Matching step-59999 recipe and experiment are also available for the final checkpoint.
@@ -74,7 +74,7 @@ loads no model or hardware:
 
 ```bash
 .venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/pass_ball/pi05/tianji_taccap_pi05_zero_pose_step20000.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pass_ball-zero-pose-step20000-standalone.yaml --experiment-id pass_ball_zero_pose_step20000 \
   --checkpoint /home/jw/Desktop/policy/pi05-passball-zero-pose-h32-b16-60k-20260923-192017/checkpoints/20000 \
   --check
 ```
@@ -108,7 +108,7 @@ Model server (isolated OpenPI environment; no hardware ownership):
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/pass_ball/pi05/tianji_taccap_pi05_zero_pose_step20000.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pass_ball-zero-pose-step20000-standalone.yaml --experiment-id pass_ball_zero_pose_step20000 \
   --local .local/tianji_taccap.yaml \
   --checkpoint /home/jw/Desktop/policy/pi05-passball-zero-pose-h32-b16-60k-20260923-192017/checkpoints/20000
 ```
@@ -126,7 +126,7 @@ Camera server (opens physical TacCap cameras; reuse an existing matching service
 ```bash
 PYTHONPATH="$PWD/manimux/embodiments/end_effector/taccap/sdk/TacCap-Gripper/python" \
 .venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/pass_ball/pi05/tianji_taccap_pi05_zero_pose_step20000.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pass_ball-zero-pose-step20000-standalone.yaml --experiment-id pass_ball_zero_pose_step20000 \
   --local .local/tianji_taccap.yaml
 ```
 
@@ -145,7 +145,7 @@ Runtime service (`execute: false`; reads hardware observations during the experi
 ```bash
 PYTHONPATH="$PWD/manimux/embodiments/end_effector/taccap/sdk/TacCap-Gripper/python" \
 .venv/bin/python -m manimux serve \
-  --config manimux/configs/experiments/pass_ball/pi05/tianji_taccap_pi05_zero_pose_step20000.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pass_ball-zero-pose-step20000-standalone.yaml --experiment-id pass_ball_zero_pose_step20000 \
   --local .local/tianji_taccap.yaml
 ```
 

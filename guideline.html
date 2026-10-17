@@ -132,7 +132,7 @@ and reference them with <code>config:</code>.</p>
 interfaces, camera serials, endpoints and checkpoint roots. Preserve component names.</p>
 <p><code>config:</code> paths resolve relative to the containing YAML; mappings merge and lists replace.
 Experiment <code>run.output_dir</code> is relative to the launch directory. Station-local paths resolve
-relative to the station file; <code>paths.output_dir</code> can override the recording directory.</p>
+relative to the station file. Formal studies use collection <code>recording.root</code>; station output overrides are rejected.</p>
 <h3 id="command-limits">Command limits and receive-only validation</h3>
 <p>PiPER's configured station <code>joint_limits</code> (radians) and normalized gripper
 range [0, 1] are shared automatically with the runtime. If
@@ -156,8 +156,9 @@ support it; RoboGUI network options remain separate. A model launcher taking onl
 must use the recipe paired with the experiment. See <a href=".agents/skills/manimux-station-setup/references/station.md#scope-and-remaining-independent-entry-points">entry-point scope</a>.</p>
 <p><strong>Before launch, inspect the resolved config without connecting hardware:</strong></p>
 <pre><code class="language-bash">envs/yam/.venv/bin/python - &lt;&lt;'PY'
-from manimux.cli import load_config
-cfg = load_config('manimux/configs/experiments/coin/pi05/yam_pi05_rtc_joint_step50000.yaml')
+from manimux.collections import load_collection
+catalog = load_collection('manimux/configs/collections/pi05-latest300ep-step30000.yaml')
+cfg = catalog.choices['coin_rtc'].config
 for key in ('run', 'policy', 'inference', 'executor', 'evaluation'):
     print(key, cfg[key])
 PY
@@ -166,12 +167,12 @@ PY
 editing a file does not hot-reload a running deployment.</p>
 </section>
 <section aria-labelledby="launch" class="guide-page" data-page-id="launch" data-title="Launch commands" hidden=""><h2 id="launch">Launch</h2>
-<p><strong>Complete Pi05 coin / YAM example.</strong> Requires installed hardware/model environments,
+<p><strong>Current Pi05 / YAM study.</strong> Requires installed hardware/model environments,
 the checkpoint selected by the recipe, and a configured station. Run from the repository
-root in four terminals, using the same experiment in cameras, model and runtime.</p>
+root in four terminals, using the same collection in cameras, model and runtime.</p>
 <h3 id="1-camera-service">1 · Camera service</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/coin/pi05/yam_pi05_rtc_joint_step50000.yaml
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
 </code></pre>
 <h3 id="2-robogui">2 · RoboGUI</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
@@ -179,18 +180,18 @@ root in four terminals, using the same experiment in cameras, model and runtime.
 </code></pre>
 <h3 id="3-pi05-model-service">3 · Pi05 model service</h3>
 <pre><code class="language-bash">XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/coin/pi05/yam_pi05_rtc_joint_step50000.yaml
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
 </code></pre>
 <h3 id="4-runtime">4 · Runtime</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux serve \
-  --config manimux/configs/experiments/coin/pi05/yam_pi05_rtc_joint_step50000.yaml
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
 </code></pre>
 <p>Open <code>http://127.0.0.1:8086</code>. <code>serve</code> waits for GUI preparation; it does not launch the other
 three services. <strong>Prepare can connect hardware and move to the configured start pose.</strong>
 Use <strong>Prepare → adjust layout → Activate Warmup → Start rollout → Finish</strong>.</p><p>Recovery controls follow the connected runtime's declared capabilities and arm selections. When idle Home is available, <strong>Finish rollout</strong> does not home; use <strong>Return Home</strong>, which applies to all configured arms. Otherwise Finish preserves the experiment's <code>home_on_close</code>. Drag and Release finish an active rollout without homing. Tianji Release offers continuous or five-second cooperative hand-guiding when declared; loss of the recovery lease cancels it.</p><p>Pack-plate deployments select <code>tianji_taccap_pack_plate.yaml</code> for the saved <code>pack_plate_start</code> Home. Update older bound configurations and restart the runtime to load a changed assembly.</p><p>
 Warmup is explicit when <code>run.warmup_before_start: true</code>; otherwise go directly to Start. Follow the selected Finish/Home behavior before
 stopping runtime, then stop model, camera and GUI processes.</p>
-<p>For another method, use its YAML in all experiment-aware commands. For another model,
+<p>For another compatible method, select it in RoboGUI. For another collection/model,
 replace terminal 3 with that model's environment and launcher; do not reuse Pi05's interpreter.</p>
 <details><summary>Other model-server command forms</summary>
 <p>These forms use explicit placeholders: resolve <code>MM_MODEL_PY</code>, <code>MM_RECIPE</code> and <code>MM_EXPERIMENT</code>
@@ -763,7 +764,7 @@ and does not impose a joint-step limit or guarantee IK branch continuity.</p>
 <section aria-labelledby="train-time-rtc" class="guide-page" data-page-id="train-time-rtc" data-title="Train-time RTC" hidden=""><h2 id="train-time-rtc">Train-time RTC</h2>
 <p>Prefix-trained UMI-DP checkpoints use <code>algorithm: train_time_rtc</code> and <code>inference_schedule: single_inflight</code>. They advertise the separate <code>train_time_rtc</code> sampling capability; ordinary RTC guidance checkpoints do not support this mode.</p>
 <p>The pack-plate recipe fixes five leading action rows with <code>delay_estimator: fixed</code> and <code>fixed_prefix_steps: 5</code>. The first request and unavailable committed prefixes are unconditioned. Fixed prefixes do not guarantee latency coverage. Dynamic <code>decode_max</code> and <code>end_to_end_max</code> estimators are also available.</p>
-<p>Use <code>action_start_mode: drop_infer_latency</code>, <code>blend_policy_steps: 0</code> and <code>handoff_skip_steps: 0</code>. Both inline and process decoding are supported. Select <code>manimux/configs/experiments/pack_plate/umi_dp/tianji_taccap_umi_dp_train_time_rtc.yaml</code>.</p>
+<p>Use <code>action_start_mode: drop_infer_latency</code>, <code>blend_policy_steps: 0</code> and <code>handoff_skip_steps: 0</code>. Both inline and process decoding are supported. Select <code>manimux/configs/experiments/umi_dp-tianji-pack_plate-train_time_rtc/pack_plate/train_time_rtc.yaml</code>.</p>
 <p>ABC-DiT 200k uses this strategy with <code>chunk_policy_steps: 16</code>,
 <code>delay_estimator: fixed</code> and <code>fixed_prefix_steps: 7</code>.
 Its model recipe retains <code>rtc_prefix_length: 4</code>: the backend conditions
@@ -956,7 +957,7 @@ in the experiment YAML. These are overrides to the same RTC experiment:</p>
   temporal_ensemble:
     enabled: false</code></pre>
 <p>The combination flag defaults to false. Explicit false also overrides an enabled referenced preset.
-After changing YAML, finish the current rollout and restart <code>manimux serve --config ...</code>
+After changing YAML, finish the current rollout and restart <code>manimux serve --collection ...</code>
 before preparing the next trial. The same model server can stay running for this flag change.
 For a controlled comparison, leave the other settings unchanged.</p>
 <p><code>coefficient: 0</code> still averages predictions with equal weights; it does not disable
@@ -1188,7 +1189,7 @@ require the native horizon; attention capture needs eager execution. Pi05 PyTorc
 Pi05 EEF are outside this matrix. <a href=".agents/skills/manimux-inference/references/inference-matrix.md">Detailed model contracts</a></p>
 <p><strong>Generate selecting configs from one existing deployment, without launching services:</strong></p>
 <pre><code class="language-bash">PYTHONPATH=. envs/yam/.venv/bin/python scripts/experiments/build_inference_matrix.py \
-  --base manimux/configs/experiments/coin/pi05/yam_pi05_rtc_joint_step50000.yaml \
+  --base manimux/configs/experiments/pi05-yam-coin-joint-step50000/coin/rtc_joint_step50000.yaml \
   --output-dir data/configs/coin-pi05-comparison-v1 \
   --execution-steps 16 --paint-delay-steps 4 --async-trigger progress \
   --aac-stats manimux/policies/xpolicylab/norm_stats/yam_60ep_ee_increment.json \
@@ -1237,138 +1238,102 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 cannot add a missing sampler hook. Historical runbook measurements apply to their recorded
 revisions, not automatically to a new checkpoint.</p>
 </section>
-<section aria-labelledby="experiment-lists" class="guide-page" data-page-id="experiment-lists" data-title="Task &amp; method switching" hidden=""><h2 id="experiment-lists">Task &amp; method switching</h2>
-<p>Use <code>serve --config-list</code> to choose experiments in RoboGUI while keeping the same model and camera services running. A list references complete experiment YAMLs; it does not override their parameters.</p>
-<p>Establish whether the study is single-task or multi-task before choosing a launch command. Recommend a config list for multiple tasks, and retain the requested task coverage when switching models. A checkpoint's training task does not define the evaluation scope. Lists can also compare several methods on one task; incompatible checkpoints or service contracts need separate lists.</p>
-<div class="callout"><strong>Stable experiment protocol.</strong>
-Use <code>manimux/configs/experiments/pi05-latest300ep-step30000/step32/catalog.yaml</code> for the Pi05 study. Fixed windows use <code>K = round(H × 32/50)</code>: Pi05 and LingBot 32/50, OpenWAM 20/32, Xiaomi Robotics-1 19/30. AutoHorizon remains adaptive. Async uses <code>request_trigger: progress</code> and retains the full horizon; refill prefix cropping is a different schedule. Async/RTC/PAINT count latency-trimmed source rows as progress, not physically executed commands. Direct, blend=0.
-<p>Check resolved settings before launch: <code>envs/yam/.venv/bin/python scripts/experiments/check_step_ratio.py --config-list manimux/configs/experiments/pi05-latest300ep-step30000/step32/catalog.yaml</code>. Verify the first recorded trials' actual switch timing before completing a cohort. This command only checks configuration.</p>
-<p>Xiaomi's ratio catalog currently contains Async and RTC only. FastWAM has no bound YAM study catalog yet.</p></div>
-<h3 id="study-storage-protocol">Study, settings and recording paths</h3>
-<p>Choose one stable study ID for a model/checkpoint and comparison protocol. Keep the active catalog, task configs and declared protocol together. Configuration and recording directories must mirror each other:</p>
-<pre><code>manimux/configs/experiments/&lt;study&gt;/
-  protocol.yaml
-  step32/catalog.yaml
-  step32/&lt;task&gt;/rtc_beta10.yaml
-  step32/&lt;task&gt;/async_progress.yaml
-  adaptive/&lt;task&gt;/autohorizon_serial.yaml
-
-data/experiments/&lt;study&gt;/
-  step16/&lt;task&gt;/&lt;method-variant&gt;/session-*/rollout-*/
-  step32/&lt;task&gt;/&lt;method-variant&gt;/session-*/rollout-*/
-  adaptive/&lt;task&gt;/&lt;method-variant&gt;/session-*/rollout-*/
-  recordings-index.json</code></pre>
-<ul><li><strong>Same settings, same directory.</strong> Restarting creates a new session automatically. Do not copy YAMLs or create date-suffixed study roots to restart a service. Resume existing layout/repeat counts.</li>
-<li><strong>Changed settings, explicit identity.</strong> Step count, Async trigger, RTC beta, checkpoint, cache and executor changes must remain distinguishable. Name variants by those differences. Use <code>replicate02</code> only for an intentionally agreed independent repetition, with matching config/data paths.</li>
-<li><strong>Historical classification.</strong> Read saved manifests, never infer K from a filename. The current Pi05 archive contains step16, step32 and adaptive recordings. The 25-step pilots were deleted at the owner’s request. AutoHorizon has no fixed K. Async refill and progress remain separate. Old 16-step launch entries are archived, not active.</li>
-<li><strong>Raw evidence stays immutable.</strong> Move complete sessions and retain a verified path mapping. Old symlinks support existing reports; enumerate only canonical paths to avoid duplicate counts. Do not rewrite old snapshots to resemble the new protocol.</li>
-<li><strong>Current archive.</strong> <code>data/experiments/pi05-latest300ep-step30000/recordings-index.json</code> lists every moved session, its settings and checksums. <code>_archive/</code> holds original config files and migration evidence. Grouping by K does not authorize pooling tasks, method variants, or stopping protocols.</li></ul>
-
-<p>The local bottle-trained 30k evaluation catalogs are <code>manimux/configs/experiment_lists/yam_lingbot_vla2_bottles30k_all_tasks.yaml</code> and <code>manimux/configs/experiment_lists/yam_openwam_bottles30k_all_tasks.yaml</code>. Each covers coin, medium blocks, bottles, rotating clock and moving cube, with Serial, BID, AutoHorizon, RTC, PAINT and Async. All use Direct; fixed windows are 32/50 for LingBot and 20/32 for OpenWAM, while AutoHorizon remains adaptive. These are cross-task evaluation catalogs for bottle-trained checkpoints, not evidence of multi-task training or validated task performance. OpenWAM's catalog requires <code>policy/openwam/yam/finetune-put-bottles-step30000-sampling.yaml</code> with compilation and DiT caching disabled for specialized samplers. Runtime capability checks remain authoritative.</p>
-<h3 id="experiment-config-locations">Where configurations live</h3>
-<p>For ordinary OpenWAM Serial/Async trials, prefer <code>manimux/configs/experiment_lists/yam_openwam_bottles30k_cached_all_tasks.yaml</code> with the original <code>finetune-put-bottles-step30000.yaml</code> model recipe: both compilation and DiT velocity caching remain enabled. This list covers all five tasks and writes separate <code>-cached</code> outputs. The six-method catalog uses a separate eager model recipe to keep the six-method comparison uncached; compiled specialized sampling remains unsupported. This is an implementation compatibility restriction, not a theoretical requirement. Report optimization flags and measured latency when comparing results across the two service configurations.</p>
-<h3 id="openwam-rtc-cache">OpenWAM RTC + DiT cache</h3>
-<p>These fields belong to the <strong>model recipe</strong>. The runtime still selects <code>algorithm: rtc</code>.</p>
-<pre><code class="language-yaml">compile_enabled: false
-dit_cache_enabled: true
-dit_cache_modes: [default, rtc]</code></pre>
-<p><code>dit_cache_enabled</code> is the master switch; <code>dit_cache_modes</code> is the allowlist. Omitted means <code>[default]</code>; <code>[rtc]</code> enables RTC-only reuse; <code>[]</code> disables reuse for every mode. Serial/Async use the default sampler. PAINT/AutoHorizon execute uncached and cannot be added to this list. Null entries and unsupported names are errors.</p>
-<p>On a recomputed step, RTC corrects the action prediction before both video and action predictions enter the native cache. On a hit, forward and VJP are skipped while current schedule deltas still update the latents. Native similarity thresholds and skip limits are unchanged; cache state resets per request. This is an approximate RTC variant: report it as <strong>RTC + cache</strong>, with compile settings and measured latency.</p>
-<p>The following catalog covers all five tasks with Serial, RTC and Async on the same eager cached backend, using separate output directories ending in <code>-rtc-cache-eager</code>. Existing uncached and compiled-cache catalogs remain separate.</p>
-<pre><code class="language-bash"># Model server (terminal 1)
-cd /home/ubuntu/manimux
-envs/openwam/.venv/bin/python manimux/servers/openwam.py \
-  --config manimux/configs/policy/openwam/yam/finetune-put-bottles-step30000-rtc-cache.yaml
-
-# Runtime (terminal 2; reuse the existing camera and RoboGUI services)
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux serve \
-  --config-list manimux/configs/experiment_lists/yam_openwam_bottles30k_rtc_cache_all_tasks.yaml</code></pre>
-<p>Model responses expose <code>sampling_stats</code>; RTC includes <code>model_evaluations</code>, <code>guidance_evaluations</code> and <code>cache_hits</code>. For ordinary inline/process decoding, counters are recorded under <code>data.zarr/plans/&lt;plan&gt;/canonical_raw</code> and <code>infra_output</code>, in the <code>metadata.sampling_stats</code> attribute. Counters add no timing synchronization. Validation covers CPU synthetic samplers and routing; real-weight latency and robot quality remain to be measured.</p>
-
-<table><thead><tr><th>File</th><th>Owns</th></tr></thead><tbody>
-<tr><td><code>manimux/configs/experiment_lists/*.yaml</code></td><td>The experiments available in this session. First entry is the initial selection.</td></tr>
-<tr><td><code>manimux/configs/experiments/&lt;task&gt;/&lt;model&gt;/*.yaml</code></td><td>Task prompt, inference method, executor, output directory, layout/repeat rules and rubric reference.</td></tr>
-<tr><td><code>manimux/configs/policy/&lt;model&gt;/&lt;robot&gt;/&lt;dataset&gt;/*.yaml</code></td><td>Shared checkpoint, normalization, model initialization and backend identity.</td></tr>
-<tr><td><code>manimux/configs/inference/*.yaml</code></td><td>Reusable method parameters, referenced by the experiment.</td></tr>
-<tr><td><code>manimux/configs/evaluation/*.yaml</code></td><td>Task scoring rules; existing episode snapshots remain unchanged.</td></tr>
+<section aria-labelledby="experiment-lists" class="guide-page" data-page-id="experiment-lists" data-title="Collections &amp; task switching" hidden=""><h2 id="experiment-lists">Collections &amp; task switching</h2>
+<p>A <strong>collection</strong> is the entry point for a study, including a single experiment. It selects reusable variants, the trial plan and one recording root. Camera, model and runtime commands use the same collection and station. Compatible task/method choices switch in RoboGUI after Finish, recovery and evaluation.</p>
+<h3 id="experiment-config-locations">Configuration ownership</h3>
+<p><strong>Published example:</strong> only <code>experiments/pi05-latest300ep-step30000/</code> and its collection are tracked in this checkout. Other study directories and collections are local and Git-ignored. Shared components and task definitions remain reusable. Update both allowlists in <code>.gitignore</code> explicitly when publishing another study.</p>
+<pre><code>manimux/configs/
+  collections/&lt;study&gt;.yaml                 # entries, trials, recording.root
+  tasks/&lt;task&gt;.yaml                        # prompt, layouts, rubric, optional pose
+  embodiment/{robot,sensor,initial_poses}/  # shared hardware and named poses
+  policy/  inference/  executor/  evaluation/  local/
+  experiments/&lt;model-checkpoint&gt;/
+    _base_.yaml                            # common choices, only when needed
+    &lt;task&gt;/rtc32_beta10.yaml                # reusable variant and identity
+</code></pre>
+<table><thead><tr><th>File</th><th>Owns</th><th>Does not own</th></tr></thead><tbody>
+<tr><td>Component recipes</td><td>Model/artifacts, inference defaults, robot/camera contracts, executor</td><td>Trial counts and output directory</td></tr>
+<tr><td>Task</td><td>Exact prompt, available layouts, evaluation template, optional named initial pose</td><td>Which methods are compared</td></tr>
+<tr><td>Experiment variant</td><td>Component selection and deliberate parameter overrides; <code>experiment.task</code> and <code>experiment.variant</code></td><td>Recording root</td></tr>
+<tr><td>Collection</td><td>Entry IDs/labels, layout subset/repeats, recording root, optional station and historical inputs</td><td>Hidden algorithm overrides</td></tr>
+<tr><td>Local station</td><td>Device bindings, service endpoints and installed artifact paths</td><td>Study storage; <code>paths.output_dir</code> is rejected for collections</td></tr>
 </tbody></table>
-<pre><code class="language-yaml"># manimux/configs/experiment_lists/yam_pi05_mixed300ep.yaml
+<p><code>_base_</code> accepts a file or list of files. Later bases override earlier ones, then the variant overrides its bases. Mappings merge; lists replace. References are relative to the file declaring them. Cycles and inheritance chains longer than four files are rejected. Prefer one shared base plus one task.</p>
+<pre><code class="language-yaml"># collections/my-study.yaml
+id: my-study
+recording:
+  root: /data/robot-experiments             # user chooses; relative paths use this file's directory
 experiments:
   - id: coin_rtc
-    label: RTC
-    config: ../experiments/coin/pi05/yam_pi05_mixed300ep_rtc_step30000.yaml
-  - id: coin_serial
-    label: Serial
-    config: ../experiments/coin/pi05/yam_pi05_mixed300ep_serial_step30000.yaml
-  - id: stack_blocks_small_rtc
-    label: RTC
-    config: ../experiments/stack_blocks_small/pi05/yam_pi05_mixed300ep_rtc_step30000.yaml
+    config: ../experiments/my-policy/coin/rtc32_beta10.yaml
+    label: RTC beta 10
+    trials:
+      layout_ids: ['01', '02']              # subset of the task's available layouts
+      repeats: 3
 </code></pre>
-<p><code>id</code> must be unique. <code>config</code> is relative to the list file. Optional <code>label</code> is shown as Method / Config and defaults to the ID. Task and algorithm come from the resolved experiment, so they are not repeated in the list. Give parameter variants distinct labels and output directories.</p>
-<h3 id="latest300ep-launch">Current Pi05 30k experiment list</h3>
-<p><code>manimux/configs/experiments/pi05-latest300ep-step30000/step32/catalog.yaml</code> contains <strong>five tasks × six methods = 30 configurations</strong>. Tasks: coin (<code>put_the_coin_into_the_bin2</code>), medium blocks, bottles, rotating clock and moving cube. Methods: RTC, Serial, Async, AutoHorizon, PAINT and backward-only BID. Every entry uses <code>executor.type: direct</code>. The checkpoint was trained on six tasks; the experiment list does not include small blocks.</p>
-<p>The shared recipe is <code>manimux/configs/policy/pi05/yam/latest300/joint-step30000.yaml</code>. Configure its checkpoint and normalization paths for your station. BID uses 16 candidates and backward coherence; it is not the full bidirectional algorithm. The older mixed300ep list selects a different checkpoint.</p>
-<p>Run from the repository root in four terminals. Start the model successfully before Prepare; <code>serve</code> does not launch it.</p>
-<pre><code class="language-bash"># 1. Cameras
-envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/pi05-latest300ep-step30000/step32/press_rotating_clock/rtc_beta10.yaml
-
-# 2. RoboGUI
-envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
-  --robot yam --host 127.0.0.1 --port 8086
-
-# 3. Pi05 model
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/pi05-latest300ep-step30000/step32/press_rotating_clock/rtc_beta10.yaml
-
-# 4. Runtime with task/method selection
-envs/yam/.venv/bin/python -m manimux serve \
-  --config-list manimux/configs/experiments/pi05-latest300ep-step30000/step32/catalog.yaml
+<pre><code class="language-yaml"># experiments/my-policy/coin/rtc32_beta10.yaml
+_base_: [../_base_.yaml, ../../../tasks/coin.yaml]
+experiment:
+  task: coin
+  variant: rtc32_beta10
+inference:
+  algorithm: rtc
+  rtc:
+    min_execute_policy_steps: 32
+    beta: 10
 </code></pre>
-<p>Outputs: <code>data/experiments/pi05-latest300ep-step30000/&lt;task&gt;/&lt;method&gt;/session-…/rollout-…/</code>. Each task/method targets ten layouts with three repeats. Keep retries visible; 30 target trials does not authorize dropping extra attempts.</p>
-<h3 id="mixed300ep-launch">Launch the mixed-task Pi05 30k experiments</h3>
-<p>The complete list contains six tasks × four methods: RTC, Serial, Async and PAINT. All use the shared <code>policy/pi05/yam/mixed/joint-step30000.yaml</code> recipe and direct executor. The checkpoint is <code>pi05_yam_mixed_20261011_300ep_30k/30000</code>; it is separate from the older single-task coin/block checkpoints.</p>
-<p>Stop teleoperation before using the same robot/cameras for inference. Run these commands in four terminals. Camera and model services use the first experiment's shared settings; keep them running when changing the UI selection.</p>
-<pre><code class="language-bash"># Terminal 1 — cameras
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/coin/pi05/yam_pi05_mixed300ep_rtc_step30000.yaml
-
-# Terminal 2 — RoboGUI
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
-  --robot yam --host 127.0.0.1 --port 8086
-
-# Terminal 3 — model (loads weights once)
-cd /home/ubuntu/manimux
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/coin/pi05/yam_pi05_mixed300ep_rtc_step30000.yaml
-
-# Terminal 4 — selectable runtime
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux serve \
-  --config-list manimux/configs/experiment_lists/yam_pi05_mixed300ep.yaml
-</code></pre>
-<p>Open <a href="http://127.0.0.1:8086">RoboGUI</a>. Choose <strong>Task → Method / Config → Layout → Prepare Run / Prepare Experiment</strong>. Then Activate Warmup → Start rollout. After Finish, save or skip evaluation before selecting another configuration. Prepare Run needs neither a layout nor scoring. Prepare may move the robot to its configured start pose.</p>
-<h3 id="experiment-switch-boundaries">What changes at selection</h3>
-<table><thead><tr><th>Changes</th><th>Behavior</th></tr></thead><tbody>
-<tr><td>Task</td><td>Update prompt, rubric, reference layout library and per-method repeat progress. The mixed model receives the task instruction in each observation.</td></tr>
-<tr><td>Runtime method / parameters</td><td>Create a fresh runtime on the next Prepare: new worker, strategy, timeline and warmup. No old chunk or ensemble history is reused.</td></tr>
-<tr><td>Checkpoint, normalization, model initialization (including num_steps), cameras, robot or action contract</td><td>Rejected within one list. Use a separate list and launch its matching services. Same weights alone are insufficient for service reuse.</td></tr>
-<tr><td>YAML edited on disk</td><td>Lists are loaded and validated at serve startup. Restart serve to load edits; model/camera changes also require their services to restart.</td></tr>
-</tbody></table>
-<p>Task/config selection is disabled while preparing, running, recovering or awaiting evaluation. Switching never starts a rollout. Backend identity and sampling capability checks remain enabled. In the mixed recipe, task_name identifies the shared deployment; <code>run.task</code> owns the actual instruction.</p>
-<h3 id="experiment-list-records">Output and provenance</h3>
-<pre><code>data/experiments/pi05-mixed300ep-step30000/
-  coin/rtc/session-.../
+<p>The agent first establishes single-task versus multi-task scope, checkpoint/contract, observable success and optional partial scores, layouts/reset, stopping rules and storage. It writes the task, variants, collection and private station from the answers and validates them. Users do not need to fill YAML forms. Do not infer a different user's scoring weights, trial count or joint coordinates.</p>
+<h3 id="study-storage-protocol">Recording identity and historical data</h3>
+<pre><code>&lt;recording.root&gt;/&lt;collection.id&gt;/&lt;experiment.task&gt;/&lt;experiment.variant&gt;/
+  session-&lt;timestamp&gt;-&lt;unique-id&gt;/
     session-manifest.json
     rollout-001/...
-  coin/serial/session-.../
-  stack_blocks_small/rtc/session-.../
 </code></pre>
-<p>Each selection opens a new session under that experiment's output directory. The session manifest saves the selected ID, list path/hash, experiment path/hash and complete resolved configuration. Repeat progress includes prior finalized scored records in the same method directory. New checkpoint configs do not overwrite historical experiment YAMLs or results.</p>
-<p>Coin retains stages 0 / 0.1 / 0.3 / 0.5 / 1; both stacking tasks retain 0 / 0.5 / 1; bottles retain the existing count rubric. Clock and moving-cube configs currently use binary scoring. Their ten-layout templates require saved task reference images for Prepare Experiment; use Prepare Run for a trial without a reference.</p>
+<p>Restarting the same collection resumes progress from the same destination. Selecting an entry in RoboGUI and using <code>--experiment-id</code> resolve to the same identity and directory. Each launch/selection creates a session; repeats create rollouts, not new YAML files. Managed variants cannot launch directly through <code>serve --config</code> or <code>run --config</code>.</p>
+<p>Session manifests freeze the resolved configuration, component/base hashes and collection identity. Changed scientific conditions under an already recorded variant ID are rejected: create a clearly named variant. Labels and trial budgets can change without pretending that the model or algorithm changed.</p>
+<p>Existing recordings keep their paths, raw contents and recorded configurations. A collection entry may declare <code>history: [old-study/step32/coin/rtc_beta10]</code>, relative to <code>recording.root</code>. Only sessions with matching saved effective conditions count toward current progress. Canonical paths deduplicate aliases. Finalized, valid scored experiments count; partial, unlabelled and invalid attempts remain distinguishable. Historical 16-step data are preserved for analysis and never relabelled as 32-step trials.</p>
+<p><code>inspect --collection … --index</code> refreshes the derived <code>recordings-index-v2.json</code> inside the collection's recording directory. It inventories real session directories without following aliases. It is a snapshot, not the score authority; labels are read from recordings. The earlier <code>recordings-index.json</code> and migration/deletion receipts remain historical records. Index generation never rewrites raw episode files.</p>
+<h3 id="latest300ep-launch">Current Pi05 study: five tasks, 32-step fixed windows</h3>
+<p>Use <code>manimux/configs/collections/pi05-latest300ep-step30000.yaml</code>. It contains five tasks × six methods plus six conveyor raised-start variants. Pi05 fixed windows use 32/50, Direct and blend=0; RTC beta=10. AutoHorizon remains adaptive. Async uses <code>request_trigger: progress</code> and retains the full model horizon. Async/RTC/PAINT source progress includes latency-trimmed rows; this is not a guarantee of 32 physical commands.</p>
+<p>For this comparison, fixed windows use <code>K = round(H × 32/50)</code>: LingBot 32/50, OpenWAM 20/32, Xiaomi Robotics-1 19/30. This is the study's choice, not a universal default for new users. Xiaomi's collection currently includes Async and RTC. FastWAM has no bound YAM collection.</p>
+<pre><code class="language-bash">cd /home/ubuntu/manimux
+envs/yam/.venv/bin/python -m manimux inspect \
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml --index
+envs/yam/.venv/bin/python scripts/experiments/check_step_ratio.py \
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml</code></pre>
+<p>Start each long-running command in its own terminal after checking existing services:</p>
+<pre><code class="language-bash"># Camera service
+cd /home/ubuntu/manimux
+envs/yam/.venv/bin/python -m manimux.servers.camera.server \
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+
+# RoboGUI
+cd /home/ubuntu/manimux
+envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
+  --robot yam --host 127.0.0.1 --port 8086
+
+# Pi05 model service
+cd /home/ubuntu/manimux
+XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+
+# Runtime: Task / Method / Layout selection
+cd /home/ubuntu/manimux
+envs/yam/.venv/bin/python -m manimux serve \
+  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml</code></pre>
+<p>Open <a href="http://127.0.0.1:8086">RoboGUI</a>. Choose Task → Method → Layout → Prepare Run / Prepare Experiment → Activate Warmup → Start → Finish → save/skip evaluation. Prepare may move to the configured initial pose. Only the moving-cube task offers the measured raised preset in this collection; other tasks use Home. Raised and Home are distinct recorded variants. General tasks may inherit an <code>initial_pose: {config: …, id: …}</code> from their task YAML; overrides belong to deliberate variants.</p>
+<h3 id="mixed300ep-launch">Other collections and service selection</h3>
+<p>The following collections are local examples, not included in a fresh clone. When present on your station, use <code>collections/lingbot-vla2-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-cached-all-tasks.yaml</code>, <code>openwam-bottles30k-rtc-cache-all-tasks.yaml</code> or <code>xiaomi-xr1-bottles30k-ratio64-all-tasks.yaml</code> as appropriate. These bottle-trained weights are being evaluated across tasks; inclusion is not evidence of training coverage or successful task performance.</p>
+<p>The generic XPolicyLab launcher is <code>python -m manimux.servers.policy --collection …</code>, using that model's installed Python environment. <code>--check</code> prints the resolved service recipe without loading weights. Camera <code>--check</code> resolves devices without opening them. Pi05's dedicated launcher additionally validates its artifact paths.</p>
+<p>OpenWAM cached Serial/Async uses the original compiled DiT cache recipe. The RTC-cache collection uses eager execution and the declared cache modes. Specialized sampling and compilation support remain model-specific; retain these flags and measured latency when comparing methods.</p>
+<h3 id="experiment-switch-boundaries">Switching boundaries</h3>
+<table><thead><tr><th>Change</th><th>Behavior</th></tr></thead><tbody>
+<tr><td>Compatible task, method, parameters or named starting pose</td><td>Idle-only selection after recovery/evaluation. A fresh runtime on Prepare clears previous chunks and sampling state.</td></tr>
+<tr><td>Different camera set, checkpoint, robot or model initialization</td><td>May coexist in a collection, but cannot hot-switch. Select <code>--experiment-id ID</code> for runtime and matching services; restart affected services explicitly.</td></tr>
+<tr><td>Ambiguous camera/model launch</td><td>Without an explicit ID, that service's configurations must agree across the collection; otherwise launch fails with a selection error.</td></tr>
+<tr><td>YAML edited on disk</td><td>Restart runtime to reload. Restart model/camera services if their configuration changed. No automatic hardware restart.</td></tr>
+</tbody></table>
+<p id="experiment-list-records">Current recorded conditions remain the authority. Configuration inspection does not validate model outputs or physical execution. Validate the first trials' actual switch timing before collecting a full cohort.</p>
 </section>
 <section aria-labelledby="experiments" class="guide-page" data-page-id="experiments" data-title="Rules, templates &amp; scoring" hidden=""><h2 id="experiments">Experiments</h2>
 <h3 id="agree-on-the-rule-before-collection">Agree on the rule before collection</h3>
@@ -2431,7 +2396,7 @@ decisions and result tables; it is not a second public guide.</p>
     budget_ms: 5.0
 run:
   control_timing: true</code></pre>
-<p>Merge these fields into an experiment with a direct executor and inline action decoding. The optional budget defaults to half the control period and must be shorter than that period. Reuse the example <code>manimux/configs/experiments/put_bottles/openwam/yam_openwam_serial_step30000_step_ik.yaml</code>. Existing experiments remain in chunk mode.</p>
+<p>Merge these fields into an experiment with a direct executor and inline action decoding. The optional budget defaults to half the control period and must be shorter than that period. Reuse the example <code>manimux/configs/experiments/openwam-custom/put_bottles/serial_step30000_step_ik.yaml</code>. Existing experiments remain in chunk mode.</p>
 <p>Step mode supports serial/async for IK adapters. OpenWAM YAM and XR1 YAM also support pose-space RTC/PAINT; Pi05 Tianji, XR1 Tianji and UMI-DP Tianji support pose-space RTC. Unsupported combinations fail at configuration validation. Smooth/MPC, joint candidate scoring, temporal ensembling, executor-based RTC forecasts, cubic joint blends, waypoint handoff and decoder diffIK substeps require chunk mode.</p>
 <p>The current pose is interpolated with linear position/gripper and quaternion SLERP, then IK is seeded from the current measured joint state. Both arms share the budget; a failed or late solution holds both arms at the previous command. Watch the <code>step_ik</code> timing stage and <code>step_ik_hold</code> events. The budget is cooperative: native calls cannot always be interrupted, so verify control timing on the target machine. Pose-space interpolation can produce a different joint path from interpolating a pre-solved joint chunk.</p>
 <p><strong>Optional TCP target speed limit (off by default):</strong> set <code>execution.ik.pose_speed_limit</code> to a mapping with <code>max_linear_m_s</code> and/or <code>max_angular_rad_s</code>. Values must be positive and finite. Omit it or use <code>null</code> to disable. This setting applies to step IK only.</p>

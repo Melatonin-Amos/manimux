@@ -36,7 +36,8 @@ def resolve_local_path(
         return Path(local).expanduser().resolve()
     if experiment is not None:
         source = Path(experiment).expanduser().resolve()
-        reference = read_yaml(source).get("local")
+        from manimux.configuration import compose
+        reference = compose(source)[0].get("local")
         if reference is not None:
             return (source.parent / Path(reference).expanduser()).resolve()
     return DEFAULT_LOCAL_PATH
@@ -112,11 +113,13 @@ def read_experiment(
 ) -> dict:
     """Expand component references and explicit station bindings.
 
-    Each section references at most one base YAML, without recursive inheritance.
+    Experiment/task bases compose first; component sections reference one recipe.
     robot.config remains the assembly path; reading does not construct RobotModel.
     """
     source = Path(path).expanduser().resolve()
-    raw = read_yaml(source)
+    from manimux.configuration import compose, apply_initial_pose
+    raw, sources = compose(source)
+    raw["config_sources"] = sources
     from manimux.embodiments.layout import assembly_action_contract
     from manimux.embodiments.robot import apply_action_contract
     from manimux.policies.base import backend_identity_from_recipe
@@ -132,6 +135,7 @@ def read_experiment(
                 raw[name] = section
         if "config" in section:
             reference = (source.parent / section.pop("config")).resolve()
+            sources[str(reference)] = hashlib.sha256(reference.read_bytes()).hexdigest()
             base = (
                 read_camera_recipe(reference) if name == "camera_server" else read_yaml(reference)
             )
@@ -154,6 +158,8 @@ def read_experiment(
     if raw.get("control_profile") is not None:
         raw["control_profile"] = str((source.parent / raw["control_profile"]).resolve())
 
+    apply_initial_pose(raw)
+
     # CLI station paths are relative to cwd; saved references are experiment-relative.
     selected = Path(local).expanduser().resolve() if local is not None else None
     if selected is None and raw.get("local") is not None:
@@ -170,6 +176,25 @@ def read_experiment(
         if configured is not None and configured != generated:
             raise ValueError("policy.expected_backend conflicts with policy_server recipe")
         policy["expected_backend"] = generated
+    # Snapshot every referenced YAML, including assembly/driver and station files.
+    def record_references(value, directory: Path) -> None:
+        if isinstance(value, list):
+            for item in value:
+                record_references(item, directory)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"config", "control_profile", "local"} and isinstance(item, str):
+                    dependency = (directory / Path(item).expanduser()).resolve()
+                    if dependency.is_file() and str(dependency) not in visited:
+                        visited.add(str(dependency))
+                        raw["config_sources"][str(dependency)] = hashlib.sha256(dependency.read_bytes()).hexdigest()
+                        record_references(read_yaml(dependency), dependency.parent)
+                else:
+                    record_references(item, directory)
+    visited: set[str] = set()
+    for dependency in list(raw["config_sources"]):
+        record_references(read_yaml(dependency), Path(dependency).parent)
+    record_references(raw, source.parent)
     return raw
 
 
@@ -319,6 +344,8 @@ def _create_run_dir(config: dict, config_path: Path, *, mode: str,
                 "config_path": str(resolved_config),
                 "config_sha256": config_sha256,
                 "config": loads(dumps(deepcopy(config), default=str)),
+                "config_sources": config.get("config_sources", {}),
+                **({"collection": config["collection"]} if "collection" in config else {}),
                 **({"experiment_selection": experiment_selection} if experiment_selection else {}),
             },
             handle,
@@ -338,6 +365,8 @@ def _run(
     from manimux.runtime.lock import RuntimeLockError
 
     config = _load_config(config_path, executor, local=local, control_timing=control_timing)
+    if config.get("experiment"):
+        raise ValueError("Managed variants require serve --collection <file> --experiment-id <id>")
     try:
         with _runtime_lock(config, config_path, mode="run"):
             run_dir = _create_run_dir(config, config_path, mode="run")
@@ -359,23 +388,27 @@ def _run(
 
 def _serve(
     config_path: Path | None, executor: str | None = None, *, local: Path | None = None,
-    control_timing: bool = False, config_list: Path | None = None,
+    control_timing: bool = False,
+    collection: Path | None = None, experiment_id: str | None = None,
 ) -> int:
     # Session/recovery dependencies are only needed for the interactive service.
     from manimux.runtime.lock import RuntimeLockError
     from manimux.session import RuntimeSessionService
 
     catalog = None
-    if config_list is not None:
-        from manimux.experiment_list import load_experiment_list
-
-        catalog = load_experiment_list(
-            config_list, local=local, executor=executor, control_timing=control_timing,
-        )
+    if collection is not None:
+        from manimux.collections import load_collection
+        if executor is not None or control_timing:
+            raise ValueError("Set execution/timing options in the variant, not collection CLI overrides")
+        catalog = load_collection(collection, local=local, experiment=experiment_id)
         first = catalog.choices[catalog.default_id]
         config_path, config = first.path, deepcopy(first.config)
     else:
         config = _load_config(config_path, executor, local=local, control_timing=control_timing)
+        if config.get("experiment"):
+            raise ValueError("Managed variants require --collection and optional --experiment-id")
+    if experiment_id is not None and collection is None:
+        raise ValueError("--experiment-id requires --collection")
 
     def create_selection_dir(choice_id: str) -> Path:
         choice = catalog.choices[choice_id]
@@ -415,8 +448,8 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser, *, allow_list: bool 
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--config", type=Path)
     if allow_list:
-        source.add_argument("--config-list", type=Path,
-                            help="Select compatible experiments in RoboGUI without restarting services")
+        source.add_argument("--collection", type=Path, help="Experiment collection with recording root")
+        parser.add_argument("--experiment-id", help="Initially select this collection item")
     parser.add_argument(
         "--local", type=Path,
         help="Station bindings (default: manimux/configs/local/station.yaml)",
@@ -443,6 +476,11 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help="keep one runtime service available for RoboGUI-controlled rollouts"
     )
     _add_runtime_arguments(serve_parser, allow_list=True)
+    inspect_parser = subparsers.add_parser("inspect", help="Validate a collection without starting services")
+    inspect_parser.add_argument("--collection", type=Path, required=True)
+    inspect_parser.add_argument("--local", type=Path)
+    inspect_parser.add_argument("--experiment-id")
+    inspect_parser.add_argument("--index", action="store_true", help="Refresh derived record index")
     return parser
 
 
@@ -450,6 +488,21 @@ def main(argv: list[str] | None = None) -> int:
     mp.freeze_support()
     signal.signal(signal.SIGTERM, _handle_termination)
     args = build_parser().parse_args(argv)
+    if args.command == "inspect":
+        from manimux.collections import load_collection, write_inventory
+        catalog = load_collection(args.collection, local=args.local, experiment=args.experiment_id)
+        rows = []
+        for choice in catalog.choices.values():
+            c = choice.config
+            rows.append({**choice.metadata(), "output_dir": str(c['run']['output_dir']),
+                         "inference": c['inference'], "initial_pose": c['run'].get('initial_pose'),
+                         "history_sessions": len(c['run']['history_sessions']),
+                         "history_rejected": c['collection']['history_rejected']})
+        print(json.dumps(rows, indent=2, default=str, ensure_ascii=False))
+        if args.index:
+            first = catalog.choices[catalog.default_id].config['collection']
+            print(write_inventory(Path(first['root']) / first['id']))
+        return 0
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -461,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         return _serve(
             args.config, args.executor, local=args.local, control_timing=args.control_timing,
-            config_list=args.config_list,
+            collection=args.collection, experiment_id=args.experiment_id,
         )
     raise AssertionError(f"unhandled command {args.command}")
 

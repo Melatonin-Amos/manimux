@@ -51,9 +51,12 @@ def main():
         if output.exists() or server_output.exists():
             raise FileExistsError("Refusing to overwrite bound deployment configs")
         runtime = read_experiment(
-            REPO / "manimux/configs/experiments/put_bottles/openwam/yam_openwam_manimux.yaml",
+            REPO / "manimux/configs/experiments/openwam-custom/put_bottles/manimux.yaml",
             bind_local=False,
         )
+        # The exported pair is a standalone deployment binding, not a study entry.
+        runtime.pop("experiment", None)
+        runtime.pop("config_sources", None)
         identity_keys = (
             "checkpoint_path",
             "checkpoint_file",

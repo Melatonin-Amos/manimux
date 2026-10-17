@@ -65,7 +65,7 @@ configuration directory.
 | XR-1 artifact | `paths.checkpoint` | Local checkpoint file or directory containing `mp_rank_00_model_states.pt` |
 | XR-1 normalization | `paths.norm_stats` | Optional explicit `training_metadata/normalize.json` path |
 | XR-1 processor | `paths.vlm_processor` | Optional local Qwen processor directory; otherwise use the recipe's repository ID |
-| Run output override | `paths.output_dir` | Optional local directory for experiment output |
+| Study output | collection `recording.root` | User-selected root; station `paths.output_dir` is rejected for collections |
 
 Only fill in fields the selected component actually uses. YAM's integrated gripper shares
 its arm's CAN connection: configure `left_yam` and `right_yam`, without a separate gripper.
@@ -136,11 +136,11 @@ This uses the same station selection as startup, then only reads configuration:
 ```bash
 envs/yam/.venv/bin/python - <<'PYCODE'
 from pprint import pprint
-from manimux.cli import load_config, resolve_local_path
+from manimux.collections import load_collection
 from manimux.servers.camera.server import camera_config
 
-experiment = "manimux/configs/experiments/put_bottles/pi05/yam_pi05_rtc_joint_step30000.yaml"
-config = load_config(experiment, local=resolve_local_path(experiment))
+catalog = load_collection("manimux/configs/collections/pi05-latest300ep-step30000.yaml")
+config = catalog.choices["coin_rtc"].config
 pprint({
     "local": str(config["local"]),
     "shared_hardware": config["robot"]["options"].get("hardware", {}),
@@ -152,8 +152,7 @@ pprint({
 PYCODE
 ```
 
-For Tianji, use its Python environment and replace the experiment path with
-`manimux/configs/experiments/pass_ball/umi_dp/tianji_taccap_umi_dp.yaml`.
+For Tianji, use its Python environment, collection and explicit station binding.
 The shared controller IP appears under `shared_hardware.ip`. This inspection does not
 construct the robot, open devices or test Tianji FK/IK.
 
@@ -175,7 +174,24 @@ not implicitly require a station, so offline tools can still inspect shared reci
 
 ## 5. Start the selected experiment
 
-Runtime, camera and model services must use the same experiment and station:
+For a formal study, use one collection and station across services:
+
+```text
+runtime:       python -m manimux serve --collection <collection.yaml>
+camera:        python -m manimux.servers.camera.server --collection <collection.yaml>
+Pi05:          python -m manimux.servers.pi05 --collection <collection.yaml>
+XPolicyLab:    python -m manimux.servers.policy --collection <collection.yaml>
+```
+
+Select only the matching model launcher and its installed environment. If entries
+use different cameras or model initialization, append the same `--experiment-id ID`
+to the affected service/runtime commands. The loader rejects ambiguous services;
+it never guesses the first camera configuration. Collection `recording.root` owns
+storage, and `--local` overrides collection `local:`. Inspect first with
+`python -m manimux inspect --collection <collection.yaml>`.
+
+The following legacy forms are only for standalone development/bound exports without
+an `experiment` identity. Managed study variants must use their collection:
 
 ```text
 runtime:        python -m manimux serve --config <experiment.yaml>

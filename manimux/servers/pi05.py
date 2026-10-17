@@ -150,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     source.add_argument("--experiment", type=Path, help="Use the experiment's paired policy_server")
+    source.add_argument("--collection", type=Path, help="Use a collection's shared model configuration")
+    parser.add_argument("--experiment-id", help="Required if collection model configurations differ")
     parser.add_argument(
         "--local",
         type=Path,
@@ -165,9 +167,16 @@ def main(argv: list[str] | None = None) -> int:
 
     from manimux.cli import bind_station, read_experiment, resolve_local_path
 
-    local = resolve_local_path(args.experiment, args.local)
-    config_path = (args.experiment or args.config).expanduser().resolve()
-    if args.experiment is not None:
+    local = resolve_local_path(args.collection or args.experiment, args.local)
+    config_path = (args.collection or args.experiment or args.config).expanduser().resolve()
+    if args.experiment_id and not args.collection:
+        parser.error("--experiment-id requires --collection")
+    if args.collection is not None:
+        from manimux.collections import select_service
+        config = select_service(args.collection, "policy_server", local=local, experiment=args.experiment_id)["policy_server"]
+        if config.get("policy_name") != "Pi_05":
+            raise ValueError("Pi05 launcher requires a Pi_05 collection")
+    elif args.experiment is not None:
         config = read_experiment(config_path, local=local)["policy_server"]
     else:
         config = bind_station({"policy_server": _load_config(config_path)}, local)["policy_server"]

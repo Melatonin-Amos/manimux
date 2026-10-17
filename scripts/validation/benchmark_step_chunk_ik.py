@@ -79,7 +79,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     cfg = prepare_experiment(
         **load_config(
-            "manimux/configs/experiments/put_bottles/openwam/yam_openwam_serial_step30000_step_ik.yaml"
+            "manimux/configs/experiments/openwam-custom/put_bottles/serial_step30000_step_ik.yaml"
         )
     )
     kin = RobotModel.from_config(cfg["robot"]["config"]).kinematics

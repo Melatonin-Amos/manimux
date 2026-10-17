@@ -5,25 +5,30 @@ To connect your own installation of a supported robot, start with
 one private `manimux/configs/local/station.yaml`. The guide explains which entry points
 read it automatically and which still use separate configuration.
 
-Managed studies keep `protocol.yaml`, setting folders and their catalog under
-`manimux/configs/experiments/<study>/`. Each setting/task/method config mirrors its
-recording directory under `data/experiments/<study>/`; see the
-[storage protocol](../../guideline.html#study-storage-protocol). Standalone deployment
-recipes may retain `experiments/<task>/<model>/<experiment>.yaml`.
-`manimux.cli.read_experiment()` resolves references and selected station bindings;
-`load_config()` supplies runtime defaults. These readers do not connect hardware or services.
+Use `collections/<study>.yaml` as the formal entry point, even for one experiment.
+It owns `recording.root`, selected variants and trial counts. Runtime, camera and
+model commands use that same collection; `--experiment-id` selects a specific entry.
+See the [configuration and storage protocol](../../guideline.html#experiment-lists).
 
 ```text
 manimux/configs/
-├── experiments/<task>/<model>/  # Robot, policy, adapter, inference and execution choices
-├── examples/                   # Annotated complete configurations and launch walkthrough
-├── embodiment/                 # arm / end_effector / sensor / robot assembly
-├── policy/<model>/<embodiment>/  # Deployment recipes consumed by XPolicyLab
-├── inference/                  # Reusable inference scheduling parameters
-├── executor/                   # Reusable smoothing and motion limits
-├── local/                      # Templates and the private local station file
-└── robogui/                     # Display and camera-preview layouts
+├── collections/                 # study entries, trial plan, user-selected recording root
+├── tasks/                       # shared prompt, layouts, rubric and optional initial pose
+├── experiments/<model-weight>/  # optional _base_.yaml + <task>/<variant>.yaml
+├── embodiment/                  # robot, sensor and initial_poses libraries
+├── policy/                      # model artifacts and action contract
+├── inference/                   # algorithm base settings
+├── executor/                    # execution settings
+├── evaluation/                  # reusable scoring templates
+├── local/                       # private station bindings, not study storage
+├── robogui/                     # display and preview layout
+└── examples/                    # standalone development examples
 ```
+
+`_base_` merges mappings; lists replace. References are relative to their declaring
+file. A managed variant declares `experiment: {task: ..., variant: ...}` and must
+not specify `run.output_dir`. Launch it through its collection. Existing standalone
+examples remain available for component development.
 
 Camera combinations live in `embodiment/sensor/cameras/`; IK settings belong to their
 embodiment. Policy recipes select a checkpoint and its inference settings; XPolicyLab
@@ -307,5 +312,7 @@ validation boundary. See [AutoHorizon](../../.agents/skills/manimux-inference/re
 `run.experiment_name`, `run.condition` and `run.notes` are editable in RoboGUI and
 frozen at Prepare. `run.experiment_template` optionally constrains study layouts,
 repeat counts and reference images. See the [workflow and schema example](../../guideline.html#experiments).
-Keep outputs under the repository-level `data/`; `run.output_dir` or the private
-station's `paths.output_dir` chooses the actual destination.
+The collection's `recording.root` selects storage. Output is
+`<root>/<collection.id>/<experiment.task>/<experiment.variant>/session-…`.
+Station output overrides and variant `run.output_dir` are rejected in collections.
+Historical records are imported by explicit matching `history` paths, not renamed.

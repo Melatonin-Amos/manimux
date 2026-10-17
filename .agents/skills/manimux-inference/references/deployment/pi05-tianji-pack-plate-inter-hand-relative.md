@@ -10,8 +10,8 @@ Neither experiment inherits the other experiment's settings.
 
 The entry points are:
 
-- [step 20000 experiment](../../../../../manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_inter_hand_relative_step20000_rtc.yaml)
-- [step 59999 experiment](../../../../../manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_inter_hand_relative_step59999_rtc.yaml)
+- [step 20000 experiment](../../../../../manimux/configs/experiments/pi05-tianji-pack_plate-inter-hand-relative-step20000/pack_plate/rtc.yaml)
+- [step 59999 experiment](../../../../../manimux/configs/experiments/pi05-tianji-pack_plate-inter-hand-relative-step59999/pack_plate/rtc.yaml)
 - [step 20000 model recipe](../../../../../manimux/configs/policy/pi05/tianji/pack_plate/inter-hand-relative-step20000.yaml)
 - [step 59999 model recipe](../../../../../manimux/configs/policy/pi05/tianji/pack_plate/inter-hand-relative-step59999.yaml)
 - [frozen robot assembly and Home](../../../../../manimux/configs/embodiment/robot/tianji_taccap_inter_hand_relative.yaml)
@@ -113,7 +113,7 @@ representation are unchanged by the state variant.
 From the ManiMux repository root, select one experiment:
 
 ```bash
-export PI05_INTERHAND_EXPERIMENT=manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_inter_hand_relative_step20000_rtc.yaml
+export PI05_INTERHAND_EXPERIMENT=manimux/configs/experiments/pi05-tianji-pack_plate-inter-hand-relative-step20000/pack_plate/rtc.yaml
 
 .venv/bin/python -m manimux.servers.pi05 \
   --experiment "$PI05_INTERHAND_EXPERIMENT" --check

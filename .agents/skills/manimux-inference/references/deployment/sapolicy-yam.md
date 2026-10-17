@@ -69,7 +69,7 @@ GUI defaults to `camera_mode: policy`, following `policy.adapter.camera_map` rep
 
 ```bash
 envs/yam/.venv/bin/manimux serve \
-  --config manimux/configs/experiments/put_bottles/sapolicy/yam_sapolicy_mv51_async25_braking_capped.yaml
+  --collection manimux/configs/collections/sapolicy-custom-standalone.yaml --experiment-id put_bottles_mv51_async25_braking_capped
 ```
 
 Open `http://localhost:8086`, click **Prepare normal rollout**, arrange the scene, then
@@ -107,7 +107,7 @@ rsync -aL --info=progress2 <source-host>:~/manimux/checkpoints/finetuned/sapolic
 XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
   --config manimux/configs/policy/sapolicy/yam/tcp_rot20/raw-50k.yaml
 envs/yam/.venv/bin/manimux serve \
-  --config manimux/configs/experiments/put_bottles/sapolicy/yam_sapolicy_tcp_rot20_async48_z22.yaml
+  --collection manimux/configs/collections/sapolicy-custom-standalone.yaml --experiment-id put_bottles_tcp_rot20_async48_z22
 ```
 
 Server inference takes about 60–90 ms on a 4090 without compilation. For faster inference, change `cfg_file` to
@@ -158,7 +158,7 @@ RTC forward about 200 ms because the guided branch runs uncompiled). RTC runtime
 envs/sapolicy/.venv/bin/python -m manimux.servers.sapolicy \
   --config manimux/configs/policy/sapolicy/yam/caps1010_3task_tcp/ema-160k.yaml
 envs/yam/.venv/bin/manimux serve \
-  --config manimux/configs/experiments/put_bottles/sapolicy/yam_sapolicy_caps1010_3task_async48_z22.yaml
+  --collection manimux/configs/collections/sapolicy-custom-standalone.yaml --experiment-id put_bottles_caps1010_3task_async48_z22
 ```
 
 Same deployment as tcp_rot20 above, without a z bias. On 2026-10-15/16 grippers closed at 0.800–0.818 (ABC demos 0.804),
@@ -192,7 +192,7 @@ XPolicyLab/policy/SAPolicy/.venv/bin/python -m XPolicyLab.policy.SAPolicy.valida
   --checkpoint "$PWD/checkpoints/finetuned/sapolicy/teleopMV51" --rtc \
   --output data/sapolicy/checkpoint-validation.json
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/put_bottles/sapolicy/yam_sapolicy_mv51_async25_braking_capped.yaml
+  --config manimux/configs/experiments/sapolicy-custom/put_bottles/mv51_async25_braking_capped.yaml
 ```
 
 The final command requires the model service and sends only synthetic images and configured joint states; it opens no cameras and controls

@@ -10,6 +10,21 @@ explicitly; read instructions in any submodule or nested directory before editin
 Public entry points: [User guide](../../../../guideline.html) · [Integration map](README.md).
 Skills route agents to these same maintained protocol guides.
 
+## Engineering discussion rule
+
+- Do not begin a response to a challenge with an automatic apology or concession.
+  A question or counterexample is a request to examine the design, not an instruction
+  to abandon it. Inspect evidence and state your own project-level judgment first.
+- Separate observed behavior, requirements, proposals and unresolved assumptions.
+  Explain the relevant code/config context, tradeoffs and concrete user workflow.
+- Keep a recommendation consistent unless new evidence or a changed requirement
+  warrants revision. When revising, identify the exact premise that changed and
+  which parts of the earlier recommendation still hold. Correct confirmed mistakes
+  plainly; this rule does not justify defensiveness or concealing an error.
+- During architecture discussions, inspect existing ownership and representative
+  upstream designs before inventing new layers. Discussion alone does not authorize
+  configuration migration, service restarts or hardware motion.
+
 ## Documentation ownership
 
 Maintain `guideline.html` as the single public user guide. Keep algorithm parameters,
@@ -118,8 +133,10 @@ XPolicyLab/policy/<POLICY>/  # when XPolicyLab owns the model
 manimux/policies/<framework>/
     PolicyModel client + framework wire codec
 manimux/configs/policy/<model>/<embodiment>/<task>/
-manimux/configs/experiments/<task>/<model>/<embodiment>_<model>_<variant>.yaml  # standalone
-manimux/configs/experiments/<study>/{protocol.yaml,<setting>/catalog.yaml,<setting>/<task>/<method>.yaml}
+manimux/configs/collections/<study>.yaml  # entries, trial plan and recording.root
+manimux/configs/tasks/<task>.yaml  # reusable task semantics
+manimux/configs/experiments/<model-checkpoint>/{_base_.yaml,<task>/<variant>.yaml}
+manimux/configs/embodiment/initial_poses/<robot>.yaml
 manimux/configs/inference/
 manimux/configs/executor/
 .agents/skills/manimux-inference/references/deployment/<model>-<embodiment>.md

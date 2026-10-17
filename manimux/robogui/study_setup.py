@@ -17,6 +17,7 @@ def reference_task(task: str, available: tuple[str, ...]) -> str:
 
 def completed_repeats(
     root: Path | None, task: str, defaults: dict[str, Any],
+    *, history_sessions: tuple[Path, ...] = (),
 ) -> dict[tuple[str, str], set[int]]:
     """Read finalized, human-scored trials across sessions of this method's output root.
 
@@ -24,9 +25,7 @@ def completed_repeats(
     keep a replaced layout from inheriting trials from the previous image.
     """
     result: dict[tuple[str, str], set[int]] = {}
-    if root is None or not root.is_dir():
-        return result
-    for path in root.glob("session-*/rollout-*/evaluation/human-label.json"):
+    for path in _record_files(root, history_sessions, "evaluation/human-label.json"):
         episode = path.parent.parent
         if episode.name.endswith(".partial") or not (episode / "result.json").is_file():
             continue
@@ -58,12 +57,22 @@ def next_repeat(used: set[int], limit: int | None) -> int:
     return repeat
 
 
-def unscored_experiments(root: Path | None, task: str) -> dict[str, Path]:
+def _record_files(root: Path | None, history_sessions, suffix: str):
+    sessions = list(root.glob("session-*")) if root is not None and root.is_dir() else []
+    sessions.extend(history_sessions)
+    seen = set()
+    for session in sessions:
+        for path in session.glob("rollout-*/" + suffix):
+            canonical = path.resolve()
+            if canonical not in seen:
+                seen.add(canonical)
+                yield canonical
+
+
+def unscored_experiments(root: Path | None, task: str, *, history_sessions: tuple[Path, ...] = ()) -> dict[str, Path]:
     """Find completed, started study trials awaiting a human label in this method directory."""
     choices: dict[str, Path] = {}
-    if root is None or not root.is_dir():
-        return choices
-    for path in sorted(root.glob("session-*/rollout-*/meta.json"), reverse=True):
+    for path in sorted(_record_files(root, history_sessions, "meta.json"), reverse=True):
         episode = path.parent
         if episode.name.endswith(".partial") or (episode / "evaluation/human-label.json").exists():
             continue

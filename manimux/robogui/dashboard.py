@@ -439,10 +439,10 @@ class PolicyRoboGUI:
                               if c["task"] == self.experiment_task.value]
                 current = next((c for c in self._experiment_choices
                                 if c["id"] == self._experiment_id), {})
-                choice = next((c for c in candidates if c["label"] == current.get("label")
-                               and c.get("initial_pose", {}).get("id", "default") == current.get("initial_pose", {}).get("id", "default")),
-                              next((c for c in candidates if c["label"] == current.get("label")),
-                                   candidates[0] if candidates else None))
+                # A task switch selects that task's first matching variant, never
+                # carries the previous task's physical starting pose across tasks.
+                choice = next((c for c in candidates if c["label"] == current.get("label")),
+                              candidates[0] if candidates else None)
                 if choice is not None:
                     self._request_experiment(choice["id"])
 
@@ -451,10 +451,12 @@ class PolicyRoboGUI:
             if event.client is None:
                 return
             with self.lock:
-                choice = next((c for c in self._experiment_choices
-                               if c["task"] == self.experiment_task.value
-                               and c["label"] == self.experiment_config.value
-                               and c.get("initial_pose", {}).get("label", "Default pose") == self.initial_pose.value), None)
+                candidates = [c for c in self._experiment_choices
+                              if c["task"] == self.experiment_task.value
+                              and c["label"] == self.experiment_config.value]
+                choice = next((c for c in candidates
+                               if c.get("initial_pose", {}).get("label", "Default pose") == self.initial_pose.value),
+                              candidates[0] if candidates else None)
                 if choice is not None:
                     self._request_experiment(choice["id"])
 
@@ -1260,6 +1262,7 @@ class PolicyRoboGUI:
         self._refresh_layout_visibility()
         run_dir = metadata.get("run_dir")
         self._study_root = Path(run_dir).parent if run_dir else None
+        self._history_sessions = tuple(Path(p) for p in metadata.get("history_sessions", []))
         self._refresh_repeat_history()
         self._refresh_layout()
 
@@ -1304,9 +1307,12 @@ class PolicyRoboGUI:
 
     def _refresh_repeat_history(self) -> None:
         self._repeat_history = completed_repeats(
-            self._study_root, self.task_command, self._research_defaults
+            self._study_root, self.task_command, self._research_defaults,
+            history_sessions=getattr(self, "_history_sessions", ()),
         )
-        self._unscored_experiments = unscored_experiments(self._study_root, self.task_command)
+        self._unscored_experiments = unscored_experiments(
+            self._study_root, self.task_command,
+            history_sessions=getattr(self, "_history_sessions", ()))
         selected = self.unscored_experiment.value
         self.unscored_experiment.options = tuple(self._unscored_experiments) or ("—",)
         self.unscored_experiment.value = (

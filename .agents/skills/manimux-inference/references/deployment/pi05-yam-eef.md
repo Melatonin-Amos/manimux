@@ -1,7 +1,7 @@
 # Pi05 joint+EEF checkpoint: YAM EEF execution
 
 The paired experiment is
-`manimux/configs/experiments/put_bottles/pi05/yam_pi05_manimux_eef_step30000.yaml`.
+`manimux/configs/experiments/pi05-yam-put-bottles-eef-from-joint-ee-step30000/put_bottles/manimux_eef_step30000.yaml`.
 It uses the existing bottle-task joint+EEF step-30000 checkpoint. No retraining
 or checkpoint modification is required.
 
@@ -41,7 +41,7 @@ services can be reused.
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/put_bottles/pi05/yam_pi05_manimux_eef_step30000.yaml
+  --collection manimux/configs/collections/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 ```bash
@@ -52,12 +52,12 @@ envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/put_bottles/pi05/yam_pi05_manimux_eef_step30000.yaml
+  --collection manimux/configs/collections/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 ```bash
 envs/yam/.venv/bin/python -m manimux serve \
-  --config manimux/configs/experiments/put_bottles/pi05/yam_pi05_manimux_eef_step30000.yaml
+  --collection manimux/configs/collections/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 The model endpoint is `ws://127.0.0.1:8530`. RoboGUI flow is Prepare, Start rollout,

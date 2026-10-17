@@ -7,8 +7,8 @@ recipe; both checked-in experiments have `execute: false`.
 ## Contract and artifact
 
 - Recipe: `manimux/configs/policy/pi05/tianji/pack_plate/wrist-only-step59999.yaml`
-- Experiment: `manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_wrist_only_step59999.yaml`
-- RTC experiment: `manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_wrist_only_step59999_rtc.yaml`
+- Experiment: `manimux/configs/experiments/pi05-tianji-pack_plate-wrist-only-step59999/pack_plate/wrist_only_step59999.yaml`
+- RTC experiment: `manimux/configs/experiments/pi05-tianji-pack_plate-wrist-only-step59999/pack_plate/wrist_only_step59999_rtc.yaml`
 - Checkpoint: `/home/jw/Desktop/policy/pi05-pack-plate-wrist-only-final-59999/checkpoint-59999`
 - Normalization: that checkpoint's `assets/pack-plate-taccap-h32-zero-pose/norm_stats.json`
 - Dataset task prompt: `plate` (from `pack-plate/meta/tasks.parquet`)
@@ -58,7 +58,7 @@ From the ManiMux root:
 
 ```bash
 .venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_wrist_only_step59999_rtc.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml --check
 ```
 
@@ -74,7 +74,7 @@ handed over, start the policy server with the same experiment and station:
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_wrist_only_step59999_rtc.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml
 ```
 
@@ -85,7 +85,7 @@ runtime, use the paired experiment for the observation-only ManiMux process:
 
 ```bash
 .venv/bin/python -m manimux serve \
-  --config manimux/configs/experiments/pack_plate/pi05/tianji_taccap_pi05_wrist_only_step59999_rtc.yaml \
+  --collection manimux/configs/collections/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml
 ```
 

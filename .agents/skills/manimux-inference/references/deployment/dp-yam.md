@@ -1,7 +1,7 @@
 # Ordinary DP on YAM: bottle task, absolute EEF
 
 The paired experiment is
-`manimux/configs/experiments/put_bottles/dp/yam_dp_manimux_eef_step100000.yaml`.
+`manimux/configs/experiments/dp-yam-put-bottles-eef-step100000/put_bottles/manimux_eef_step100000.yaml`.
 It uses the ordinary XPolicyLab DP model, checkpoint EMA weights, 100 DDPM
 sampling steps, three RGB cameras, three measured observations at 30 Hz,
 and six action waypoints per request. The training horizon is eight: the model
@@ -32,7 +32,7 @@ and RoboGUI processes when their configuration matches.
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/put_bottles/dp/yam_dp_manimux_eef_step100000.yaml
+  --collection manimux/configs/collections/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
 ```
 
 ```bash
@@ -43,12 +43,12 @@ envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
 
 ```bash
 XPolicyLab/policy/DP/.venv/bin/python -m manimux.servers.dp \
-  --experiment manimux/configs/experiments/put_bottles/dp/yam_dp_manimux_eef_step100000.yaml
+  --experiment manimux/configs/experiments/dp-yam-put-bottles-eef-step100000/put_bottles/manimux_eef_step100000.yaml
 ```
 
 ```bash
 envs/yam/.venv/bin/python -m manimux serve \
-  --config manimux/configs/experiments/put_bottles/dp/yam_dp_manimux_eef_step100000.yaml
+  --collection manimux/configs/collections/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
 ```
 
 The policy endpoint is `ws://127.0.0.1:8520`; a private station may override it

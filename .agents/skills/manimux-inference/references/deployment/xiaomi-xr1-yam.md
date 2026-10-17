@@ -55,8 +55,8 @@ Without this step, importing `XPolicyLab.utils.process_data` first fails with
 
 ```text
 base server:    manimux/configs/policy/xiaomi-xr1/yam/base.yaml
-ManiMux:        manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_manimux.yaml
-RTC:            manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_rtc.yaml
+ManiMux:        manimux/configs/experiments/xiaomi-xr1-custom/put_bottles/manimux.yaml
+RTC:            manimux/configs/experiments/xiaomi-xr1-custom/put_bottles/rtc.yaml
 step-15000 RTC: manimux/configs/experiments/assemble_screwdriver/xiaomi-xr1/yam_xiaomi_xr1_rtc_step15000.yaml
 ```
 
@@ -107,15 +107,15 @@ envs/xr1/.venv/bin/python manimux/servers/xr1.py \
 
 # terminal 2: no-CAN GPU/WS/FK/IK probe
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_manimux.yaml
+  --config manimux/configs/experiments/xiaomi-xr1-custom/put_bottles/manimux.yaml
 ```
 
 The probe must return finite `native_shape: [30, 60]` and `canonical_shape: [30, 14]` outputs.
 Only after it passes, start cameras and have the operator run:
 
 ```bash
-envs/yam/.venv/bin/manimux run \
-  --config manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_manimux.yaml
+envs/yam/.venv/bin/manimux serve \
+  --collection manimux/configs/collections/xiaomi-xr1-custom-standalone.yaml --experiment-id put_bottles_manimux
 ```
 
 30 Hz remains a YAM comparison assumption, not official checkpoint metadata. Task capability is a
@@ -145,7 +145,7 @@ After model loading completes and `127.0.0.1:8500` is listening, run the no-CAN 
 ```bash
 cd /home/ubuntu/manimux
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_manimux.yaml
+  --config manimux/configs/experiments/xiaomi-xr1-custom/put_bottles/manimux.yaml
 ```
 
 Continue only if the probe returns finite `native_shape: [30, 60]` and
@@ -182,8 +182,8 @@ Run only when both interfaces report `ERROR-ACTIVE`:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run \
-  --config manimux/configs/experiments/put_bottles/xiaomi-xr1/yam_xiaomi_xr1_manimux.yaml
+envs/yam/.venv/bin/manimux serve \
+  --collection manimux/configs/collections/xiaomi-xr1-custom-standalone.yaml --experiment-id put_bottles_manimux
 ```
 
 The first `5.0 s` after connection moves to the configured initial pose; these are not model actions. Afterward, XR-1 actions pass through

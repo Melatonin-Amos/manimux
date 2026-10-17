@@ -38,7 +38,7 @@ For the current YAM joint recipes:
 
 Inspect current values rather than copying a historical timing/executor table.
 The joint-only bottle experiment is
-`manimux/configs/experiments/put_bottles/pi05/yam_pi05_rtc_joint_step30000.yaml`;
+`manimux/configs/experiments/pi05-yam-put-bottles-joint-step30000/put_bottles/rtc_joint_step30000.yaml`;
 its paired model recipe is selected by `policy_server.config`.
 
 ## Offline configuration and artifact checks
@@ -49,10 +49,10 @@ only loads configuration; it does not construct devices or load model weights:
 ```bash
 envs/yam/.venv/bin/python - <<'PYCODE'
 from pprint import pprint
-from manimux.cli import load_config, resolve_local_path
+from manimux.collections import load_collection
 
-experiment = 'manimux/configs/experiments/put_bottles/pi05/yam_pi05_rtc_joint_step30000.yaml'
-config = load_config(experiment, local=resolve_local_path(experiment))
+catalog = load_collection('manimux/configs/collections/pi05-latest300ep-step30000.yaml')
+config = catalog.choices['coin_rtc'].config
 pprint({
     'task': config['run']['task'],
     'output_dir': config['run']['output_dir'],
@@ -73,7 +73,7 @@ weights or listening on a port:
 
 ```bash
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --experiment manimux/configs/experiments/put_bottles/pi05/yam_pi05_rtc_joint_step30000.yaml \
+  --collection manimux/configs/collections/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
   --check
 ```
 
@@ -85,7 +85,7 @@ backend capability handshake, connected robot or task success.
 
 Use the [four-process launch sequence](../../../../../guideline.html#launch): camera,
 RoboGUI, Pi05 server and ManiMux runtime. Reuse compatible live services instead of
-starting a second owner. Camera, model and runtime use the same experiment/station.
+starting a second owner. Camera, model and runtime use the same collection/station.
 `serve` does not launch the other services. Prepare can connect and move the robot
 according to the experiment; it is not an offline check.
 

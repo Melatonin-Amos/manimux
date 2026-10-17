@@ -68,6 +68,9 @@ def main():
         if output.exists() or server_output.exists():
             raise FileExistsError("Refusing to overwrite paired deployment configs")
         runtime = read_experiment(args.experiment, local=local_path, bind_local=False)
+        # Bound exports are standalone deployment examples.
+        runtime.pop("experiment", None)
+        runtime.pop("config_sources", None)
         # The experiment owns action timing; body profiles only supply layout and limits.
         expected_dt = runtime["policy"]["action_dt_s"]
         if expected_dt != report["action_dt_s"]:

@@ -36,8 +36,8 @@ Both configurations align execution with Pi05 Joint 30k (Direct executor, unrest
 --execute-chunk-dim=16 --prompt='throw plastic bottles in bin'
 ```
 
-- Serial: `manimux/configs/experiments/put_bottles/abc_dit/yam_abc_dit_serial_200k.yaml`
-- RTC: `manimux/configs/experiments/put_bottles/abc_dit/yam_abc_dit_rtc_200k.yaml`
+- Serial: `manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/serial_200k.yaml`
+- RTC: `manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/rtc_200k.yaml`
 - Model recipe: `manimux/configs/policy/abc_dit/yam/put-bottles/pretrained-200k.yaml`
 
 | Item | Pi05 Joint 30k | ABC-DiT 200k | Reason |
@@ -75,18 +75,18 @@ The station file needs `services.policy_abc_dit.endpoint: ws://127.0.0.1:8530` (
 ```bash
 # 1: Cameras
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/put_bottles/abc_dit/yam_abc_dit_rtc_200k.yaml
+  --collection manimux/configs/collections/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
 
 # 2: RoboGUI
 envs/yam/.venv/bin/python -m manimux.robogui.dashboard --robot yam --host 127.0.0.1 --port 8086
 
 # 3: ABC-DiT model service (fp32 loading takes about 10 s; wait for the port before starting runtime)
 envs/abc/.venv/bin/python -m manimux.servers.abc_dit \
-  --experiment manimux/configs/experiments/put_bottles/abc_dit/yam_abc_dit_rtc_200k.yaml
+  --experiment manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/rtc_200k.yaml
 
 # 4: Runtime (for Serial, use yam_abc_dit_serial_200k.yaml; no model-service restart needed)
 envs/yam/.venv/bin/python -m manimux serve \
-  --config manimux/configs/experiments/put_bottles/abc_dit/yam_abc_dit_rtc_200k.yaml
+  --collection manimux/configs/collections/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
 ```
 
 Adding `--check` to the model command resolves only paths and contracts without loading the model. Serial and RTC share the same model service and identity.

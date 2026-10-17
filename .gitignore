@@ -72,3 +72,10 @@ logs/
 
 # Private study decisions and results; preserve the local file.
 /experiments.md
+
+# Publish the current Pi05 study only; other studies remain local.
+/manimux/configs/experiments/*
+!/manimux/configs/experiments/README.md
+!/manimux/configs/experiments/pi05-latest300ep-step30000/
+/manimux/configs/collections/*
+!/manimux/configs/collections/pi05-latest300ep-step30000.yaml

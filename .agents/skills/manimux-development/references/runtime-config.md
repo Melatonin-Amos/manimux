@@ -4,27 +4,31 @@
 
 Source paths below are relative to the repository root.
 
-## Experiment lists and idle selection
+## Collections, composition and idle selection
 
-`manimux/experiment_list.py` loads a finite catalog through the existing CLI loader.
-`serve --config-list` accepts entries with unique IDs, config paths relative to the
-list, and optional display labels. Task/method/rubric still belong to each resolved
-experiment. The first entry is selected initially. All entries must share model
-initialization, policy I/O, camera and robot contracts; output directories must differ.
+`manimux/configuration.py` composes file-relative `_base_` experiment/task references
+and resolves named poses. `manimux/cli.py` loads component references and local bindings.
+`manimux/collections.py` validates `collections/*.yaml`, assigns stable output identity,
+selects trial budgets, checks saved-condition fingerprints and imports matching history.
+`manimux/experiment_list.py` is the internal selection/metadata representation.
 
-`RuntimeSessionService` accepts selection requests only in its idle polling loop,
-after evaluation and recovery. Requests carry the current run_dir; stale Prepare
-requests also have to match the selected ID. The GUI retains a selection request
-until acknowledgement, disables Prepare while pending, and refreshes task, rubric,
-reference layout and progress together. Each selection creates a separate session
-manifest with list/selection provenance and a frozen resolved config. Each Prepare
-constructs a fresh runtime using the existing worker reset/warmup lifecycle.
+The public entry is `serve --collection ... [--experiment-id ...]`. Managed variants
+cannot bypass collection storage via `serve/run --config`; standalone development
+examples still support `--config`. Collection recording.root is authoritative; reject
+station output overrides and variant output paths. Task/method selection and explicit
+ID selection use the same `<root>/<collection>/<task>/<variant>/session-…` output.
 
-The model and camera servers are external and stay alive; this is not model hot
-reload. Keep identity/capability validation. Multi-task recipes keep deployment
-identity fixed and supply the actual prompt via run.task in each observation.
-Changing model initialization or YAML on disk requires restarting the affected
-service. Public operation and paths: [Task & method switching](../../../../guideline.html#experiment-lists).
+`RuntimeSessionService` accepts idle selection after recovery and evaluation. It
+checks shared service contracts before creating a session and rejects incompatible
+switches. Collections may enumerate incompatible services, but camera/model launchers
+require an explicit ID when their recipes differ. No automatic service restart or hot
+model reload. Starting-pose-only changes are compatible and take effect at Prepare.
+
+A fresh runtime is constructed at Prepare. Manifests retain resolved configuration,
+source hashes, collection identity and selection metadata. Historical snapshots are
+immutable; matching explicit history inputs contribute to live GUI repeat counting.
+The derived inventory is refreshed during operation and by `inspect --index`; labels
+remain authoritative. See [the protocol](../../../../guideline.html#experiment-lists).
 
 ## Inference algorithm versus executor
 
