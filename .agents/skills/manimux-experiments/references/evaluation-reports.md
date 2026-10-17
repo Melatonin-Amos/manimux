@@ -31,7 +31,7 @@ unchanged. Scope-image labels and captions come from the selected scope profile.
 Each selected directory contains `task.yaml`. Paths resolve relative to that
 file, including `output_root`, `raw_roots`, `episode_dir` and `overlap_metrics`.
 A task index is independent of the runtime scoring rubric in
-`manimux/configs/evaluation/put_bottles.yaml`.
+`manimux/configs/tasks/put_bottles.yaml` (its inline `evaluation` section).
 
 ```yaml
 schema: task-report-v1
@@ -251,35 +251,35 @@ as evaluation trials.
 
 ## Configurable human scoring
 
-Experiments reference a task rubric with `evaluation.config`. Users edit the YAML
-before loading the experiment. RoboGUI displays the task name and a single result
-selector after Finish; it does not contain a template editor. Layout/repeat setup
-remains in `run.experiment_template`.
+Each shared `manimux/configs/tasks/<task>.yaml` owns the exact prompt (`run.task`),
+available layouts (`run.experiment_template`) and inline scoring rules (`evaluation`).
+Experiment variants inherit the task through `_base_`. Do not create a separate
+scoring YAML. RoboGUI reads the resolved evaluation and displays mutually exclusive
+score choices after Finish; it does not contain a template editor. Collection entries
+own the trial layout subset and repeats.
+
+Author every task with `kind: stages` and explicit `options`, including tasks
+with only 0/1 outcomes. Each option declares `id`, `label`, `score`, and `success`.
+For block stacking, list 0, 0.5, and 1; for bottles, list all seven outcomes
+from 0/6 through 6/6, retaining full numeric precision. Do not omit evaluation
+or use `target_count` to hide the intermediate scores in new task files.
+
+Select one total-score option from the episode's rubric snapshot: completing a
+deposit scores 1, not the sum of preceding milestones. Historical recordings
+with `binary` or `count` snapshots remain readable; do not rewrite those records.
 
 ```yaml
 evaluation:
-  config: ../../../evaluation/coin.yaml
-```
-
-Supported types:
-
-- `binary`: Completed / Not completed.
-- `count`: `completed_count / target_count`. Block stacking uses target 2;
-  bottles retain target 6.
-- `stages`: select one named total-score option from the episode's rubric snapshot;
-  completing a deposit scores 1, not the sum of preceding milestones.
-
-```yaml
-kind: stages
-task_id: coin
-rubric_id: coin_stages_v2
-label: Coin transfer and deposit
-options:
-  - {id: incomplete, label: No coin picked up, score: 0, success: false}
-  - {id: picked_up, label: Coin picked up by one hand, score: 0.1, success: false}
-  - {id: handover, label: Handed over, score: 0.3, success: false}
-  - {id: above_bank, label: Coin held above piggy bank, score: 0.5, success: false}
-  - {id: deposited, label: Deposited in target, score: 1, success: true}
+  kind: stages
+  task_id: coin
+  rubric_id: coin_stages_v2
+  label: Coin transfer and deposit
+  options:
+    - {id: incomplete, label: No coin picked up, score: 0, success: false}
+    - {id: picked_up, label: Coin picked up by one hand, score: 0.1, success: false}
+    - {id: handover, label: Handed over, score: 0.3, success: false}
+    - {id: above_bank, label: Coin held above piggy bank, score: 0.5, success: false}
+    - {id: deposited, label: Deposited in target, score: 1, success: true}
 ```
 
 IDs and labels must be nonempty and unique. Scores must be finite numbers in
@@ -294,7 +294,6 @@ Reports verify the snapshot, keep different rubrics separate, and report H-Score
 (mean total score, displayed as %) independently of H-SR (complete success rate).
 Both count and stage summaries are in `scores_by_rubric`.
 
-Current templates: `manimux/configs/evaluation/coin.yaml` and
-`manimux/configs/evaluation/stack_blocks.yaml`. Their Pi05 task entries select
-them explicitly. Small-block dataset variants and rotating-clock scoring remain
-unbound until their task criteria are selected; prompt text never chooses a rubric.
+Current examples: `manimux/configs/tasks/coin.yaml` and
+`manimux/configs/tasks/stack_blocks_medium.yaml`. Their inline `evaluation` sections
+are inherited by every method using those tasks; prompt text never chooses a rubric.

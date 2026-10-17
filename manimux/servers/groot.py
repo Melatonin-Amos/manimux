@@ -275,7 +275,8 @@ def main() -> int:
             str(args.local.resolve()) if args.local is not None else "",
         )
     else:
-        config = _load_config(args.config.resolve())
+        from manimux.policies.recipe import read_policy_recipe
+        config = read_policy_recipe(args.config.resolve())
         config.pop("backend_identity", None)
     model_dir, horizon = _validate_checkpoint(config)
     contract = {

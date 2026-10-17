@@ -27,6 +27,9 @@ Skills route agents to these same maintained protocol guides.
 
 ## Documentation ownership
 
+Root `README.md` explains project purpose, architecture and entry points. Directory
+READMEs locate that directory's files and ownership boundaries; they are not duplicate
+launch tutorials. Skills describe the agent's inspect/ask/write/verify workflow.
 Maintain `guideline.html` as the single public user guide. Keep algorithm parameters,
 launch commands and experiment setup there, using short sections and concrete examples.
 Detailed component contracts and model runbooks live under the owning skill's

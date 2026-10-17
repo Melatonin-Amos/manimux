@@ -63,3 +63,12 @@ XPolicyLab's shared LeRobot converters accept `--model-config <recipe> --fps <so
 Pi05/DP/LingBot conversion scripts also accept the recipe via `--model-config` or
 `XPOLICYLAB_MODEL_CONFIG` in their shell wrappers. See the
 [framework guide](../../../XPolicyLab/README.md#explicit-deployment-layout).
+
+## Portable artifact roots
+
+Recipes may use `${paths.checkpoints}/...` or another named `paths` root from
+`local/station.yaml`; `${repo}/...` names a checked-in resource. The collection
+loader and standalone recipe reader resolve these identically. Missing station
+roots fail explicitly. Paths inside `paths:` are relative to the station file.
+Keep user names and machine-specific absolute directories out of shared recipes.
+See the [configuration guide](../../../guideline.html#experiment-config-locations).

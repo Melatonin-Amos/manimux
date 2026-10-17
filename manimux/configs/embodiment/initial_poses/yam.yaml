@@ -29,3 +29,43 @@ poses:
         left-gripper_pos.npy: 38fd4b8ace4172881caea63347c967a983b486005474d0098d7cf69980692df1
         right-joint_pos.npy: f7b3a8848e415082d6e100e297d16f20f70559128591c516232278841ba0b877
         right-gripper_pos.npy: 74f9babc67d95bf9ef3df59860acf7ce802bef6769c4026890f1a2918138b759
+  home:
+    label: Home
+    duration_s: 2.0
+    joints:
+      left_arm:
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      right_arm:
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+  table_ready:
+    label: Table ready (configured)
+    duration_s: 4.0
+    joints:
+      left_arm:
+      - -0.044
+      - 1.675
+      - 0.354
+      - 1.031
+      - -0.168
+      - -0.006
+      - 1.0
+      right_arm:
+      - 0.015
+      - 1.651
+      - 0.353
+      - 0.984
+      - 0.081
+      - 0.032
+      - 1.0

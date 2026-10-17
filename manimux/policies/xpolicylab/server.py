@@ -105,7 +105,6 @@ class StreamingPolicyServer(PolicyServer):
 def serve(config: dict) -> None:
     """Use the existing model loader with ManiMux's scheduling extension."""
     from manimux.policies.xpolicylab.autohorizon import (
-        configure_autohorizon,
         validate_autohorizon,
     )
     from XPolicyLab import setup_policy_server
@@ -124,7 +123,9 @@ def serve(config: dict) -> None:
     )
     model = model_class(config)
     if autohorizon is not None:
-        configure_autohorizon(model, config.get("policy_name"), autohorizon)
+        from XPolicyLab.utils.autohorizon_selection import ConfiguredAutoHorizon
+
+        model = ConfiguredAutoHorizon(model, autohorizon)
     server = StreamingPolicyServer(
         model,
         PolicyServerConfig(

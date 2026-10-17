@@ -12,7 +12,8 @@ definitions rather than migration-generated legacy copies.
 Store reusable variants under `<model-checkpoint>/<task>/<variant>.yaml`.
 Use `_base_.yaml` only for shared choices, and inherit task definitions from
 `../../tasks/` at the appropriate relative depth. Component references stay in
-`policy/`, `inference/`, `embodiment/`, `executor/` and `evaluation/`.
+`policy/`, `inference/`, `embodiment/` and `executor/`. Scoring lives inline
+in the shared task YAML.
 
 Each variant declares `experiment.task` and `experiment.variant`. It has no output
 root or repeat budget. A file in `../collections/` selects variants, trials and
@@ -20,6 +21,9 @@ root or repeat budget. A file in `../collections/` selects variants, trials and
 
 Current Pi05 entry: [`../collections/pi05-latest300ep-step30000.yaml`](../collections/pi05-latest300ep-step30000.yaml).
 See the [complete protocol and commands](../../../guideline.html#experiment-lists).
+
+Unresolved historical recipes live in ignored `../local/archived_experiments/`;
+they are not runnable examples or collection entries.
 
 Raw historical sessions retain their saved parameters and paths. Their collection
 `history` inputs are accepted only when saved conditions match the selected variant.

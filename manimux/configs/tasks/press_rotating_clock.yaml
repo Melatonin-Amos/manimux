@@ -15,7 +15,16 @@ run:
     - '10'
     require_reference: true
 evaluation:
-  kind: binary
+  kind: stages
   task_id: press_rotating_clock
-  label: press_rotating_clock
   rubric_id: press_rotating_clock_binary_v1
+  label: press_rotating_clock
+  options:
+  - id: failure
+    label: Not completed
+    score: 0.0
+    success: false
+  - id: success
+    label: Completed
+    score: 1.0
+    success: true

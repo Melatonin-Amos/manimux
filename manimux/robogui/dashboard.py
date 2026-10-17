@@ -24,11 +24,12 @@ from manimux.types import FloatArray, UInt8Array
 from .camera_panel import CameraPanel
 from .camera_panel import _camera_panel_html as _camera_panel_html
 from .chunk_timeline import ChunkTimelineView
-from .communication import ControlServer, PolicyPlan, RobotSnapshot, RoboGUIReceiver
+from .communication import ControlServer, PolicyPlan, RoboGUIReceiver, RobotSnapshot
+from .errors import OperatorErrors
 from .reference_layouts import DEFAULT_LAYOUT_ROOT
-from .score_choices import ScoreChoices
-from .study_setup import reference_task, completed_repeats, next_repeat, unscored_experiments
 from .robot_view import RobotGroup, RobotView, load_robogui_config, load_robot_view
+from .score_choices import ScoreChoices
+from .study_setup import completed_repeats, next_repeat, reference_task, unscored_experiments
 from .top_overlay import TopViewOverlay
 
 MAX_PLAN_HISTORY = 16
@@ -73,7 +74,9 @@ def _configure_gui(gui: Any) -> None:
 
     main_panel = getattr(gui, "main_panel", None)
     gui.configure_theme(
-        control_layout="floating" if main_panel is not None else "fixed",
+        # Floating panels expose Viser's native resize handles. Fixed sidebars
+        # do not; older Viser releases initially place the panel at top-right.
+        control_layout="floating",
         control_width="large",
         dark_mode=False,
         show_logo=False,
@@ -266,6 +269,7 @@ class PolicyRoboGUI:
         with self.camera_view.display_container:
             self.chunk_timeline_panel = self.server.gui.add_html(self.chunk_timeline.render_html())
         self.status = self.server.gui.add_markdown("🟠 **Waiting for policy executor**")
+        self.errors = OperatorErrors(self.server.gui)
         self.instruction = self.server.gui.add_markdown(_instruction_markdown(""))
         self.new_rollout_folder = self.server.gui.add_folder(
             "① New rollout", expand_by_default=True
@@ -586,6 +590,14 @@ class PolicyRoboGUI:
         def _show_plan(_event: Any) -> None:
             self._refresh_plan_visibility()
 
+    def _report_error(self, operation: str, detail: object) -> None:
+        if hasattr(self, "errors"):
+            self.errors.report(operation, str(detail))
+
+    def _resolve_error(self, operation: str) -> None:
+        if hasattr(self, "errors"):
+            self.errors.clear(operation)
+
     def _build_recovery_gui(self) -> None:
         self.recovery_folder = self.server.gui.add_folder(
             "Advanced recovery", expand_by_default=False, visible=False,
@@ -691,6 +703,7 @@ class PolicyRoboGUI:
             try:
                 self._start_identity = self._freeze_start_selection()
             except (OSError, TypeError, ValueError) as exc:
+                self._report_error("Start", exc)
                 self.status.content = f"🔴 Start was not submitted: {exc}"
                 self._set_layout_controls_enabled(True)
                 return
@@ -699,6 +712,7 @@ class PolicyRoboGUI:
         self._clear_warmup_preview()
         self._set_policy_controls_enabled(True)
         self._set_stage("control")
+        self._resolve_error("Start")
         self.status.content = self._connected_status()
 
     def _connected_status(self) -> str:
@@ -751,6 +765,8 @@ class PolicyRoboGUI:
             title = "Warmup ended · no latency calibration samples"
         self.warmup_status.content = f"**{title}**"
         error = str(self._warmup.get("error") or "").strip()
+        if hasattr(self, "errors"):
+            self.errors.sync("Warmup / Start", error)
         if error:
             self.warmup_status.content += f"\n\nError: {error}"
         if self.episode_active and not self.finish_requested:
@@ -1055,6 +1071,8 @@ class PolicyRoboGUI:
         if not self._recovery_pending():
             self.recovery_lease = False
         self.recovery_error = str(recovery.get("error", ""))
+        if hasattr(self, "errors"):
+            self.errors.sync("Recovery", self.recovery_error, identity=str(recovery.get("ack", "")))
         self.recovery_arm = str(recovery.get("arm", ""))
         self._update_recovery_controls()
 
@@ -1066,6 +1084,7 @@ class PolicyRoboGUI:
             return False
         self.last_failure_id = failure_id
         self.last_rollout_error = error
+        self._report_error("Rollout", error)
         self._clear_warmup_preview()
         self.episode_active = False
         self.episode_finalized = False
@@ -1132,7 +1151,7 @@ class PolicyRoboGUI:
         }
         self.task_result.value = "unlabeled"
         self.task_result.display_labels = (
-            {f"{o['label']} · {o['score']:g}": f"{o['score']:g} · {o['label']}"
+            {f"{o['label']} · {o['score']:g}": f"{o['score']:.2f} · {o['label']}"
              for o in self.evaluation_profile["options"]}
             if self.evaluation_profile["kind"] == "stages"
             else {"Completed": "1 · Completed", "Not completed": "0 · Not completed"}
@@ -1336,8 +1355,10 @@ class PolicyRoboGUI:
             meta = json.loads((episode / "meta.json").read_text())
             self._configure_evaluation(meta.get("evaluation"))
         except (OSError, TypeError, ValueError) as exc:
+            self._report_error("Open evaluation", exc)
             self.rollout_setup_status.content = f"Could not open evaluation: {exc}"
             return
+        self._resolve_error("Open evaluation")
         self._set_experiment_mode(True)
         self._reset_evaluation(str(episode))
         self.episode_finalized = True
@@ -1412,6 +1433,7 @@ class PolicyRoboGUI:
                     **selection,
                 })
             except (OSError, TypeError, ValueError) as exc:
+                self._report_error("Prepare", exc)
                 self.rollout_setup_status.content = f"🔴 Prepare was not submitted: {exc}"
                 self._update_prepare_enabled()
                 return
@@ -1482,6 +1504,10 @@ class PolicyRoboGUI:
     def _reset_for_new_service(self) -> None:
         """Make a new ``manimux serve`` instance a hard workflow boundary."""
 
+        if hasattr(self, "errors"):
+            self.errors.reset()
+        self.last_failure_id = ""
+        self.last_rollout_error = ""
         # A task belongs to one runtime service; reconnects must not retain it.
         self.task_command = ""
         self.paused = True
@@ -1579,8 +1605,10 @@ class PolicyRoboGUI:
                 reviewer_id=self.reviewer_id.value,
             )
         except (OSError, TypeError, ValueError) as exc:
+            self._report_error("Save evaluation", exc)
             self.evaluation_status.content = f"🔴 Evaluation was not saved: {exc}"
             return
+        self._resolve_error("Save evaluation")
         self.evaluation_status.content = f"🟢 Saved `{target}`"
         self.evaluation_complete = True
         self._refresh_repeat_history()
@@ -1672,6 +1700,7 @@ class PolicyRoboGUI:
                     draw_ms = (time.monotonic_ns() - display_started) / 1e6
                     timing.value = f"{queue_ms:.1f} / {draw_ms:.1f} ms"
             except (KeyError, TypeError, ValueError) as exc:
+                self._report_error("Read runtime message", f"{message.get('kind')}: {exc}")
                 self.status.content = (
                     f"🔴 **Rejected malformed {message.get('kind')} message: {exc}**"
                 )
@@ -1989,6 +2018,8 @@ class PolicyRoboGUI:
             self.service_ready = False
             self.preparing_rollout = False
             self.last_rollout_error = ""
+            self._resolve_error("Rollout")
+            self._resolve_error("Prepare")
             self.recovery_available = bool(metadata.get("recovery_available", False))
             self._set_experiment_mode(bool(metadata.get("experiment_mode", False)))
             self._refresh_layout_visibility()
@@ -2110,6 +2141,8 @@ class PolicyRoboGUI:
             self._update_prepare_enabled()
             self._set_stage("setup" if self.evaluation_complete else "evaluation")
             self._idle_status(last_error)
+            if hasattr(self, "errors"):
+                self.errors.sync("Switch experiment", str(metadata.get("selection_error") or ""))
             if metadata.get("selection_error"):
                 self._pending_experiment_id = ""
                 self._configure_experiment_choices(metadata)

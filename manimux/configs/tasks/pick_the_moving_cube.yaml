@@ -15,7 +15,16 @@ run:
     - '10'
     require_reference: true
 evaluation:
-  kind: binary
+  kind: stages
   task_id: pick_the_moving_cube
-  label: pick_the_moving_cube
   rubric_id: pick_the_moving_cube_binary_v1
+  label: pick_the_moving_cube
+  options:
+  - id: failure
+    label: Not completed
+    score: 0.0
+    success: false
+  - id: success
+    label: Completed
+    score: 1.0
+    success: true

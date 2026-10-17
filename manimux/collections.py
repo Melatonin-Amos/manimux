@@ -14,6 +14,7 @@ from copy import deepcopy
 from datetime import UTC
 from pathlib import Path
 
+from manimux.configuration import initial_pose_metadata
 from manimux.experiment_list import ExperimentChoice, ExperimentList, shared_service_contract
 
 
@@ -25,6 +26,7 @@ def safe_id(value, label: str) -> str:
 
 def fingerprint(config: dict) -> str:
     """Effective scientific conditions; exclude storage, provenance and UI cosmetics."""
+    from manimux.evaluation.rubric import explicit_evaluation
     from manimux.runtime import inference_parameters
 
     fields = {
@@ -43,6 +45,9 @@ def fingerprint(config: dict) -> str:
     }
     fields["inference"] = inference_parameters(
         executor=config.get("executor", {}), **config.get("inference", {})
+    )
+    fields["evaluation"] = explicit_evaluation(
+        config.get("evaluation"), task_id=config.get("run", {}).get("task", "task")
     )
     fields["run"] = {
         key: config.get("run", {}).get(key)
@@ -181,9 +186,14 @@ def load_collection(
         for manifest in output.glob("session-*/session-manifest.json"):
             saved = json.loads(manifest.read_text())
             if saved.get("collection", {}).get("conditions_sha256") != condition_hash:
-                raise ValueError(
-                    f"Conditions changed for {task}/{variant}; choose a new variant ID"
-                )
+                # Older manifests hashed count/binary shorthand. Compare the
+                # saved effective configuration, never relabel its recordings.
+                from manimux.cli import prepare_experiment
+                prior = saved.get("config")
+                if not isinstance(prior, dict) or fingerprint(prepare_experiment(**prior)) != condition_hash:
+                    raise ValueError(
+                        f"Conditions changed for {task}/{variant}; choose a new variant ID"
+                    )
         history = entry.get("history", [])
         if not isinstance(history, list) or any(not isinstance(p, str) for p in history):
             raise ValueError("history must be a list of paths relative to recording.root")
@@ -202,11 +212,11 @@ def load_collection(
         label = entry.get("label", config["robogui"]["policy_label"] or choice_id)
         if not isinstance(label, str) or not label.strip():
             raise ValueError("Experiment label must be nonempty")
-        pose_id = config["run"].get("initial_pose", {}).get("id", "default")
+        pose_id = initial_pose_metadata(config)["id"]
         if any(
             c.config["run"]["task"] == config["run"]["task"]
             and c.label == label
-            and c.config["run"].get("initial_pose", {}).get("id", "default") == pose_id
+            and initial_pose_metadata(c.config)["id"] == pose_id
             for c in choices
         ):
             raise ValueError(

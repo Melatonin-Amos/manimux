@@ -62,7 +62,12 @@ do not require an evaluation interview. Do not impose this team's stage scores,
 layout count, repeat count or execution window on another user's study.
 
 Once required answers are available, write files without another generic permission
-round. Reuse component configs and scoring templates. Keep task semantics (prompt,
+round. Reuse component configs and shared task definitions. Keep scoring inline under the task’s
+`evaluation`; do not create a separate scoring YAML. Use one authoring format:
+`kind: stages` with explicit `options` containing `id`, `label`, `score` and
+`success`. Explicitly list 0/1 even for binary tasks, and each count/score for
+quantity tasks. Never hide requested partial scores behind `target_count` or
+defaults. Keep historical rubric snapshots intact. Keep task semantics (prompt,
 available layouts, rubric and default pose) separate from collection choices (layout
 subset, repetitions, selected variants and recording root). Variants should express
 deliberate differences rather than duplicate shared settings. Show a concise summary
@@ -97,7 +102,7 @@ Follow the stages that remain unfinished; do not repeat an already working deplo
    state/action representation, action interval and horizon. Runtime, camera and model
    services must use the same experiment/station; do not substitute weights for a method.
 3. **Write shared task and deliberate variants.** Put prompt, available layouts,
-   scoring reference and optional named initial pose in `manimux/configs/tasks/`.
+   inline `evaluation` rules and optional named initial pose in `manimux/configs/tasks/`.
    Reuse shared `embodiment/initial_poses/` presets; never infer joint coordinates.
    Put variants in `experiments/<model-checkpoint>/<task>/`, with `_base_.yaml` for
    common choices only when useful. Declare `experiment.task` and `experiment.variant`.

@@ -302,15 +302,15 @@ class ACTTemporalEnsembleStrategy:
 
 def temporal_ensemble_parameters(**options) -> dict:
     """Preserve ACT temporal-ensemble weights and query step counts."""
+    from manimux.config_validation import merge_parameters
 
     if "query_interval_steps" in options:
         raise ValueError("unsupported temporal ensemble field: query_interval_steps")
-    values = {
+    values = merge_parameters({
         "enabled": False,
         "coefficient": 0.01,
         "query_interval_policy_steps": 1,
-        **options,
-    }
+    }, options, 'inference.temporal_ensemble', extra=())
     return values
 
 

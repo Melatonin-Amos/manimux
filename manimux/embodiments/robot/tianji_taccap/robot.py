@@ -306,6 +306,17 @@ class TianjiTaccapRobot(RobotBase):
             stop.wait(period_s)
             self._check_home_cancel()
 
+    def home_targets(self, state):
+        if self.model is None or not self.model.home_joints:
+            return None
+        targets = {name: values.copy() for name, values in state.groups.items()}
+        for name, joints in self.model.home_joints.items():
+            targets[name][:len(joints)] = joints
+        if self._end_effector_control:
+            for name in self.end_effectors:
+                targets[name][-1] = 1.0
+        return targets
+
     def home(self) -> None:
         """Move connected arms to model.home_joints, then fully open the grippers.
 

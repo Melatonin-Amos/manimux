@@ -82,3 +82,4 @@ logs/
 
 # Task definitions used only by private/historical experiment variants.
 /manimux/configs/local/tasks/
+/manimux/configs/local/archived_experiments/

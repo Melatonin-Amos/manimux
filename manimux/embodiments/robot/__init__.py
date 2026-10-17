@@ -136,8 +136,8 @@ def robot_parameters(**options) -> dict:
 def shared_robot_parameters(**options) -> dict:
     """Read robot parameters shared by collection and inference without adding experiment-level frequencies."""
 
-    values = {
+    from manimux.config_validation import merge_parameters
+    values = merge_parameters({
         "options": {},
-        **options,
-    }
+    }, options, "robot", extra=("type", "config", "control_hz", "group_dims", "group_layouts"))
     return values

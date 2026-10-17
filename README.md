@@ -45,7 +45,7 @@ and a runtime designed for **100–200 Hz command execution**.
 
 **Prepare Run / Prepare Experiment → Activate Warmup → Start → Finish → Score.**
 Warmup is shown when configured. Free runs need no scoring; experiments read their
-score options from a YAML rubric. Recorded trajectories replay
+score options from the task YAML’s inline `evaluation` rules. Recorded trajectories replay
 in a separate, hardware-free view. [Research workflow →](guideline.html#experiments)
 
 ## Included integrations
@@ -176,45 +176,34 @@ Upgrading an existing checkout? See the [RoboGUI interface migration](guideline.
 `manimux run` executes one rollout. Preparation can connect and move the selected robot
 as configured; use the runbook matching your actual setup.
 
-[Configuration explained](manimux/configs/README.md) · [Annotated experiment](manimux/configs/examples/README.md)
+[Configuration explained](manimux/configs/README.md) · [Current study and launch commands](guideline.html#latest300ep-launch)
 
 ## Run an experiment campaign
 
-A collection exposes **Task → Method / Config → Layout** in RoboGUI. Switch while
-idle after finishing recovery and evaluation; compatible entries reuse the camera
-and model services. `serve` does not start those services for you.
+A collection organizes tasks, methods, trial counts and a recording root. RoboGUI
+exposes **Task → Method / Config → Layout**; compatible entries switch while idle.
+Task files define instructions, layouts and scoring. Each trial records its resolved
+settings, trajectories and optional human assessment for reproducible comparisons.
 
-```bash
-# From the repository root, after starting cameras, RoboGUI and the matching model:
-envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
-```
+The [published Pi05 study](manimux/configs/collections/pi05-latest300ep-step30000.yaml)
+illustrates five tasks and six inference methods, with additional starting-pose variants.
+Use it as a concrete example; choose task rules, checkpoints and comparison settings
+for your own study. Offline reports combine human scores, motion metrics and optional
+PRM assessments. Runtime completion and task success are distinct.
 
-Collection entries live in `manimux/configs/collections/`; reusable variants live in `experiments/<model-checkpoint>/<task>/`, with shared definitions in `tasks/`. The collection owns `recording.root`. Output is `<root>/<collection>/<task>/<variant>/session-…`; restarting resumes the same progress. See the [storage protocol](guideline.html#study-storage-protocol).
+[Experiment workflow](guideline.html#experiments) ·
+[Launch commands](guideline.html#latest300ep-launch) ·
+[Recording protocol](guideline.html#study-storage-protocol) ·
+[Evaluation and reports](guideline.html#reports)
 
+## Documentation map
 
-The current collection has **five tasks × six methods**, plus explicit conveyor starting-pose variants: coin, medium blocks, bottles,
-rotating clock and moving cube; Serial, Async, RTC, AutoHorizon, PAINT and
-backward-only BID. All entries use Direct. Checkpoint paths are deployment-specific.
-[Complete launch commands](guideline.html#latest300ep-launch) ·
-[Rubrics and partial scores](guideline.html#experiments)
-
-Records go to `<run.output_dir>/session-…/rollout-…/`. Runtime completion and human
-task success are separate. A report index selects exact checkpoints/settings and
-recorded episodes; it is separate from the runtime scoring rubric.
-
-```bash
-envs/yam/.venv/bin/python -m manimux.evaluation \
-  --task-dir data/evaluation_tasks/coin
-```
-
-Create that directory's `task.yaml` using the [report example](guideline.html#reports).
-Each run writes a new HTML bundle and prints its absolute path. Reports include
-human scores, execution-qualified handoff plots, reference smoothness and
-10/20/30-step overlap where supported by the recording. Completion time needs an
-annotation; PRM needs a separate judge run. Use `language: zh-CN` for Chinese reports.
-[Metric definitions and aggregation](guideline.html#report-metric-definitions) ·
-[Saved files](guideline.html#records)
+| Entry | Purpose |
+| --- | --- |
+| This README | Project scope, architecture, supported integrations and getting started |
+| Directory READMEs, such as [configs](manimux/configs/README.md) | Local file organization, module responsibilities and links to detailed guidance |
+| [User guide](guideline.html) | Setup, parameter explanations, commands and complete experiment workflows |
+| [Agent skills](.agents/skills/manimux-development/SKILL.md) | What an agent should inspect, ask, implement and verify for a specific task |
 
 ## Integrate
 

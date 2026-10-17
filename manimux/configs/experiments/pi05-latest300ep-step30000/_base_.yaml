@@ -13,24 +13,6 @@ robot:
   control_hz: 100.0
   options:
     move_to_start_on_connect: true
-    start_joints:
-      left_arm:
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 1.0
-      right_arm:
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 1.0
-    start_duration_s: 2.0
     home_duration_s: 2.0
     home_on_close: true
     execute: true
@@ -76,3 +58,6 @@ policy_server:
   config: ../../policy/pi05/yam/latest300/joint-step30000.yaml
 camera_server:
   config: ../../embodiment/sensor/cameras/realsense_3_views.yaml
+initial_pose:
+  config: ../../embodiment/initial_poses/yam.yaml
+  id: home

@@ -117,8 +117,10 @@ def read_experiment(
     robot.config remains the assembly path; reading does not construct RobotModel.
     """
     source = Path(path).expanduser().resolve()
-    from manimux.configuration import compose, apply_initial_pose
+    from manimux.configuration import apply_initial_pose, compose
     raw, sources = compose(source)
+    from manimux.config_validation import EXPERIMENT_FIELDS, check_fields
+    check_fields(raw, EXPERIMENT_FIELDS, "experiment")
     raw["config_sources"] = sources
     from manimux.embodiments.layout import assembly_action_contract
     from manimux.embodiments.robot import apply_action_contract
@@ -209,6 +211,8 @@ def bind_station(config: dict, local: str | Path) -> dict:
     selected = Path(local).expanduser().resolve()
     raw["local"] = str(selected)
     bindings = load_local(selected)
+    from manimux.policies.recipe import resolve_recipe_paths
+    raw = resolve_recipe_paths(raw, bindings.get("paths", {}))
     robot = raw.setdefault("robot", {})
     hardware = bindings.get("robot", {}).get("hardware", {})
     components = bindings.get("robot", {}).get("components", {})
@@ -265,7 +269,15 @@ def bind_station(config: dict, local: str | Path) -> dict:
             for key in ("model_path", "norm_stats_path"):
                 server[key] = str((paths["checkpoints"] / server[key]).resolve())
         elif "checkpoint" in paths:
-            server["checkpoint_path"] = str(paths["checkpoint"])
+            candidates = [key for key in ("checkpoint_path", "ckpt_dir", "model_path", "model_dir", "model_root")
+                          if key in server]
+            # Recipes may carry both a model directory and its selected weight
+            # file. The explicit file field is the checkpoint override target.
+            if "checkpoint_path" in candidates:
+                candidates = ["checkpoint_path"]
+            if len(candidates) != 1:
+                raise ValueError("paths.checkpoint is ambiguous for this recipe; use explicit ${paths.<root>} references")
+            server[candidates[0]] = str(paths["checkpoint"])
         if "norm_stats" in paths:
             server["norm_stats_path"] = str(paths["norm_stats"])
         if "vlm_processor" in paths:
@@ -495,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         for choice in catalog.choices.values():
             c = choice.config
             rows.append({**choice.metadata(), "output_dir": str(c['run']['output_dir']),
-                         "inference": c['inference'], "initial_pose": c['run'].get('initial_pose'),
+                         "inference": c['inference'],
                          "history_sessions": len(c['run']['history_sessions']),
                          "history_rejected": c['collection']['history_rejected']})
         print(json.dumps(rows, indent=2, default=str, ensure_ascii=False))
@@ -521,13 +533,13 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_parameters(**options) -> dict:
     """Fill in the experiment recording directory and control step count."""
-
+    from manimux.config_validation import merge_parameters
     from manimux.embodiments.sensor.reader import sensor_reading_parameters
     from manimux.evaluation.identity import research_template
 
     if "max_steps" in options:
         raise ValueError("unsupported run field: max_steps")
-    values = {
+    values = merge_parameters({
         "output_dir": Path("data"),
         "max_control_steps": 500,
         "warmup_before_start": False,
@@ -542,8 +554,7 @@ def run_parameters(**options) -> dict:
         "layout_id": "",
         "repeat_id": None,
         "reference_layout": None,
-        **options,
-    }
+    }, options, 'run', extra=('task', 'initial_pose', 'history_sessions'))
     if values.get("output_dir") is not None:
         values["output_dir"] = Path(values["output_dir"])
     if not isinstance(values["warmup_before_start"], bool):
@@ -594,6 +605,8 @@ def prepare_experiment(**options) -> dict:
 
     if "viewer" in options:
         raise ValueError("Rename the experiment section 'viewer' to 'robogui'.")
+    from manimux.config_validation import EXPERIMENT_FIELDS, check_fields
+    check_fields(options, EXPERIMENT_FIELDS, "experiment")
     options = deepcopy(options)
     values = {
         "control_profile": None,

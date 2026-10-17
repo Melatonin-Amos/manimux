@@ -71,6 +71,13 @@ class YamRobot(RobotBase):
         self._start_duration = start_duration_s
         self._home_duration = home_duration_s
         self._release_duration = home_gripper_release_duration_s
+        for label, duration in (("start", self._start_duration), ("home", self._home_duration),
+                                ("home gripper release", self._release_duration)):
+            if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not np.isfinite(duration) or duration <= 0:
+                raise ValueError(f"{label} duration must be finite and positive")
+        if self._move_to_start:
+            # Reject bad startup targets before connect can enable any actuator.
+            self._validated_targets(self._start_joints, "start position")
 
     @classmethod
     def from_config(cls, path, **options):
@@ -89,14 +96,18 @@ class YamRobot(RobotBase):
                 parallel=False,
             )
 
-    def _move(self, targets, duration, label, *, interrupt=False, parallel=True):
-        # Validate every target before submitting the first arm's motion.
+    def _validated_targets(self, targets, label):
         if not isinstance(targets, Mapping) or set(targets) != set(self.arm_components):
             raise ValueError(f"{label} must specify every arm group")
         targets = {name: np.array(q, dtype=np.float64, copy=True) for name, q in targets.items()}
         for name, arm in self.arm_components.items():
             if targets[name].shape != (arm.num_joints,) or not np.isfinite(targets[name]).all():
                 raise ValueError(f"{label}: invalid target for {name}")
+        return targets
+
+    def _move(self, targets, duration, label, *, interrupt=False, parallel=True):
+        # Validate every target before submitting the first arm's motion.
+        targets = self._validated_targets(targets, label)
         # Keep SDK move_joints and preserve the trajectory algorithm and motion parameters during migration.
         # Wait for all arms before the next phase; refresh feedback to synchronize the existing wrapper's state cache.
         with finish_move_before_interrupt(label, log) as interrupted:
@@ -134,3 +145,6 @@ class YamRobot(RobotBase):
             for q in targets.values():
                 q[6] = 1.0
             self._move(targets, self._release_duration, "home gripper release")
+
+    def home_targets(self, state):
+        return {name: np.r_[np.zeros(6), 1.0] for name in state.groups}

@@ -17,12 +17,12 @@ num_envs: 1
 action_type: ee
 eval_batch: false
 
-sapolicy_root: /home/ubuntu/sa/SpatialAlignPolicy
-cfg_file: /home/ubuntu/sa/checkpoints/sapolicy/dinov2lfrz_yam_bottles_realsim_top_tcp_dit_8gpu_bs256/training_source/configs/deploy/yam_bottles_3cam_tcp.yaml
-model_path: /home/ubuntu/manimux/3cam_tcp.ckpt
-workspace: /home/ubuntu/sa
-backbone_path: /home/ubuntu/sa/dinov2_vitl14_pretrain.pth
-normalizer_path: /home/ubuntu/sa/checkpoints/sapolicy/dinov2lfrz_yam_bottles_realsim_top_tcp_dit_8gpu_bs256/bottles_norm_stats_real.pt
+sapolicy_root: ${paths.sapolicy_workspace}/SpatialAlignPolicy
+cfg_file: ${paths.sapolicy_workspace}/checkpoints/sapolicy/dinov2lfrz_yam_bottles_realsim_top_tcp_dit_8gpu_bs256/training_source/configs/deploy/yam_bottles_3cam_tcp.yaml
+model_path: ${repo}/3cam_tcp.ckpt
+workspace: ${paths.sapolicy_workspace}
+backbone_path: ${paths.sapolicy_workspace}/dinov2_vitl14_pretrain.pth
+normalizer_path: ${paths.sapolicy_workspace}/checkpoints/sapolicy/dinov2lfrz_yam_bottles_realsim_top_tcp_dit_8gpu_bs256/bottles_norm_stats_real.pt
 
 output_format: packed_ee_wire
 action_horizon: 16

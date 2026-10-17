@@ -70,10 +70,6 @@ def build_matrix(
         )
     if "aac" in selected and (aac_stats is None or not Path(aac_stats).is_file()):
         raise ValueError("AAC requires an explicit existing EE-increment statistics file")
-    if family == "OpenWAM":
-        server.update(compile_enabled=False, dit_cache_enabled=False, inference_seed=0)
-    elif family == "LingBot_VLA2":
-        server["use_compile"] = False
     output_dir = Path(output_dir).resolve()
     paths = [output_dir / f"{method}.yaml" for method in selected]
     if any(path.exists() for path in paths):
@@ -127,7 +123,13 @@ def build_matrix(
                     backward_beta=0.99,
                 )
         config["inference"] = inference
-        config["run"]["output_dir"] = str(Path(source["run"]["output_dir"]) / "matrix" / method)
+        # Storage belongs to the selecting collection, never to a variant.
+        config["run"].pop("output_dir", None)
+        config["run"].pop("history_sessions", None)
+        config.pop("collection", None)
+        config.pop("config_sources", None)
+        if "experiment" in config:
+            config["experiment"]["variant"] = method
         config.setdefault("robogui", {})["policy_label"] = f"{family} - {method}"
         prepared.append((path, config))
     # Validate all variants through the real loader before publishing any output.

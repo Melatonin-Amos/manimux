@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from manimux.clock import Clock, SystemClock
+from manimux.configuration import initial_pose_metadata, initial_pose_targets
 from manimux.embodiments.robot import RobotBase, build_robot
 from manimux.embodiments.sensor import build_sensor
 from manimux.embodiments.sensor.reader import SensorReader
@@ -542,7 +543,7 @@ class EdgeRuntime:
                 "episode_id": episode_id,
                 "session_id": self._session_id,
                 "task": self._config["run"]["task"],
-                "initial_pose": deepcopy(self._config["run"].get("initial_pose")),
+                "initial_pose": initial_pose_metadata(self._config),
                 "collection": deepcopy(self._config.get("collection")),
                 "evaluation": dict(self._evaluation),
                 "executor_kind": self._config["executor"]["type"],
@@ -654,7 +655,7 @@ class EdgeRuntime:
                 robot_backend=self._robot.runtime_metadata(),
                 initial_state=state_evidence(
                     initial_state,
-                    targets=self._config["robot"]["options"].get("start_joints"),
+                    targets=initial_pose_targets(self._config),
                 ),
                 inference_seed=capabilities.backend_metadata.get("model", {}).get("inference_seed"),
             )
@@ -758,7 +759,7 @@ class EdgeRuntime:
                     recorder.event(
                         "robogui_home_requested", step=steps,
                         state=state_evidence(
-                            state, targets=self._config["robot"]["options"].get("start_joints")
+                            state, targets=self._robot.home_targets(state)
                         ),
                     )
                     next_tick_ns = self._clock.now_ns()
@@ -885,7 +886,7 @@ class EdgeRuntime:
                 if self._state == RuntimeState.RUNNING and not formal_start_recorded:
                     recorder.update_metadata(
                         formal_start_state=state_evidence(
-                            state, targets=self._config["robot"]["options"].get("start_joints")
+                            state, targets=initial_pose_targets(self._config)
                         ),
                     )
                     formal_start_recorded = True

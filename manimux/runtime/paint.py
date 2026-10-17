@@ -394,14 +394,14 @@ class PaintInferenceStrategy:
 
 def paint_parameters(**options) -> dict:
     """Preserve default PAINT execution-prefix and delay-estimation step counts."""
+    from manimux.config_validation import merge_parameters
 
     unsupported = {"execution_steps", "initial_delay_steps"}.intersection(options)
     if unsupported:
         raise ValueError(f"unsupported PAINT fields: {sorted(unsupported)}")
-    values = {
+    values = merge_parameters({
         "execution_policy_steps": 10,
         "initial_delay_policy_steps": 4,
         "delay_buffer_size": 10,
-        **options,
-    }
+    }, options, 'inference.paint', extra=())
     return values

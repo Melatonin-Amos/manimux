@@ -196,3 +196,13 @@ Condition codecs declare `pose_condition_modes`; test the explicit
 `request.action_condition_space` before interpreting condition arrays. Never
 infer joint versus pose space from width alone. The runtime and restrictions
 are documented in [Runtime](runtime-config.md#chunk-ik-and-execution-time-ik).
+
+## Configurable AutoHorizon
+
+`XPolicyLab.utils.autohorizon_selection.ConfiguredAutoHorizon` delegates the model
+contract and scopes selector options to one AutoHorizon invocation. Native call
+sites use `select_horizon`; Pi05 passes its pinned selector explicitly, while shared
+flow samplers use XPolicyLab's pinned implementation. ManiMux passes validated
+recipe options through this API. Do not monkey-patch model methods or replace
+module-level selector functions. A model that does not call the configurable
+selector must fail explicitly rather than claim the options were applied.

@@ -1,25 +1,25 @@
 # Service entry points
 
-Launch from the repository root with the interpreter from the matching hardware or model environment.
+A study selects one collection and one private station. Camera, model and runtime
+resolve that same entry; use the [launch guide](../../guideline.html#latest300ep-launch)
+for commands and environment selection.
 
-| Module | Responsibility |
+| Module | Owns |
 | --- | --- |
-| `manimux.servers.camera.server` | Open configured cameras and serve images over ZMQ |
-| `manimux.servers.pi05` | Read Pi05 configuration and start the XPolicyLab service |
-| `manimux.servers.groot` / `xr1` / `sapolicy` / `abc_dit` / `isaac05` | Existing XPolicyLab launch/configuration entry points for each model |
-| `manimux.servers.openwam` / `umi_dp` | Start XPolicyLab, including existing checkpoint-binding workflows |
+| `manimux.servers.camera.server --collection` | Physical cameras and image transport |
+| `manimux.servers.policy --collection` | The selected XPolicyLab deployment in its model environment |
+| `manimux serve --collection` | Experiment switching, scheduling, execution and recordings |
+| `manimux.robogui.dashboard` | Operator controls and visualization |
 
-Model networks, weight loading, normalization and sampling remain in `XPolicyLab/policy/`; these launchers do not duplicate model implementations.
-Camera clients and runtime sensors live in `manimux/embodiments/sensor/camera_server/`;
-reading network images does not create physical cameras.
+`--experiment-id` selects a service configuration when a collection contains
+incompatible entries. Without it, ambiguity is rejected. Switching runtime entries
+does not reload model weights or reconnect a different camera set automatically.
 
-```bash
-envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+Model-specific launchers remain available for artifact validation and standalone
+model debugging. Their `--config` selects a **model recipe**, not an experiment or
+recording root. Generic policy `--check` resolves configuration only; it does not
+load weights or prove inference readiness. Camera clients never open physical cameras.
 
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --config manimux/configs/policy/pi05/yam/put-bottles/joint-step30000.yaml
-```
-
-Model entry points use the repository's XPolicyLab submodule and their own environments. Moving launch files does not install models,
-download checkpoints or initialize submodules. `--help` only displays arguments and does not start services.
+OpenWAM artifact export requires both `--bind-runtime-config <output>` and
+`--runtime-template <existing-experiment>`; it has no dependency on an ignored
+private example. Model networks, normalization and samplers remain in XPolicyLab.

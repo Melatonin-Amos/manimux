@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+
+from manimux.configuration import initial_pose_metadata
 
 
 @dataclass(frozen=True)
@@ -20,7 +21,7 @@ class ExperimentChoice:
             "id": self.id, "label": self.label, "config_path": str(self.path),
             "task": self.config["run"]["task"],
             "method": self.config["inference"]["algorithm"],
-            "initial_pose": deepcopy(self.config["run"].get("initial_pose", {"id": "default", "label": "Default pose"})),
+            "initial_pose": initial_pose_metadata(self.config),
         }
 
 

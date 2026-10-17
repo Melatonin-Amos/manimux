@@ -20,11 +20,11 @@ action_type: joint
 eval_batch: false
 checkpoint_variant: lingbot_vla2_yam_put_bottles_b64_step30000
 lingbot_vla2_root: lingbot_vla_v2
-qwen3vl_path: /home/ubuntu/manimux/checkpoints/pretrained/qwen3_vl_4b_processor
-model_root: /home/ubuntu/manimux/checkpoints/finetuned/ziyang/lingbot-vla2-put-bottles-b64-step30000/checkpoints/global_step_30000/hf_ckpt
-training_config_path: /home/ubuntu/manimux/checkpoints/finetuned/ziyang/lingbot-vla2-put-bottles-b64-step30000/lingbotvla_cli.yaml
-robot_config_path: /home/ubuntu/manimux/XPolicyLab/policy/LingBot_VLA2/robot_configs/yam_dual_packed_relative.yaml
-norm_stats_path: /home/ubuntu/manimux/checkpoints/finetuned/ziyang/lingbot-vla2-put-bottles-b64-step30000/norm_stats.json
+qwen3vl_path: ${paths.checkpoints}/pretrained/qwen3_vl_4b_processor
+model_root: ${paths.checkpoints}/finetuned/ziyang/lingbot-vla2-put-bottles-b64-step30000/checkpoints/global_step_30000/hf_ckpt
+training_config_path: ${paths.checkpoints}/finetuned/ziyang/lingbot-vla2-put-bottles-b64-step30000/lingbotvla_cli.yaml
+robot_config_path: ${repo}/XPolicyLab/policy/LingBot_VLA2/robot_configs/yam_dual_packed_relative.yaml
+norm_stats_path: ${paths.checkpoints}/finetuned/ziyang/lingbot-vla2-put-bottles-b64-step30000/norm_stats.json
 action_horizon: 50
 native_hz: 30.0
 checkpoint_source: local_lingbot_vla2_put_bottles_b64_step30000

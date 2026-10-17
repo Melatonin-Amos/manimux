@@ -414,18 +414,18 @@ class RtcInferenceStrategy:
 
 def rtc_parameters(**options) -> dict:
     """RTC changes only inference and chunk timing; shared runtime still manages executor limits."""
+    from manimux.config_validation import merge_parameters
 
     unsupported = {"min_execute_steps", "initial_delay_steps"}.intersection(options)
     if unsupported:
         raise ValueError(f"unsupported RTC fields: {sorted(unsupported)}")
-    values = {
+    values = merge_parameters({
         "min_execute_policy_steps": None,
         "initial_delay_policy_steps": 4,
         "delay_buffer_size": 10,
         "beta": 5.0,
         "condition_source": "canonical",
-        **options,
-    }
+    }, options, 'inference.rtc', extra=())
     if values["condition_source"] not in {"canonical", "timeline", "executor"}:
         raise ValueError("rtc.condition_source must be canonical, timeline, or executor")
     return values

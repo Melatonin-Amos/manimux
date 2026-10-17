@@ -44,19 +44,19 @@ __all__ = ["EdgeRuntime", "RunResult", "build_runtime"]
 
 def executor_parameters(**options) -> dict:
     """Fill in smoothing and limits, preserving each executor's values and meaning."""
+    from manimux.config_validation import merge_parameters
     from manimux.runtime.executors.limits import motion_limits_parameters
     from manimux.runtime.executors.mpc import mpc_parameters
     from manimux.runtime.executors.smooth import smooth_parameters
     from manimux.runtime.safety import command_safety_parameters
 
-    values = {
+    values = merge_parameters({
         "type": "smooth",
         "motion_limits": None,
         "smooth": {},
         "mpc": {},
         "command_safety": {},
-        **options,
-    }
+    }, options, 'executor', extra=())
     if values["type"] not in {"direct", "smooth", "mpc"}:
         raise ValueError(f"unknown executor type: {values['type']!r}")
     if values.get("motion_limits") is not None:
@@ -72,6 +72,7 @@ def executor_parameters(**options) -> dict:
 
 def inference_parameters(*, executor: dict, **options) -> dict:
     """Fill in scheduling parameters; algorithms and executors are selected independently."""
+    from manimux.config_validation import merge_parameters
     from manimux.runtime.aac import aac_parameters
     from manimux.runtime.bid import bid_parameters
     from manimux.runtime.paint import paint_parameters
@@ -132,7 +133,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
         if section is not None:
             options[section] = destination
 
-    values = {
+    values = merge_parameters({
         "algorithm": "async",
         "strategy": None,
         "chunk_policy_steps": None,
@@ -161,8 +162,7 @@ def inference_parameters(*, executor: dict, **options) -> dict:
         "aac": {},
         "bid": {},
         "paint": {},
-        **options,
-    }
+    }, options, 'inference', extra=('history',))
     if values.get("rtc") is not None:
         values["rtc"] = rtc_parameters(**values["rtc"])
     values["train_time_rtc"] = train_time_rtc_parameters(**values["train_time_rtc"])

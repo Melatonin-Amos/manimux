@@ -15,4 +15,20 @@ run:
     - '10'
     require_reference: true
 evaluation:
-  config: ../evaluation/stack_blocks.yaml
+  kind: stages
+  task_id: stack_blocks
+  rubric_id: stack_blocks_count2_v1
+  label: Block stacking
+  options:
+  - id: count_0
+    label: 'Blocks stacked: 0/2'
+    score: 0.0
+    success: false
+  - id: count_1
+    label: 'Blocks stacked: 1/2'
+    score: 0.5
+    success: false
+  - id: count_2
+    label: 'Blocks stacked: 2/2'
+    score: 1.0
+    success: true

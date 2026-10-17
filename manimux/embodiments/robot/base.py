@@ -266,6 +266,14 @@ class RobotBase(ABC):
     def home(self) -> None:
         raise NotImplementedError("home trajectory not configured; use the runtime motion planner")
 
+    def home_targets(self, state: RobotState) -> dict[str, FloatArray] | None:
+        """Final Home targets in command coordinates; None means unspecified.
+
+        This is evidence only, with no hardware I/O. Initial rollout targets do
+        not define Home. Assemblies with a defined Home override this method.
+        """
+        return None
+
     # Idle recovery: RoboGUI may request these between rollouts. Each request builds
     # a fresh, disconnected assembly and calls the matching method below.
 

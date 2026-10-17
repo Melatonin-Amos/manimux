@@ -9,8 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 XPOLICY_ROOT = REPO_ROOT / "XPolicyLab"
 DEFAULT_CONFIG = REPO_ROOT / "manimux/configs/policy/sapolicy/yam/abc-bottles.yaml"
@@ -23,11 +21,9 @@ def _prepare_imports() -> None:
             sys.path.insert(0, value)
 
 
-def _load_config(path: Path) -> dict[str, Any]:
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise ValueError(f"server config must be a mapping: {path}")
-    return loaded
+def _load_config(path: Path, *, local=None) -> dict[str, Any]:
+    from manimux.policies.recipe import read_policy_recipe
+    return read_policy_recipe(path, local=local)
 
 
 def _validate(config: dict[str, Any]) -> dict[str, Any]:
@@ -76,10 +72,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--check", action="store_true", help="validate and print resolved setup")
+    parser.add_argument("--local", type=Path)
     args = parser.parse_args()
 
     config_path = args.config.expanduser().resolve()
-    config = _load_config(config_path)
+    config = _load_config(config_path, local=args.local)
     _prepare_imports()
     from XPolicyLab.policy.SAPolicy import DEFAULT_SAPOLICY_ROOT
     from XPolicyLab.policy.SAPolicy.assets import resolve_assets

@@ -3,10 +3,33 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from copy import deepcopy
 from pathlib import Path
 
 import yaml
+
+
+def initial_pose_metadata(config: dict) -> dict:
+    """Describe the configured start without pretending every start is Home."""
+    options = config.get("robot", {}).get("options", {})
+    if not options.get("move_to_start_on_connect", False):
+        return {"id": "hold", "label": "Keep current pose", "joints": None}
+    named = config.get("run", {}).get("initial_pose")
+    if named:
+        return deepcopy(named)
+    targets = options.get("start_joints")
+    duration = options.get("start_duration_s")
+    digest = hashlib.sha256(json.dumps([targets, duration], sort_keys=True).encode()).hexdigest()[:12]
+    return {"id": f"configured-{digest}", "label": "Configured start pose",
+            "joints": deepcopy(targets), "duration_s": duration}
+
+
+def initial_pose_targets(config: dict):
+    """Only record a commanded start target when startup motion is enabled."""
+    if not config.get("robot", {}).get("options", {}).get("execute", False):
+        return None
+    return initial_pose_metadata(config).get("joints")
 
 
 def compose(path: str | Path, stack: tuple[Path, ...] = ()) -> tuple[dict, dict[str, str]]:

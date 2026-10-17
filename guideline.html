@@ -78,16 +78,16 @@ and reference them with <code>config:</code>.</p>
 </thead>
 <tbody>
 <tr>
-<td>Task prompt, output, step budget</td>
-<td>Experiment <code>run</code></td>
+<td>Task prompt</td>
+<td><code>tasks/&lt;task&gt;.yaml → run.task</code></td>
 </tr>
 <tr>
-<td>Layout IDs / repeats / reference requirement</td>
-<td><code>run.experiment_template</code></td>
+<td>Layouts / reference requirement; repeat budget</td>
+<td>Task <code>run.experiment_template</code>; collection entry <code>trials</code></td>
 </tr>
 <tr>
 <td>Scoring rules</td>
-<td><code>evaluation.config</code> → rubric YAML</td>
+<td><code>tasks/&lt;task&gt;.yaml → evaluation</code></td>
 </tr>
 <tr>
 <td>CAN/IP, camera serials, service endpoints, local paths</td>
@@ -1214,15 +1214,15 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 <tbody>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/pi05-yam.md">Pi05 / YAM</a></td>
-<td>OpenPI environment; <code>manimux.servers.pi05 --experiment</code></td>
+<td>OpenPI environment; <code>manimux.servers.policy --collection</code></td>
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/xiaomi-xr1-yam.md">XR1 / YAM</a></td>
-<td>XR1 environment; <code>manimux.servers.xr1 --config</code></td>
+<td>XR1 environment; <code>manimux.servers.policy --collection</code></td>
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/lingbot-vla2-yam.md">LingBot / YAM</a></td>
-<td>LingBot environment; XPolicyLab <code>setup_policy_server.py --config-path</code></td>
+<td>LingBot environment; <code>manimux.servers.policy --collection</code></td>
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/dp-yam.md">DP / YAM</a></td>
@@ -1230,7 +1230,7 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/openwam-yam.md">OpenWAM / YAM</a></td>
-<td>OpenWAM environment; <code>manimux.servers.openwam --config</code></td>
+<td>OpenWAM environment; <code>manimux.servers.policy --collection</code></td>
 </tr>
 </tbody>
 </table>
@@ -1246,7 +1246,7 @@ revisions, not automatically to a new checkpoint.</p>
   collections/&lt;study&gt;.yaml                 # entries, trials, recording.root
   tasks/&lt;task&gt;.yaml                        # prompt, layouts, rubric, optional pose
   embodiment/{robot,sensor,initial_poses}/  # shared hardware and named poses
-  policy/  inference/  executor/  evaluation/  local/
+  policy/  inference/  executor/  local/
   experiments/&lt;model-checkpoint&gt;/
     _base_.yaml                            # common choices, only when needed
     &lt;task&gt;/rtc32_beta10.yaml                # reusable variant and identity
@@ -1283,6 +1283,29 @@ inference:
     beta: 10
 </code></pre>
 <p>The agent first establishes single-task versus multi-task scope, checkpoint/contract, observable success and optional partial scores, layouts/reset, stopping rules and storage. It writes the task, variants, collection and private station from the answers and validates them. Users do not need to fill YAML forms. Do not infer a different user's scoring weights, trial count or joint coordinates.</p>
+<h3 id="portable-config-paths">Portable paths and validation</h3>
+<p>Shared recipes use <code>${paths.checkpoints}/...</code> for model artifacts and
+<code>${repo}/...</code> for repository resources. Additional roots, such as
+<code>paths.sapolicy_workspace</code>, belong in the private station. Relative station roots
+resolve beside that file. Collection and standalone recipe readers use the same expansion;
+a missing root is an error, not a guessed path.</p>
+<p>Unknown public configuration fields fail with their section and a spelling suggestion.
+Plugin-owned <code>options</code> remain extensible and are validated by their owner.
+Use <code>python -m manimux inspect --collection &lt;collection.yaml&gt; --local &lt;station.yaml&gt;</code>
+to inspect resolved settings and output paths without starting services.
+Unresolved historical deployments live under ignored <code>configs/local/archived_experiments/</code>.
+The matrix generator preserves model cache/compile settings and leaves recording roots to collections.</p>
+<h3 id="starting-pose-ownership">Initial pose and Home</h3>
+<p>Named YAM poses live in <code>embodiment/initial_poses/yam.yaml</code>: <code>home</code>,
+<code>raised_ready</code> and <code>table_ready</code>. A task or variant selects
+<code>initial_pose: {config: …, id: …}</code>. Pi05's shared base selects Home;
+conveyor variants explicitly select Raised ready. SAPolicy deployment variants explicitly
+select Table ready; the policy does not choose the robot start.</p>
+<p>YAM startup motion requires <code>robot.options.execute: true</code> and
+<code>move_to_start_on_connect: true</code>; it retains sequential arm motion.
+Do not copy these driver options to a different embodiment without a supported motion implementation.
+Return Home remains a robot-owned operation, separate from the experiment's starting pose.
+Records distinguish the configured initial target, measured state and actual Home target.</p>
 <h3 id="study-storage-protocol">Recording identity and historical data</h3>
 <pre><code>&lt;recording.root&gt;/&lt;collection.id&gt;/&lt;experiment.task&gt;/&lt;experiment.variant&gt;/
   session-&lt;timestamp&gt;-&lt;unique-id&gt;/
@@ -1370,22 +1393,28 @@ envs/yam/.venv/bin/python -m manimux serve \
 <p>An agent setting up a custom scored study should ask whether partial credit is needed,
 unless already agreed. It should not invent weights or require scoring for free inference.
 Keep PRM optional. Record protocol choices separately from runtime configuration.</p>
-<h3 id="configure-two-independent-templates">Configure two independent templates</h3>
-<p>Merge this fragment into a complete experiment under
-<code>manimux/configs/experiments/&lt;task&gt;/&lt;model&gt;/</code>. The sample values are replaceable.</p>
+<h3 id="configure-two-independent-templates">Define the task in one file</h3>
+<p>Write <code>manimux/configs/tasks/&lt;task&gt;.yaml</code> with the exact prompt, available layouts,
+inline scoring rules and optional initial pose. Experiment variants inherit this task through
+<code>_base_</code>; do not create a separate scoring YAML. Set repeats and the recording root in the
+<a href="#experiment-lists">collection</a>. The sample task values below are replaceable.</p>
 <pre><code class="language-yaml">run:
-  experiment_name: coin-study-v1
-  condition: rtc
-  output_dir: ./data/experiments/coin-study-v1/rtc
+  task: put_the_coin_into_the_bin2  # Exact instruction sent to the policy
   experiment_template:
-    name: Two layouts, three repeats
+    name: Coin layouts
     layout_ids: [near, far]
-    repeats: 3
     require_reference: false
 evaluation:
-  config: ../../../evaluation/coin.yaml
-recording:
-  enabled: true
+  kind: stages
+  task_id: coin
+  rubric_id: coin_stages_v2
+  label: Coin transfer and deposit
+  options:
+    - {id: incomplete, label: No coin picked up, score: 0, success: false}
+    - {id: picked_up, label: Coin picked up by one hand, score: 0.1, success: false}
+    - {id: handover, label: Handed over, score: 0.3, success: false}
+    - {id: above_bank, label: Coin held above piggy bank, score: 0.5, success: false}
+    - {id: deposited, label: Deposited in target, score: 1, success: true}
 </code></pre>
 <p><strong>Prepare Run / Prepare Experiment.</strong> Both buttons are available before a rollout.
 Prepare Run needs no layout or scoring. For Prepare Experiment, select Layout once;
@@ -1399,61 +1428,41 @@ store images in <code>data/evaluation_layouts/&lt;task&gt;/&lt;layout&gt;.png</c
 Successful and failed tasks count; invalid, skipped and unstarted attempts remain recorded but do not
 consume a repeat. When a layout is complete, select another. Use a separate output directory for each
 model/checkpoint/method or changed scoring rule. No repeat counter is stored only in the browser.</p>
-<p><code>run.experiment_template</code> constrains layouts/repeats/reference images. It does not schedule
-or randomize the study. <code>evaluation.config</code> selects the scoring YAML. There is no UI template
-editor; edit the files and reload the runtime before the next study condition.</p>
-<table>
-<thead>
-<tr>
-<th>Rubric <code>kind</code></th>
-<th>Operator choice</th>
-<th>Score</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>binary</code></td>
-<td>Completed / Not completed</td>
-<td>Success rate only</td>
-</tr>
-<tr>
-<td><code>count</code></td>
-<td>Completed count</td>
-<td>Count / target</td>
-</tr>
-<tr>
-<td><code>stages</code></td>
-<td>One outcome</td>
-<td>Selected total score; never sum milestones</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Coin example — stage template:</strong></p>
-<pre><code class="language-yaml">kind: stages
-task_id: coin
-rubric_id: coin_stages_v2
-label: Coin transfer and deposit
-options:
-  - {id: incomplete, label: No coin picked up, score: 0, success: false}
-  - {id: picked_up, label: Coin picked up by one hand, score: 0.1, success: false}
-  - {id: handover, label: Handed over, score: 0.3, success: false}
-  - {id: above_bank, label: Coin held above piggy bank, score: 0.5, success: false}
-  - {id: deposited, label: Deposited in target, score: 1, success: true}
+<p>The task's <code>run.experiment_template</code> defines available layouts and reference requirements;
+collection <code>trials</code> selects a layout subset and repeats. Inline <code>evaluation</code> defines
+RoboGUI's mutually exclusive score choices. There is no UI template editor; edit the task file and
+reload the runtime before the next study condition. Neither file randomizes the trial order.</p>
+<p>Write every task with <code>kind: stages</code> and explicit <code>options</code>.
+Each option declares its outcome label, total <code>score</code> and <code>success</code>.
+Use the same format for binary outcomes, item counts and intermediate milestones.
+RoboGUI displays single-choice buttons; it never sums selected milestones.</p>
+<p><strong>Stacking example — evaluation section in the task file:</strong></p>
+<pre><code class="language-yaml">evaluation:
+  kind: stages
+  task_id: stack_blocks
+  rubric_id: stack_blocks_count2_v1
+  label: Block stacking
+  options:
+    - {id: count_0, label: "Blocks stacked: 0/2", score: 0.0, success: false}
+    - {id: count_1, label: "Blocks stacked: 1/2", score: 0.5, success: false}
+    - {id: count_2, label: "Blocks stacked: 2/2", score: 1.0, success: true}
 </code></pre>
-<p><strong>Stacking example — count template:</strong></p>
-<pre><code class="language-yaml">kind: count
-task_id: stack_blocks
-rubric_id: stack_blocks_count2_v1
-label: Stack blocks
-count_label: Completed stacks
-target_count: 2
-</code></pre>
-<p>This gives 0 / 0.5 / 1. A minimal binary file is <code>kind: binary</code>.
-Stage IDs and labels must be unique; scores must be finite in [0, 1], with <code>success: true</code>
-exactly for score 1. Keep longer judgment criteria in the study record, not unknown YAML fields.</p>
+<p>For a binary task, explicitly list Not completed (0.0, false) and Completed (1.0, true).
+IDs and labels must be unique. Scores must be finite in [0, 1]; <code>success</code>
+is true exactly for score 1. Bottles list every count and its score explicitly;
+preserve score precision in YAML and round only for display. Old recorded count/binary
+rubrics remain readable; no historical labels are rewritten.</p>
 <p>Use one rubric across compared methods. Version <code>rubric_id</code> when criteria change.
 Each rollout saves a snapshot; later YAML edits do not change historical scores.
-<a href="manimux/configs/evaluation/coin.yaml">Current coin template</a> · <a href="manimux/configs/evaluation/stack_blocks.yaml">Stacking template</a></p>
+<a href="manimux/configs/tasks/coin.yaml">Current coin task</a> · <a href="manimux/configs/tasks/stack_blocks_medium.yaml">Stacking task</a></p>
+<h3 id="operator-errors">Errors and panel width</h3>
+<p>Operation failures appear in a persistent card with the operation, time and selectable
+error text. Live status updates do not overwrite it. <strong>Dismiss error message</strong>
+only hides the card; it does not reset a robot fault or send commands.
+Connecting to a new runtime service clears the previous service's error card;
+any failure reported by the new service is displayed independently.
+The operator panel uses native floating-panel resize handles. Drag a side edge to change
+its width; newer Viser versions dock it on the right automatically.</p>
 <h3 id="operate-each-trial">Operate each trial</h3>
 <ol>
 <li>Use <strong>Prepare Run</strong> for a free trial. For a scored trial, reset the scene, select <strong>Layout</strong>, then click <strong>Prepare Experiment</strong>; its Top reference is attached automatically.</li>
@@ -1463,9 +1472,7 @@ Layout stays editable until first Start. The suggested repeat updates with the s
 Start validates the template and freezes layout, repeat and image hash; Pause/Resume keeps that selection locked.
 Warmup only previews predictions; it never executes them. Keep reset and stopping rules consistent.</li>
 <li><strong>Finish</strong>, select one score option, then <strong>Save evaluation</strong>.
-The scoring template supplies the expanded single-choice options: stage labels and scores,
-or counts with their derived scores (for example 0 / 0.5 / 1). Without partial-credit rules,
-choose <strong>1 · Completed</strong> or <strong>0 · Not completed</strong>. Nothing is preselected.</li>
+The task supplies every single-choice label and score explicitly. Choose one outcome; nothing is preselected.</li>
 <li>For an unusable trial, mark invalid and state the reason. <strong>Skip evaluation</strong> leaves it unreviewed.</li>
 <li>Start a fresh rollout for the next trial. Preserve failed attempts and separately identify retries.</li>
 </ol>
