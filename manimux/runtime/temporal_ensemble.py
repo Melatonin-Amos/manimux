@@ -25,7 +25,7 @@ from manimux.runtime.inference import (
     StrategyChunkSelector,
 )
 from manimux.runtime.safety import RuntimeState
-from manimux.runtime.timeline import ActionTimeline, CommitResult
+from manimux.runtime.timeline import ActionTimeline, CommitResult, first_future_step
 from manimux.types import (
     ActionChunk,
     FloatArray,
@@ -237,7 +237,16 @@ class ACTTemporalEnsembleStrategy:
         response: InferenceResponse,
         now_ns: int,
     ) -> ActionChunk:
-        del now_ns
+        if self._config["inference"].get("min_plan_hold_policy_steps", 0):
+            origin = (
+                now_ns if self._config["inference"]["action_start_mode"] == "first_step_when_ready"
+                else chunk.observation_time_ns
+            )
+            start = first_future_step(origin, chunk.dt_ns, now_ns)
+            if start >= chunk.horizon_steps:
+                return chunk
+            self._pending_ensemble_seq = response.request_seq
+            return self._ensembler.aggregate_aligned(chunk, origin_ns=origin, first_step=start)
         if self._config["inference"]["inference_schedule"] == "multi_inflight":
             self._pending_ensemble_seq = response.request_seq
         return self._ensembler.aggregate(chunk)
@@ -360,8 +369,6 @@ class EnsembleStrategy:
         return chunk
 
     def prepare_chunk(self, *, chunk, response, now_ns):
-        from manimux.runtime.timeline import first_future_step
-
         # The source strategy owns its contribution range; no algorithm-name dispatch.
         full_prediction = self._scope == "full_prediction"
         if not full_prediction:

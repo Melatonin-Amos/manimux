@@ -188,6 +188,7 @@ class EdgeRuntime:
             raise ValueError("inference composition requires complete absolute-joint decoding")
         self._scheduler = RequestScheduler(config["inference"])
         self._multi_inflight = self._scheduler.multi_inflight
+        self._min_execute_steps = config["inference"].get("min_plan_hold_policy_steps", 0)
         if self._multi_inflight and not getattr(self._adapter, "supports_multi_inflight", False):
             raise ValueError("multi_inflight requires an adapter with streaming-safe decoding")
         self._decode_seed_source = getattr(
@@ -240,21 +241,6 @@ class EdgeRuntime:
             config["policy"], self._session_id, multi_inflight=self._multi_inflight,
         )
         self._timeline = self._build_timeline()
-        self._executor = self._build_executor()
-        self._execution = ExecutionPipeline(
-            self._executor,
-            kinematics=self._robot.kinematics,
-            ik_options=config.get("execution", {}).get("ik"),
-            control_dt_ns=self._control_dt_ns,
-        )
-        if (config["inference"].get("rtc") or {}).get("condition_source") == "executor":
-            predictor = getattr(self._executor, "predict_commands", None)
-            setter = getattr(self._strategy, "set_condition_predictor", None)
-            if not callable(predictor) or not callable(setter):
-                raise ValueError(
-                    "RTC executor conditions require a forecast-capable executor and strategy"
-                )
-            setter(predictor)
         self._launch_mode = launch_mode
         position_limit_abs = None
         if config["executor"]["type"] == "smooth":
@@ -270,7 +256,23 @@ class EdgeRuntime:
             max_velocity=command_safety["max_velocity"],
             max_acceleration=command_safety["max_acceleration"],
             control_dt_s=self._control_dt_ns / 1_000_000_000,
+            device_bounds=getattr(self._robot, "command_bounds", lambda: {})() or {},
         )
+        self._executor = self._build_executor()
+        self._execution = ExecutionPipeline(
+            self._executor,
+            kinematics=self._robot.kinematics,
+            ik_options=config.get("execution", {}).get("ik"),
+            control_dt_ns=self._control_dt_ns,
+        )
+        if (config["inference"].get("rtc") or {}).get("condition_source") == "executor":
+            predictor = getattr(self._executor, "predict_commands", None)
+            setter = getattr(self._strategy, "set_condition_predictor", None)
+            if not callable(predictor) or not callable(setter):
+                raise ValueError(
+                    "RTC executor conditions require a forecast-capable executor and strategy"
+                )
+            setter(predictor)
         self._robogui = RoboGUIBridge(
             enabled=config["robogui"]["enabled"],
             robot=config["robogui"]["robot"],
@@ -311,7 +313,10 @@ class EdgeRuntime:
         if self._config["executor"]["type"] == "direct":
             return DirectExecutor(self._config["executor"]["motion_limits"], control_dt_s)
         if self._config["executor"]["type"] == "smooth":
-            return SmoothExecutor(self._config["executor"]["smooth"], control_dt_s)
+            return SmoothExecutor(
+                self._config["executor"]["smooth"], control_dt_s,
+                command_limits=self._safety.execution_limits(),
+            )
         if self._config["executor"]["type"] == "mpc":
             if self._config["executor"]["motion_limits"] is not None:
                 raise ValueError(
@@ -446,6 +451,77 @@ class EdgeRuntime:
             details = "; ".join(mismatches)
             raise RuntimeError(f"policy backend identity mismatch: {details}")
 
+    def _response_rejection_reason(
+        self, response, *, last_submitted_seq, last_request_deadline_ns,
+        discard_responses_through,
+    ) -> str | None:
+        # A completed response can wait while a newer request is still in flight.
+        # Its own deadline and the last accepted sequence remain authoritative.
+        latest_completed = self._multi_inflight or self._min_execute_steps > 0
+        if response.error is not None:
+            return response.error
+        if response.session_id != self._session_id:
+            return "session_mismatch"
+        if response.request_seq <= discard_responses_through:
+            return "invalidated_by_pause_or_home"
+        if not latest_completed and response.request_seq < last_submitted_seq:
+            return "superseded_response"
+        if latest_completed and response.request_seq <= self._timeline.accepted_request_seq:
+            return "stale_request_seq"
+        deadline = response.deadline_ns if latest_completed else last_request_deadline_ns
+        if response.finished_time_ns > deadline:
+            return "inference_deadline_exceeded"
+        if latest_completed and self._clock.now_ns() > response.deadline_ns:
+            return "deadline_exceeded_before_decode"
+        if response.raw_action is None:
+            return "missing_action"
+        return None
+
+    def _send_command(
+        self, command: RobotCommand, state: RobotState, recorder: EpisodeRecorder, *, step: int,
+    ) -> None:
+        """Validate and dispatch; retain a failed attempt outside successful tick data."""
+        failure_stage = "safety_validation"
+        try:
+            with stage("safety_command"):
+                self._safety.validate_command(command)
+            failure_stage = "robot_dispatch"
+            self._robot.send_command(command)
+        except Exception as exc:
+            # A controller can fail after submitting only part of its batch.
+            # Never label such a failure as a successfully sent command.
+            try:
+                fields = dict(
+                    step=step, monotonic_ns=command.monotonic_ns, stage=failure_stage,
+                    plan_id=command.plan_id, request_seq=self._timeline.accepted_request_seq,
+                    attempted_command={
+                        name: np.asarray(q).tolist() for name, q in command.groups.items()
+                    },
+                    measured_state={
+                        name: np.asarray(q).tolist() for name, q in state.groups.items()
+                    },
+                    measured_time_ns=state.monotonic_ns,
+                    limits=self._safety.execution_limits(), error=_exception_detail(exc),
+                    dispatch={"dispatch_attempted": False}
+                    if failure_stage == "safety_validation" else {},
+                )
+                try:
+                    dispatch = dict(getattr(self._robot, "command_status", lambda: {})() or {})
+                    fields["channels"] = dispatch.pop("group_channels", {})
+                    if failure_stage == "robot_dispatch":
+                        fields.update(stage=dispatch.get("stage", failure_stage), dispatch=dispatch)
+                    fields["coordinates"] = {
+                        name: [{"name": c.name, "unit": c.unit} for c in model.coordinates]
+                        for name, model in getattr(self._robot.kinematics, "models", {}).items()
+                    }
+                except Exception as diagnostic_error:
+                    fields["diagnostic_error"] = _exception_detail(diagnostic_error)
+                recorder.event("command_rejected", **fields)
+            except Exception:
+                logger.exception("failed to record rejected command")
+            logger.exception("command_rejected stage=%s plan=%s", failure_stage, command.plan_id)
+            raise
+
     def run(self) -> RunResult:  # noqa: C901 - the safety-critical loop stays linear
         started_wall = time.perf_counter()
         sensor_reader = SensorReader(
@@ -479,6 +555,8 @@ class EdgeRuntime:
                 "inference_schedule": self._scheduler.mode,
                 "request_trigger": self._scheduler.trigger,
                 "observation_hz": self._config["inference"]["observation_hz"],
+                "min_plan_hold_policy_steps": self._min_execute_steps,
+                "command_limits": self._safety.execution_limits(),
                 "policy_label": self._config["robogui"]["policy_label"],
                 "policy_worker": self._config["policy"]["worker"],
                 "policy_adapter": self._config["policy"]["adapter"]["type"],
@@ -509,6 +587,22 @@ class EdgeRuntime:
         discard_responses_through = -1
         pending_visuals: dict[int, dict[str, object]] = {}
         pending_observation_states: dict[int, RobotState] = {}
+        pending_response = None
+
+        def reject_response(response, reason):
+            nonlocal rejected_plans
+            logger.warning("inference_rejected seq=%d reason=%s", response.request_seq, reason)
+            self._strategy.on_response_rejected(response)
+            rejected_plans += 1
+            recorder.event("inference_rejected", request_seq=response.request_seq, reason=reason)
+            with stage("robogui_publish_event"):
+                self._robogui.publish_event(
+                    "inference_rejected", step=steps, chunk_id=response.request_seq,
+                    metadata={"reason": reason},
+                )
+            pending_visuals.pop(response.request_seq, None)
+            pending_observation_states.pop(response.request_seq, None)
+
         worker_failure_reported = False
         last_dispatch_log_ns = 0
         last_dispatch_plan_id: object = object()
@@ -645,6 +739,9 @@ class EdgeRuntime:
                     break
                 if robogui_control.home_requested:
                     timing.set_phase("homing")
+                    if pending_response is not None:
+                        reject_response(pending_response, "invalidated_by_pause_or_home")
+                        pending_response = None
                     self._robot.home()
                     state = self._robot.get_state()
                     self._safety.reset(state)
@@ -743,9 +840,7 @@ class EdgeRuntime:
                     self._executor.reset(state)
                     command = self._hold_command(self._clock.now_ns(), state.groups)
                     self._safety.reset(state)
-                    with stage("safety_command"):
-                        self._safety.validate_command(command)
-                    self._robot.send_command(command)
+                    self._send_command(command, state, recorder, step=steps)
                     previous_command = copy_group_vector(last_command)
                     last_command = copy_group_vector(command.groups)
                     with stage("robogui_publish_state"):
@@ -764,6 +859,7 @@ class EdgeRuntime:
                 if robogui_control.paused and (
                     self._decoder is not None
                     or self._multi_inflight
+                    or self._min_execute_steps
                     or (
                         self._config["inference"]["inference_schedule"] == "serial"
                         and self._config["inference"]["algorithm"] in {"async", "serial"}
@@ -772,6 +868,9 @@ class EdgeRuntime:
                 ):
                     # RTC conditions must not refer to the timeline discarded
                     # by Pause/Hold while a decoder response is still pending.
+                    if pending_response is not None:
+                        reject_response(pending_response, "invalidated_by_pause_or_home")
+                        pending_response = None
                     if self._state != RuntimeState.PAUSED:
                         self._strategy.reset()
                         self._scheduler.reset()
@@ -867,56 +966,48 @@ class EdgeRuntime:
                                 )
                                 # Keep inference+decode in flight until both arms finish.
                                 response = None
+                if self._min_execute_steps:
+                    # Buffer raw results so decoding, candidate selection and time
+                    # trimming all use the eventual handoff clock. Receipt frees
+                    # the inference slot; consuming an older buffered result does not.
+                    if response is not None:
+                        if response.request_seq == last_submitted_seq:
+                            request_in_flight = False
+                        reason = self._response_rejection_reason(
+                            response, last_submitted_seq=last_submitted_seq,
+                            last_request_deadline_ns=last_request_deadline_ns,
+                            discard_responses_through=discard_responses_through,
+                        )
+                        if reason is None and pending_response is not None:
+                            if response.request_seq <= pending_response.request_seq:
+                                reason = "superseded_pending_response"
+                            else:
+                                reject_response(pending_response, "superseded_pending_response")
+                        if reason is None:
+                            pending_response = response
+                        else:
+                            reject_response(response, reason)
+                        response = None
+                    now_ns = self._clock.now_ns()
+                    if pending_response is not None and self._timeline.replacement_ready(
+                        now_ns, self._min_execute_steps,
+                    ):
+                        response, pending_response = pending_response, None
+
                 if response is not None:
-                    request_in_flight = False
+                    if not self._min_execute_steps:
+                        request_in_flight = False
                     observation_state = pending_observation_states.pop(
                         response.request_seq, None
                     )
                     submission_visuals = pending_visuals.get(response.request_seq, {})
-                    rejection_reason = None
-                    if response.error is not None:
-                        rejection_reason = response.error
-                    elif response.session_id != self._session_id:
-                        rejection_reason = "session_mismatch"
-                    elif response.request_seq <= discard_responses_through:
-                        rejection_reason = "invalidated_by_pause_or_home"
-                    elif not self._multi_inflight and response.request_seq < last_submitted_seq:
-                        rejection_reason = "superseded_response"
-                    elif (
-                        self._multi_inflight
-                        and response.request_seq <= self._timeline.accepted_request_seq
-                    ):
-                        # Reject before ACT can add an out-of-order chunk to its history.
-                        rejection_reason = "stale_request_seq"
-                    elif response.finished_time_ns > (
-                        response.deadline_ns if self._multi_inflight else last_request_deadline_ns
-                    ):
-                        rejection_reason = "inference_deadline_exceeded"
-                    elif self._multi_inflight and self._clock.now_ns() > response.deadline_ns:
-                        rejection_reason = "deadline_exceeded_before_decode"
-                    elif response.raw_action is None:
-                        rejection_reason = "missing_action"
+                    rejection_reason = self._response_rejection_reason(
+                        response, last_submitted_seq=last_submitted_seq,
+                        last_request_deadline_ns=last_request_deadline_ns,
+                        discard_responses_through=discard_responses_through,
+                    )
                     if rejection_reason is not None:
-                        logger.warning(
-                            "inference_rejected seq=%d reason=%s",
-                            response.request_seq,
-                            rejection_reason,
-                        )
-                        self._strategy.on_response_rejected(response)
-                        rejected_plans += 1
-                        recorder.event(
-                            "inference_rejected",
-                            request_seq=response.request_seq,
-                            reason=rejection_reason,
-                        )
-                        with stage("robogui_publish_event"):
-                            self._robogui.publish_event(
-                                "inference_rejected",
-                                step=steps,
-                                chunk_id=response.request_seq,
-                                metadata={"reason": rejection_reason},
-                            )
-                        pending_visuals.pop(response.request_seq, None)
+                        reject_response(response, rejection_reason)
                     else:
                         try:
                             decode_start = time.perf_counter_ns()
@@ -985,7 +1076,7 @@ class EdgeRuntime:
                             self._strategy
                             if isinstance(self._strategy, StrategyChunkSelector) else None
                         )
-                        if chunk is not None and selector is None:
+                        if chunk is not None and selector is None and not self._min_execute_steps:
                             try:
                                 with stage("strategy_prepare_chunk"):
                                     chunk = prepare_strategy_chunk(
@@ -1061,6 +1152,7 @@ class EdgeRuntime:
                                                 chunk=chunk, now_ns=now_ns,
                                             )
                                             canonical_raw = copy_action_chunk(chunk)
+                                        if selector is not None or self._min_execute_steps:
                                             chunk = prepare_strategy_chunk(
                                                 self._strategy, chunk=chunk,
                                                 response=response, now_ns=now_ns,
@@ -1220,6 +1312,7 @@ class EdgeRuntime:
                     (
                         self._decoder is not None
                         or self._multi_inflight
+                        or self._min_execute_steps
                         or getattr(self._strategy, "discard_plans_while_paused", False)
                     )
                     and self._state != RuntimeState.RUNNING
@@ -1353,9 +1446,9 @@ class EdgeRuntime:
                             groups=self._executor.gripper_diagnostics,
                         )
                 elif self._state == RuntimeState.RUNNING:
-                    # Every strategy holds the last sent command during a timeline gap.
-                    # Reset executor velocity history to the held command, so a new
-                    # chunk does not resume with velocity left over before the wait.
+                    # During a timeline gap, target the last sent command. Bounded
+                    # Smooth decelerates while retaining the emitted velocity;
+                    # other executors retain their existing hold/reset behavior.
                     held_state = RobotState(
                         groups=copy_group_vector(last_command),
                         monotonic_ns=now_ns,
@@ -1379,8 +1472,6 @@ class EdgeRuntime:
                             state.sequence,
                         )
                     )
-                with stage("safety_command"):
-                    self._safety.validate_command(command)
                 log_dispatch = (
                     command.plan_id != last_dispatch_plan_id
                     or now_ns - last_dispatch_log_ns >= 1_000_000_000
@@ -1398,19 +1489,7 @@ class EdgeRuntime:
                             for name, values in command.groups.items()
                         },
                     )
-                try:
-                    self._robot.send_command(command)
-                except Exception:
-                    logger.exception(
-                        "command_dispatch_failed runtime_state=%s plan=%s execute=%s "
-                        "end_effector_control=%s groups=%s",
-                        self._state.value,
-                        command.plan_id,
-                        self._config["robot"]["options"].get("execute"),
-                        self._config["robot"]["options"].get("end_effector_control"),
-                        list(command.groups),
-                    )
-                    raise
+                self._send_command(command, state, recorder, step=steps)
                 if log_dispatch:
                     logger.info(
                         "command_sent plan=%s physical_dispatch=%s",
