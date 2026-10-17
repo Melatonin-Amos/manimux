@@ -5,6 +5,9 @@ directories and their collection entries are local and ignored by Git. Creating
 a local study does not publish it; explicitly update the allowlist in `.gitignore`
 when another study is intended for sharing. Shared component/task definitions are
 maintained separately from these installation-specific experiment variants.
+Task definitions needed only by historical local variants live in the ignored
+`../local/tasks/` directory; the public `../tasks/` directory contains shared task
+definitions rather than migration-generated legacy copies.
 
 Store reusable variants under `<model-checkpoint>/<task>/<variant>.yaml`.
 Use `_base_.yaml` only for shared choices, and inherit task definitions from

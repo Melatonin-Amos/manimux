@@ -79,3 +79,6 @@ logs/
 !/manimux/configs/experiments/pi05-latest300ep-step30000/
 /manimux/configs/collections/*
 !/manimux/configs/collections/pi05-latest300ep-step30000.yaml
+
+# Task definitions used only by private/historical experiment variants.
+/manimux/configs/local/tasks/
