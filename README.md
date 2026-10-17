@@ -187,8 +187,11 @@ and model services. `serve` does not start those services for you.
 ```bash
 # From the repository root, after starting cameras, RoboGUI and the matching model:
 envs/yam/.venv/bin/python -m manimux serve \
-  --config-list manimux/configs/experiment_lists/yam_pi05_latest300ep.yaml
+  --config-list manimux/configs/experiments/pi05-latest300ep-step30000/step32/catalog.yaml
 ```
+
+Study configs live under `manimux/configs/experiments/<study>/`; recordings mirror their setting/task/method directories under `data/experiments/<study>/`. Restarting adds a session, not another dated config. See the [storage protocol](guideline.html#study-storage-protocol).
+
 
 The current list has **five tasks × six methods**: coin, medium blocks, bottles,
 rotating clock and moving cube; Serial, Async, RTC, AutoHorizon, PAINT and

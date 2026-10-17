@@ -118,7 +118,8 @@ XPolicyLab/policy/<POLICY>/  # when XPolicyLab owns the model
 manimux/policies/<framework>/
     PolicyModel client + framework wire codec
 manimux/configs/policy/<model>/<embodiment>/<task>/
-manimux/configs/experiments/<task>/<model>/<embodiment>_<model>_<variant>.yaml
+manimux/configs/experiments/<task>/<model>/<embodiment>_<model>_<variant>.yaml  # standalone
+manimux/configs/experiments/<study>/{protocol.yaml,<setting>/catalog.yaml,<setting>/<task>/<method>.yaml}
 manimux/configs/inference/
 manimux/configs/executor/
 .agents/skills/manimux-inference/references/deployment/<model>-<embodiment>.md

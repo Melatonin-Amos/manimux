@@ -5,6 +5,9 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
+import json
+import math
+import re
 from pathlib import Path
 
 
@@ -21,6 +24,7 @@ class ExperimentChoice:
             "id": self.id, "label": self.label, "config_path": str(self.path),
             "task": self.config["run"]["task"],
             "method": self.config["inference"]["algorithm"],
+            "initial_pose": deepcopy(self.config["run"].get("initial_pose", {"id": "default", "label": "Default pose"})),
         }
 
 
@@ -61,21 +65,70 @@ class ExperimentList:
                 **self.choices[choice_id].metadata()}
 
 
+def _pose_choices(choice: ExperimentChoice, path: Path) -> list[ExperimentChoice]:
+    """Expand trusted pose presets without copying experiment YAMLs or moving hardware."""
+    from manimux.cli import read_yaml
+
+    raw = read_yaml(path)
+    if set(raw) != {"poses"} or not isinstance(raw["poses"], dict):
+        raise ValueError("Initial pose file requires a poses mapping")
+    options = choice.config["robot"]["options"]
+    if not options.get("move_to_start_on_connect") or not isinstance(options.get("start_joints"), dict):
+        raise ValueError("Initial pose presets require configured move_to_start_on_connect/start_joints")
+    dimensions = choice.config["robot"]["group_dims"]
+    result = [choice]
+    labels = {"Default pose"}
+    for pose_id, pose in raw["poses"].items():
+        if not isinstance(pose_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", pose_id) or pose_id == "default":
+            raise ValueError("Initial pose ID must be a non-default path-safe name")
+        if not isinstance(pose, dict) or set(pose) - {"label", "joints", "duration_s", "source"}:
+            raise ValueError(f"Invalid initial pose {pose_id}")
+        label = pose.get("label", pose_id)
+        if not isinstance(label, str) or not label.strip() or label in labels:
+            raise ValueError(f"Duplicate or empty initial pose label: {label}")
+        labels.add(label)
+        joints = pose.get("joints")
+        if not isinstance(joints, dict) or set(joints) != set(dimensions):
+            raise ValueError(f"Initial pose {pose_id} must specify every robot group")
+        for group, size in dimensions.items():
+            values = joints[group]
+            if not isinstance(values, list) or len(values) != size or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values
+            ):
+                raise ValueError(f"Invalid initial pose coordinates for {group}")
+        duration = pose.get("duration_s", options.get("start_duration_s"))
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
+            raise ValueError("Initial pose duration must be finite and positive")
+        digest = hashlib.sha256(json.dumps({"joints": joints, "duration_s": duration}, sort_keys=True).encode()).hexdigest()
+        config = deepcopy(choice.config)
+        config["robot"]["options"].update(start_joints=deepcopy(joints), start_duration_s=duration)
+        config["run"]["initial_pose"] = {"id": pose_id, "label": label, "joints": deepcopy(joints),
+            "duration_s": duration, "sha256": digest, "source": deepcopy(pose.get("source"))}
+        output = Path(config["run"]["output_dir"]) / "initial_pose" / pose_id
+        for manifest in output.glob("session-*/session-manifest.json"):
+            saved = json.loads(manifest.read_text())["config"]["run"].get("initial_pose", {})
+            if saved.get("sha256") != digest:
+                raise ValueError(f"Initial pose {pose_id} changed after collection; use a new pose ID")
+        config["run"]["output_dir"] = output
+        result.append(ExperimentChoice(f"{choice.id}::pose:{pose_id}", choice.label, choice.path, config, choice.sha256))
+    return result
+
+
 def load_experiment_list(path: str | Path, *, local: Path | None = None,
                          executor: str | None = None, control_timing: bool = False) -> ExperimentList:
     from manimux.cli import _load_config, read_yaml
 
     source = Path(path).expanduser().resolve()
     raw = read_yaml(source)
-    if set(raw) != {"experiments"} or not isinstance(raw["experiments"], list) or not raw["experiments"]:
+    if set(raw) - {"experiments", "initial_poses"} or not isinstance(raw.get("experiments"), list) or not raw["experiments"]:
         raise ValueError("Experiment list requires a nonempty experiments list")
     choices: list[ExperimentChoice] = []
     ids: set[str] = set()
     outputs: set[Path] = set()
     contract = None
     for entry in raw["experiments"]:
-        if not isinstance(entry, dict) or set(entry) - {"id", "config", "label"}:
-            raise ValueError("Each experiment entry accepts id, config and optional label")
+        if not isinstance(entry, dict) or set(entry) - {"id", "config", "label", "initial_poses"}:
+            raise ValueError("Each experiment entry accepts id, config, optional label and initial_poses")
         choice_id = entry.get("id")
         if not isinstance(choice_id, str) or not choice_id.strip() or choice_id in ids:
             raise ValueError(f"Experiment id must be a unique nonempty string: {choice_id!r}")
@@ -102,5 +155,18 @@ def load_experiment_list(path: str | Path, *, local: Path | None = None,
             raise ValueError(f"Duplicate config label for task {task}: {label}")
         ids.add(choice_id)
         outputs.add(output)
-        choices.append(ExperimentChoice(choice_id, label, config_path, deepcopy(config), config_sha256))
+        choice = ExperimentChoice(choice_id, label, config_path, deepcopy(config), config_sha256)
+        expanded = [choice]
+        pose_file = entry.get("initial_poses", raw.get("initial_poses"))
+        if pose_file is not None:
+            if not isinstance(pose_file, str):
+                raise ValueError("initial_poses must reference a pose file")
+            expanded = _pose_choices(choice, (source.parent / pose_file).resolve())
+        for variant in expanded[1:]:
+            variant_output = Path(variant.config["run"]["output_dir"]).resolve()
+            if variant.id in ids or variant_output in outputs:
+                raise ValueError("Duplicate initial pose choice or output path")
+            ids.add(variant.id)
+            outputs.add(variant_output)
+        choices.extend(expanded)
     return ExperimentList(source, choices, hashlib.sha256(source.read_bytes()).hexdigest())

@@ -53,7 +53,9 @@ Follow the stages that remain unfinished; do not repeat an already working deplo
    services must use the same experiment/station; do not substitute weights for a method.
 3. **Create the experiment.** Start from a matching working deployment or the
    [annotated complete example](../../../manimux/configs/examples/README.md).
-   Save under `manimux/configs/experiments/<task>/<model>/`; keep device bindings in
+   For a managed study, save under `manimux/configs/experiments/<study>/<setting>/<task>/`
+   with a stable `protocol.yaml` and catalog; existing standalone recipes may retain
+   `<task>/<model>/`. Mirror setting/task/method in `data/experiments/<study>/`. Keep device bindings in
    the private station, checkpoint/sampler choices in `policy_server`, and timing in
    `inference`. Fix relative references after copying. Give each compared setting a
    distinct `run.output_dir`. Select execution, startup motion and Home explicitly.
@@ -78,6 +80,19 @@ Selection is idle-only after recovery/evaluation. The catalog is loaded at serve
 startup: disk edits require a runtime restart; model/camera changes may also require
 those services to restart. Never silently restart an active experiment. Templates
 track layouts/repeats; they do not automatically randomize or schedule a campaign.
+
+## Stable study storage
+
+Follow [storage protocol](../../../guideline.html#study-storage-protocol). Reuse the
+same config/output for service restarts; dates belong only to generated session IDs.
+Name new settings by the changed scientific variable, not the day. Record a deliberate
+independent replication explicitly instead of evading completed-repeat counters.
+Before moving records, classify each saved manifest; keep adaptive selectors separate
+from fixed windows and distinguish Async refill/progress and RTC beta. Move whole
+sessions, preserve snapshots/labels, verify hashes and retain a path mapping. Historical
+aliases must not be counted alongside canonical paths. Update README, guideline and
+active catalog references when retiring launch entries. This user's Pi05 active protocol
+uses K=32; old K=16 records are archival and must not be supplied as new launch commands.
 
 ## Evaluate saved trials
 

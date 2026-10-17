@@ -466,6 +466,7 @@ class EdgeRuntime:
                 "episode_id": episode_id,
                 "session_id": self._session_id,
                 "task": self._config["run"]["task"],
+                "initial_pose": deepcopy(self._config["run"].get("initial_pose")),
                 "evaluation": dict(self._evaluation),
                 "executor_kind": self._config["executor"]["type"],
                 "execution_ik": self._config.get("execution", {}).get("ik", {"mode": "chunk"}),

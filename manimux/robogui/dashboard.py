@@ -281,6 +281,12 @@ class PolicyRoboGUI:
             self.experiment_config = self.server.gui.add_dropdown(
                 "Method / Config", ("—",), disabled=True, visible=False,
             )
+            self.initial_pose = self.server.gui.add_dropdown(
+                "Initial pose", ("Default pose",), disabled=True, visible=False,
+            )
+            self.initial_pose_hint = self.server.gui.add_markdown(
+                "Prepare moves to the selected pose. Selection alone does not move the robot.", visible=False,
+            )
             self.layout = self.server.gui.add_dropdown("Layout", ("—",), disabled=True)
             self.layout_progress = self.server.gui.add_markdown("")
             self.prepare_normal_btn = self.server.gui.add_button(
@@ -433,8 +439,10 @@ class PolicyRoboGUI:
                               if c["task"] == self.experiment_task.value]
                 current = next((c for c in self._experiment_choices
                                 if c["id"] == self._experiment_id), {})
-                choice = next((c for c in candidates if c["label"] == current.get("label")),
-                              candidates[0] if candidates else None)
+                choice = next((c for c in candidates if c["label"] == current.get("label")
+                               and c.get("initial_pose", {}).get("id", "default") == current.get("initial_pose", {}).get("id", "default")),
+                              next((c for c in candidates if c["label"] == current.get("label")),
+                                   candidates[0] if candidates else None))
                 if choice is not None:
                     self._request_experiment(choice["id"])
 
@@ -445,7 +453,20 @@ class PolicyRoboGUI:
             with self.lock:
                 choice = next((c for c in self._experiment_choices
                                if c["task"] == self.experiment_task.value
-                               and c["label"] == self.experiment_config.value), None)
+                               and c["label"] == self.experiment_config.value
+                               and c.get("initial_pose", {}).get("label", "Default pose") == self.initial_pose.value), None)
+                if choice is not None:
+                    self._request_experiment(choice["id"])
+
+        @self.initial_pose.on_update
+        def _select_initial_pose(event: Any) -> None:
+            if event.client is None:
+                return
+            with self.lock:
+                choice = next((c for c in self._experiment_choices
+                    if c["task"] == self.experiment_task.value
+                    and c["label"] == self.experiment_config.value
+                    and c.get("initial_pose", {}).get("label", "Default pose") == self.initial_pose.value), None)
                 if choice is not None:
                     self._request_experiment(choice["id"])
 
@@ -1200,6 +1221,7 @@ class PolicyRoboGUI:
         can_prepare = allowed and not self.preparing_rollout and not self.episode_active
         self.experiment_task.disabled = not can_prepare
         self.experiment_config.disabled = not can_prepare
+        self.initial_pose.disabled = not can_prepare
         self.prepare_normal_btn.disabled = not can_prepare
         self.prepare_experiment_btn.disabled = not can_prepare
         self.unscored_experiment.disabled = not can_prepare or not self._unscored_experiments
@@ -1247,13 +1269,20 @@ class PolicyRoboGUI:
         visible = bool(self._experiment_choices)
         self.experiment_task.visible = self.experiment_config.visible = visible
         if not visible:
+            self.initial_pose.visible = self.initial_pose_hint.visible = False
             return
         choice = next(c for c in self._experiment_choices if c["id"] == self._experiment_id)
         self.experiment_task.options = tuple(dict.fromkeys(c["task"] for c in self._experiment_choices))
         self.experiment_task.value = choice["task"]
-        self.experiment_config.options = tuple(c["label"] for c in self._experiment_choices
-                                               if c["task"] == choice["task"])
+        self.experiment_config.options = tuple(dict.fromkeys(c["label"] for c in self._experiment_choices
+                                               if c["task"] == choice["task"]))
         self.experiment_config.value = choice["label"]
+        self.initial_pose.options = tuple(dict.fromkeys(
+            c.get("initial_pose", {}).get("label", "Default pose") for c in self._experiment_choices
+            if c["task"] == choice["task"] and c["label"] == choice["label"]))
+        self.initial_pose.value = choice.get("initial_pose", {}).get("label", "Default pose")
+        self.initial_pose.visible = True
+        self.initial_pose_hint.visible = len(self.initial_pose.options) > 1
 
     def _request_experiment(self, choice_id: str) -> None:
         if (not self.service_ready or not self.evaluation_complete or self.preparing_rollout
