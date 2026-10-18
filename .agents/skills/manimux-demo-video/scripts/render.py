@@ -351,8 +351,11 @@ def showcase(t):
         centered('Any embodiment × Any policy × Any inference',558,42,'#343434',550,10.1)
         a=ease((age-10.3)/.8)
         ImageDraw.Draw(im).rectangle((W//2-int(90*a),655,W//2+int(90*a),660),fill='#76b900')
-        centered('MANIMUX: AN OPEN-SOURCE HARNESS FOR REAL-WORLD',710,36,'#5d5d5d',550,10.5)
-        centered('MANIPULATION INFERENCE AND EXPERIMENT MANAGEMENT',766,36,'#5d5d5d',550,10.65)
+        # Read the tiny title file here so editorial corrections made during the
+        # earlier scenes can reach the closing card without restarting the export.
+        title_lines=(ASSETS/'closing-title.txt').read_text().strip().splitlines()
+        for i,line in enumerate(title_lines):
+            centered(line,710+i*56,36,'#5d5d5d',550,10.5+i*.15)
         centered('Concept preview · Repeated synthetic footage',1006,20,'#777777',500,10.7)
     return im
 

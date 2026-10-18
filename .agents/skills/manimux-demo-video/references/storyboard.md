@@ -19,8 +19,12 @@ charcoal and deep green #28513A on the white closing card; the accent remains
 
 The closing subtitle uses the exact paper title, broken into two lines:
 
-MANIMUX: AN OPEN-SOURCE HARNESS FOR REAL-WORLD
-MANIPULATION INFERENCE AND EXPERIMENT MANAGEMENT
+An open-source harness for real-world
+manipulation inference and experiment management
+
+The large ManiMux wordmark above supplies the paper's name. The subtitle omits
+the redundant MANIMUX prefix and uses sentence case. Its two lines live in
+assets/closing-title.txt, read when the closing scene renders.
 
 Blocks fall with acceleration, slight tilt, soft bounce, then settle into stable
 rows. Clip entries to the container interior, not across the headline. Commands
