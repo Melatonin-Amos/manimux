@@ -11,8 +11,8 @@ and a runtime designed for **100–200 Hz command execution**.
 
 **Policy × Runtime × Embodiment**
 
-[![Documentation](https://img.shields.io/badge/Documentation-Guide-2563EB?style=flat-square)](https://sii-liulab.github.io/manimux/)
-[![Demo video](https://img.shields.io/badge/Demo-Watch%20video-EF4444?style=flat-square)](https://sii-liulab.github.io/manimux/#manimux)
+[![Documentation](https://img.shields.io/badge/Documentation-Guide-2563EB?style=flat-square)](https://sii-liulab.github.io/manimux/guideline.html)
+[![Demo video](https://img.shields.io/badge/Demo-Watch%20video-EF4444?style=flat-square)](https://sii-liulab.github.io/manimux/#recordings)
 [![Agent skills](https://img.shields.io/badge/Develop-Agent%20skills-8B5CF6?style=flat-square)](.agents/skills/manimux-development/SKILL.md)
 
 [![Policy recipes: 14](https://img.shields.io/badge/Policy%20recipes-14-F59E0B?style=flat-square)](#included-integrations)
@@ -20,11 +20,11 @@ and a runtime designed for **100–200 Hz command execution**.
 [![Embodiments: 4](https://img.shields.io/badge/Embodiments-4-06B6D4?style=flat-square)](#included-integrations)
 [![Actively maintained](https://img.shields.io/badge/Status-Actively%20maintained-14B8A6?style=flat-square)](https://github.com/SII-LiuLab/manimux/commits/main/)
 
-[Quick start](#quick-start) · [Architecture](#architecture) · [Integrate](#integrate) · [Documentation](https://sii-liulab.github.io/manimux/) · [Citation](#citation)
+[Website](https://sii-liulab.github.io/manimux/) · [Quick start](#quick-start) · [Architecture](#architecture) · [Integrate](#integrate) · [Documentation](https://sii-liulab.github.io/manimux/guideline.html) · [Citation](#citation)
 
 </div>
 
-> **[Read the ManiMux Guide →](https://sii-liulab.github.io/manimux/) · [HTML source](guideline.html)**
+> **[Read the ManiMux Guide →](https://sii-liulab.github.io/manimux/guideline.html) · [HTML source](guideline.html)**
 > Installation, station setup, deployment recipes, RoboGUI workflows and integration protocols.
 > For agent-led development, start with the [development skill](.agents/skills/manimux-development/SKILL.md).
 
@@ -34,7 +34,7 @@ and a runtime designed for **100–200 Hz command execution**.
 - **2026-10-12** — Added [task and method switching](guideline.html#experiment-lists) from a config list, template-driven partial scores and explicit warmup controls.
 
 - **2026-10-02** — Added [ALOHA-AgileX](.agents/skills/manimux-station-setup/references/aloha.md) and [PiPER](.agents/skills/manimux-station-setup/references/piper.md) RoboGUI demos, plus experimental [ARX X5 / PiPER controllers](.agents/skills/manimux-station-setup/references/can-arms.md). Hardware validation is pending.
-- **2026-10-01** — The [ManiMux Guide](https://sii-liulab.github.io/manimux/) is live, covering setup, deployment, RoboGUI and integration protocols.
+- **2026-10-01** — The [ManiMux Guide](https://sii-liulab.github.io/manimux/guideline.html) is live, covering setup, deployment, RoboGUI and integration protocols.
 - **2026-10-01** — Updated [research workflows](guideline.html#experiments) and [agent integration guides](.agents/skills/manimux-development/references/README.md) for free exploration, study templates and component development.
 
 ## RoboGUI
@@ -306,7 +306,7 @@ Please also cite the components, models and methods used in your work:
 
 </details>
 
-[Third-party notices](licenses/THIRD_PARTY_NOTICES.md) · [Upstream licenses](licenses) · [Documentation](https://sii-liulab.github.io/manimux/)
+[Third-party notices](licenses/THIRD_PARTY_NOTICES.md) · [Upstream licenses](licenses) · [Documentation](https://sii-liulab.github.io/manimux/guideline.html)
 
 ## License
 
