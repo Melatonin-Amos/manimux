@@ -17,6 +17,11 @@ background is white with a faint blurred wall. The video wordmark is white on
 charcoal and deep green #28513A on the white closing card; the accent remains
 #76B900. Use a small number of brand colors rather than tinting every label.
 
+The closing subtitle uses the exact paper title, broken into two lines:
+
+MANIMUX: AN OPEN-SOURCE HARNESS FOR REAL-WORLD
+MANIPULATION INFERENCE AND EXPERIMENT MANAGEMENT
+
 Blocks fall with acceleration, slight tilt, soft bounce, then settle into stable
 rows. Clip entries to the container interior, not across the headline. Commands
 have deterministic uneven per-character delays; output follows line by line.

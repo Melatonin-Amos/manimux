@@ -351,7 +351,8 @@ def showcase(t):
         centered('Any embodiment × Any policy × Any inference',558,42,'#343434',550,10.1)
         a=ease((age-10.3)/.8)
         ImageDraw.Draw(im).rectangle((W//2-int(90*a),655,W//2+int(90*a),660),fill='#76b900')
-        centered('The real-robot harness.',710,30,'#5d5d5d',500,10.5)
+        centered('MANIMUX: AN OPEN-SOURCE HARNESS FOR REAL-WORLD',710,36,'#5d5d5d',550,10.5)
+        centered('MANIPULATION INFERENCE AND EXPERIMENT MANAGEMENT',766,36,'#5d5d5d',550,10.65)
         centered('Concept preview · Repeated synthetic footage',1006,20,'#777777',500,10.7)
     return im
 
