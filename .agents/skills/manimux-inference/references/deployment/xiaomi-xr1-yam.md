@@ -1,5 +1,24 @@
 # Xiaomi XR-1 + YAM runbook
 
+## Local bottles-30k step-IK trial configuration
+
+The local config list `manimux/configs/lists/xiaomi-xr1-bottles30k-ratio64-step-ik-all-tasks.yaml`
+selects five tasks with Serial/Async/RTC/PAINT at 19/30 source steps.
+BID and AutoHorizon are currently rejected by the step-IK compatibility validator;
+do not advertise them as step-IK options or silently fall back to chunk IK. Each `*_step_ik.yaml` variant
+inherits the corresponding original recipe, sets `execution.ik.mode: step` with a
+5 ms total IK budget, and has a distinct variant/output identity without imported
+chunk-IK history. The checkpoint, normalization, inference parameters and robot
+settings are unchanged. This list is installation-local and ignored by Git.
+
+The XR1 adapter reconstructs absolute TCP poses using the request-time observation
+anchor; the execution pipeline solves the current target from measured joints each
+control tick. RTC conditions use the adapter's pose-space codec. LingBot's joint
+output requires no IK. Configuration checks and synthetic codec tests are not
+closed-loop hardware validation. Use the common camera/policy/runtime
+`--config-list` workflow; only the operator performs Prepare/Start.
+
+
 > 2026-10-09: The old screwdriver, red-object, pass-ball and offline experiment entries below were retired. These commands are historical; select a current entry from the [experiment index](../../../../../manimux/configs/experiments/README.md). Diagnostic tools now require an explicit experiment argument.
 
 
@@ -22,6 +41,15 @@ The separately released RoboCasa / RoboCasa365 / VLABench weights also target sp
 and cannot directly drive dual-arm YAM.
 
 ## Action pipeline
+
+YAM XR1 reconstructs each gripper opening as observation opening plus the predicted
+delta, then clips the absolute opening to `[0, 1]` for both chunk IK and step IK.
+The local experiment bases explicitly declare `policy.adapter.gripper_output: clip`.
+Non-finite actions, anchors and reconstructed openings are rejected. Raw deltas and
+observations are not modified. Chunk metadata records `gripper_output` and
+`gripper_clip_max_abs`; pose validation and IK constraints remain unchanged.
+The current list entries use variant suffix `_grip_clip`, keeping recordings from
+the earlier tolerance-based variant separate.
 
 ```text
 Three RGB views + 14-D YAM state
@@ -114,8 +142,8 @@ The probe must return finite `native_shape: [30, 60]` and `canonical_shape: [30,
 Only after it passes, start cameras and have the operator run:
 
 ```bash
-envs/yam/.venv/bin/manimux serve \
-  --collection manimux/configs/collections/xiaomi-xr1-custom-standalone.yaml --experiment-id put_bottles_manimux
+envs/yam/.venv/bin/manimux run \
+  --config-list manimux/configs/lists/xiaomi-xr1-custom-standalone.yaml --experiment-id put_bottles_manimux
 ```
 
 30 Hz remains a YAM comparison assumption, not official checkpoint metadata. Task capability is a
@@ -157,7 +185,7 @@ Do not start another instance if a camera service already uses `5555`:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux-camera-server --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 ```
 
 <a id="terminal-3robogui"></a>
@@ -182,8 +210,8 @@ Run only when both interfaces report `ERROR-ACTIVE`:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux serve \
-  --collection manimux/configs/collections/xiaomi-xr1-custom-standalone.yaml --experiment-id put_bottles_manimux
+envs/yam/.venv/bin/manimux run \
+  --config-list manimux/configs/lists/xiaomi-xr1-custom-standalone.yaml --experiment-id put_bottles_manimux
 ```
 
 The first `5.0 s` after connection moves to the configured initial pose; these are not model actions. Afterward, XR-1 actions pass through
@@ -203,8 +231,8 @@ It neither constructs the 5B model nor accesses a GPU. Only after the base serve
 pass should the same server be used for RTC comparison:
 
 ```bash
-envs/yam/.venv/bin/manimux run --config manimux/configs/experiments/assemble_screwdriver/xiaomi-xr1/yam_xiaomi_xr1_manimux_step15000.yaml
-envs/yam/.venv/bin/manimux run --config manimux/configs/experiments/assemble_screwdriver/xiaomi-xr1/yam_xiaomi_xr1_rtc_step15000.yaml
+envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/assemble_screwdriver/xiaomi-xr1/yam_xiaomi_xr1_manimux_step15000.yaml
+envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/assemble_screwdriver/xiaomi-xr1/yam_xiaomi_xr1_rtc_step15000.yaml
 ```
 
 Do not run Async and RTC concurrently. See [RoboGUI](../../../manimux-development/references/runtime-config.md) for camera/GUI operation and

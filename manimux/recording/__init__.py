@@ -1,6 +1,19 @@
-from manimux.recording.episode import EpisodeRecorder
+"""Recording configuration stays usable without the storage runtime installed."""
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from manimux.recording.episode import EpisodeRecorder
 
 __all__ = ["EpisodeRecorder"]
+
+
+def __getattr__(name: str):
+    if name == "EpisodeRecorder":
+        from manimux.recording.episode import EpisodeRecorder
+
+        return EpisodeRecorder
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def recording_parameters(**options) -> dict:

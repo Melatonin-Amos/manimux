@@ -51,10 +51,10 @@ envs/yam/.venv/bin/python - <<'PYCODE'
 from pprint import pprint
 from manimux.collections import load_collection
 
-catalog = load_collection('manimux/configs/collections/pi05-latest300ep-step30000.yaml')
+catalog = load_collection('manimux/configs/lists/pi05-latest300ep-step30000.yaml')
 config = catalog.choices['coin_rtc'].config
 pprint({
-    'task': config['run']['task'],
+    'task': config['run']['task_prompt'],
     'output_dir': config['run']['output_dir'],
     'action_dt_s': config['policy']['action_dt_s'],
     'horizon': config['policy']['horizon_policy_steps'],
@@ -73,7 +73,7 @@ weights or listening on a port:
 
 ```bash
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
   --check
 ```
 
@@ -86,7 +86,7 @@ backend capability handshake, connected robot or task success.
 Use the [four-process launch sequence](../../../../../guideline.html#launch): camera,
 RoboGUI, Pi05 server and ManiMux runtime. Reuse compatible live services instead of
 starting a second owner. Camera, model and runtime use the same collection/station.
-`serve` does not launch the other services. Prepare can connect and move the robot
+`run` does not launch the other services. Prepare can connect and move the robot
 according to the experiment; it is not an offline check.
 
 For several tasks/methods sharing one deployment, use a

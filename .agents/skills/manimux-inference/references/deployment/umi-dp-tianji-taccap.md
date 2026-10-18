@@ -179,13 +179,13 @@ Start the camera service on the computer with the wrist cameras:
 
 ```bash
 envs/tianji/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml
+  --config manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml
 ```
 
 Start the hardware runtime:
 
 ```bash
-envs/tianji/.venv/bin/python -m manimux serve \
+envs/tianji/.venv/bin/python -m manimux run \
   --config manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml
 ```
 
@@ -199,8 +199,8 @@ envs/tianji/.venv/bin/python -m manimux.robogui.dashboard \
 The camera and runtime read the station referenced by the bound experiment. The model
 command intentionally uses the standalone server snapshot whose checkpoint identity was
 verified while binding. For another station, regenerate the pair with that station before
-starting the services. `manimux serve` keeps the runtime available for RoboGUI-controlled
-rollouts; use `manimux run` only for an immediate single session.
+starting the services. `manimux run` keeps the runtime available for RoboGUI-controlled
+rollouts; use `manimux run --config ... --once` for an immediate single standalone session.
 Open `http://127.0.0.1:8086`, then use **Prepare normal rollout → Start rollout →
 Finish rollout**. `Start rollout` begins real command execution; Tianji Home remains a
 separate recovery action.

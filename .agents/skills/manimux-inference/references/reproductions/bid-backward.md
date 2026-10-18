@@ -116,7 +116,7 @@ The selecting experiment keeps the existing Pi05 joint step-30000 checkpoint:
 
 ```bash
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_bid_backward_joint_step30000
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_bid_backward_joint_step30000
 
 envs/yam/.venv/bin/python -m manimux.cli run \
   --config manimux/configs/experiments/pi05-yam-put-bottles-joint-step30000/put_bottles/bid_backward_joint_step30000.yaml

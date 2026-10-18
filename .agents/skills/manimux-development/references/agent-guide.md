@@ -54,6 +54,7 @@ repository root. They describe existing code and workflows, not permission to ru
 
 | Task | Skill |
 |---|---|
+| Deploy an installed station, open RoboGUI, or inspect/stop managed services | [Deployment](../../manimux-deploy/SKILL.md) |
 | Integrate or review a component, policy client/adapter, runtime or RoboGUI feature | [Development](../SKILL.md) |
 | Bind an installation to local robots, cameras and SDKs | [Station setup](../../manimux-station-setup/SKILL.md) |
 | Track experiment progress, evaluate recorded rollouts, run PRM, or update experiment result tables | [Experiments](../../manimux-experiments/SKILL.md) |
@@ -71,7 +72,7 @@ in one private station file. Read an existing file before editing it, preserve c
 names, and establish physical device mappings instead of assuming enumeration order means left/right.
 
 The default private file is `manimux/configs/local/station.yaml`. Runtime startup and the
-camera, Pi05 and UMI_DP `--experiment` entry points read it automatically; `--local` selects
+common camera/policy `--config` and `--config-list` entry points read it automatically; `--local` selects
 another station. Follow the guide's scope table for entry points that still have separate
 configuration. Configuration inspection does not authorize starting services or connecting
 or moving hardware. Keep action semantics, FK/IK, timing and execution settings unchanged
@@ -136,7 +137,7 @@ XPolicyLab/policy/<POLICY>/  # when XPolicyLab owns the model
 manimux/policies/<framework>/
     PolicyModel client + framework wire codec
 manimux/configs/policy/<model>/<embodiment>/<task>/
-manimux/configs/collections/<study>.yaml  # entries, trial plan and recording.root
+manimux/configs/lists/<study>.yaml  # entries, trial plan and recording.root
 manimux/configs/tasks/<task>.yaml  # reusable task semantics
 manimux/configs/experiments/<model-checkpoint>/{_base_.yaml,<task>/<variant>.yaml}
 manimux/configs/embodiment/initial_poses/<robot>.yaml

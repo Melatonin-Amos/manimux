@@ -21,7 +21,7 @@ two 7D joint trajectories, so RoboGUI reports `joint_position`; the model's own 
 All three use ManiMux `async` scheduling (no prefix conditioning: each chunk is generated from the current observation
 only), four-step seam blending, process-based IK and the shared `SmoothExecutor` in `braking` mode with arm limits
 0.6 rad/s and 1.5 rad/s². Without those limits chunk seams reach the motors and the arms shake visibly.
-Restart `manimux serve` after changing a runtime configuration; restart the policy server only to change checkpoints or sampling.
+Restart `manimux run` after changing a runtime configuration; restart the policy server only to change checkpoints or sampling.
 
 ### MV51 settings
 
@@ -58,7 +58,7 @@ and does not connect to hardware; only one SAPolicy server can hold that port at
 Reuse an existing camera service; the commands below apply when none is running.
 
 ```bash
-envs/yam/.venv/bin/manimux-camera-server --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 envs/yam/.venv/bin/manimux-robogui --robot yam --host 0.0.0.0 --port 8086
 ```
 
@@ -68,8 +68,8 @@ GUI defaults to `camera_mode: policy`, following `policy.adapter.camera_map` rep
 ## Rollout
 
 ```bash
-envs/yam/.venv/bin/manimux serve \
-  --collection manimux/configs/collections/sapolicy-custom-standalone.yaml --experiment-id put_bottles_mv51_async25_braking_capped
+envs/yam/.venv/bin/manimux run \
+  --config-list manimux/configs/lists/sapolicy-custom-standalone.yaml --experiment-id put_bottles_mv51_async25_braking_capped
 ```
 
 Open `http://localhost:8086`, click **Prepare normal rollout**, arrange the scene, then
@@ -106,8 +106,8 @@ rsync -aL --info=progress2 <source-host>:~/manimux/checkpoints/finetuned/sapolic
 ```bash
 XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
   --config manimux/configs/policy/sapolicy/yam/tcp_rot20/raw-50k.yaml
-envs/yam/.venv/bin/manimux serve \
-  --collection manimux/configs/collections/sapolicy-custom-standalone.yaml --experiment-id put_bottles_tcp_rot20_async48_z22
+envs/yam/.venv/bin/manimux run \
+  --config-list manimux/configs/lists/sapolicy-custom-standalone.yaml --experiment-id put_bottles_tcp_rot20_async48_z22
 ```
 
 Server inference takes about 60–90 ms on a 4090 without compilation. For faster inference, change `cfg_file` to
@@ -157,8 +157,8 @@ RTC forward about 200 ms because the guided branch runs uncompiled). RTC runtime
 ```bash
 envs/sapolicy/.venv/bin/python -m manimux.servers.sapolicy \
   --config manimux/configs/policy/sapolicy/yam/caps1010_3task_tcp/ema-160k.yaml
-envs/yam/.venv/bin/manimux serve \
-  --collection manimux/configs/collections/sapolicy-custom-standalone.yaml --experiment-id put_bottles_caps1010_3task_async48_z22
+envs/yam/.venv/bin/manimux run \
+  --config-list manimux/configs/lists/sapolicy-custom-standalone.yaml --experiment-id put_bottles_caps1010_3task_async48_z22
 ```
 
 Same deployment as tcp_rot20 above, without a z bias. On 2026-10-15/16 grippers closed at 0.800–0.818 (ABC demos 0.804),

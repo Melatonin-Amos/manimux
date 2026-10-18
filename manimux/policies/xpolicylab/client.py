@@ -69,6 +69,9 @@ class XPolicyLabWsPolicyModel:
         self._request_timeout_s = _positive_float_option(
             options, "request_timeout_s", config["timeout_s"]
         )
+        self._warmup_request_timeout_s = _positive_float_option(
+            options, "warmup_request_timeout_s", self._request_timeout_s
+        )
         self._connect_timeout_s = _positive_float_option(
             options, "connect_timeout_s", config["startup_timeout_s"]
         )
@@ -189,8 +192,16 @@ class XPolicyLabWsPolicyModel:
         client = self._client
         assert client is not None
         sampling_request = getattr(request, "sampling_request", None) or request
-        result = client.infer(observation, sampling=self._sampling(sampling_request))
+        result = client.infer(
+            observation, sampling=self._sampling(sampling_request),
+            timeout_s=self._timeout_for_request(request.request_seq),
+        )
         return self._process_result(result, sampling_request, request.observation)
+
+    def _timeout_for_request(self, request_seq: int) -> float:
+        # PolicyWarmup reserves negative sequences for display-only requests.
+        # Cold compilation must not extend the timeout of executable requests.
+        return self._warmup_request_timeout_s if request_seq < 0 else self._request_timeout_s
 
     def _sampling(self, request):
         """Share sampling validation across blocking and streaming transports."""
@@ -412,7 +423,7 @@ class XPolicyLabWsPolicyModel:
         for request_id, (response, started_ns, _) in self._pending.items():
             if request_id in self._expired:
                 continue
-            if time.monotonic_ns() - started_ns > self._request_timeout_s * 1e9:
+            if time.monotonic_ns() - started_ns > self._timeout_for_request(response.request_seq) * 1e9:
                 # Report once, keeping its transport credit occupied until the
                 # late reply is drained. A stalled peer must stay bounded.
                 self._expired.add(request_id)

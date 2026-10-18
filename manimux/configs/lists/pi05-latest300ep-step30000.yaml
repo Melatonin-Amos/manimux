@@ -24,7 +24,7 @@ experiments:
   trials:
     repeats: 3
 - id: press_rotating_clock_autohorizon
-  label: AutoHorizon (adaptive)
+  label: AutoHorizon - adaptive · serial
   config: ../experiments/pi05-latest300ep-step30000/press_rotating_clock/autohorizon_refill.yaml
   history:
   - pi05-latest300ep-step30000/adaptive/press_rotating_clock/autohorizon_refill
@@ -59,10 +59,8 @@ experiments:
   trials:
     repeats: 3
 - id: coin_autohorizon
-  label: AutoHorizon (adaptive)
-  config: ../experiments/pi05-latest300ep-step30000/coin/autohorizon_refill.yaml
-  history:
-  - pi05-latest300ep-step30000/adaptive/coin/autohorizon_refill
+  label: AutoHorizon - adaptive · serial
+  config: ../experiments/pi05-latest300ep-step30000/coin/autohorizon_serial.yaml
   trials:
     repeats: 3
 - id: coin_async
@@ -91,35 +89,14 @@ experiments:
   config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/serial32_raised.yaml
   trials:
     repeats: 3
-- id: pick_the_moving_cube_serial
-  label: SERIAL - 32 source steps
-  config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/serial32.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/pick_the_moving_cube/serial
-  trials:
-    repeats: 3
 - id: pick_the_moving_cube_bid_raised
   label: BID - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/bid32_raised.yaml
   trials:
     repeats: 3
-- id: pick_the_moving_cube_bid
-  label: BID - 32 source steps
-  config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/bid32.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/pick_the_moving_cube/bid
-  trials:
-    repeats: 3
 - id: pick_the_moving_cube_autohorizon_raised
-  label: AutoHorizon (adaptive)
+  label: AutoHorizon - adaptive · serial
   config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/autohorizon_refill_raised.yaml
-  trials:
-    repeats: 3
-- id: pick_the_moving_cube_autohorizon
-  label: AutoHorizon (adaptive)
-  config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/autohorizon_refill.yaml
-  history:
-  - pi05-latest300ep-step30000/adaptive/pick_the_moving_cube/autohorizon_refill
   trials:
     repeats: 3
 - id: pick_the_moving_cube_async_raised
@@ -127,35 +104,14 @@ experiments:
   config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/async32_progress_raised.yaml
   trials:
     repeats: 3
-- id: pick_the_moving_cube_async
-  label: ASYNC - 32 source steps
-  config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/async32_progress.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/pick_the_moving_cube/async_progress
-  trials:
-    repeats: 3
 - id: pick_the_moving_cube_rtc_raised
   label: RTC - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/rtc32_beta10_raised.yaml
   trials:
     repeats: 3
-- id: pick_the_moving_cube_rtc
-  label: RTC - 32 source steps
-  config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/rtc32_beta10.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/pick_the_moving_cube/rtc_beta10
-  trials:
-    repeats: 3
 - id: pick_the_moving_cube_paint_raised
   label: PAINT - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/paint32_raised.yaml
-  trials:
-    repeats: 3
-- id: pick_the_moving_cube_paint
-  label: PAINT - 32 source steps
-  config: ../experiments/pi05-latest300ep-step30000/pick_the_moving_cube/paint32.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/pick_the_moving_cube/paint
   trials:
     repeats: 3
 - id: put_bottles_serial
@@ -173,7 +129,7 @@ experiments:
   trials:
     repeats: 3
 - id: put_bottles_autohorizon
-  label: AutoHorizon (adaptive)
+  label: AutoHorizon - adaptive · serial
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/autohorizon_refill.yaml
   history:
   - pi05-latest300ep-step30000/adaptive/put_bottles/autohorizon_refill
@@ -215,7 +171,7 @@ experiments:
   trials:
     repeats: 3
 - id: stack_blocks_medium_autohorizon
-  label: AutoHorizon (adaptive)
+  label: AutoHorizon - adaptive · serial
   config: ../experiments/pi05-latest300ep-step30000/stack_blocks_medium/autohorizon_refill.yaml
   history:
   - pi05-latest300ep-step30000/adaptive/stack_blocks_medium/autohorizon_refill

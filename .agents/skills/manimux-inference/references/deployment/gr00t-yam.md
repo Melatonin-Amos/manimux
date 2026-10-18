@@ -28,7 +28,7 @@ running camera service only if it uses the same three-camera configuration.
 ```bash
 cd /home/ubuntu/manimux
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml
+  --config manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml
 ```
 
 ```bash
@@ -39,7 +39,7 @@ XPolicyLab/policy/GR00T_N17/gr00t_n17/.venv/bin/python -m manimux.servers.groot 
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux serve \
+envs/yam/.venv/bin/python -m manimux run \
   --config manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml
 ```
 
@@ -190,7 +190,7 @@ In terminal 2, start the shared camera service. Do not start another instance if
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux-camera-server --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 ```
 
 First check both CAN interfaces:
@@ -218,7 +218,7 @@ After clearing the workspace, keeping the emergency stop ready, and confirming p
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run --config manimux/configs/experiments/pick_box/yam_groot_manimux.yaml
+envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/pick_box/yam_groot_manimux.yaml
 ```
 
 After connecting, the hardware runtime takes `3.5 s` to move to the configured initial pose; normal `Ctrl-C` exit takes `3.5 s`

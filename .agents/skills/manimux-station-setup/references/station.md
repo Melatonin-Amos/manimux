@@ -139,7 +139,7 @@ from pprint import pprint
 from manimux.collections import load_collection
 from manimux.servers.camera.server import camera_config
 
-catalog = load_collection("manimux/configs/collections/pi05-latest300ep-step30000.yaml")
+catalog = load_collection("manimux/configs/lists/pi05-latest300ep-step30000.yaml")
 config = catalog.choices["coin_rtc"].config
 pprint({
     "local": str(config["local"]),
@@ -174,36 +174,32 @@ not implicitly require a station, so offline tools can still inspect shared reci
 
 ## 5. Start the selected experiment
 
-For a formal study, use one collection and station across services:
+Use the same input and station across the common service entry points:
 
 ```text
-runtime:       python -m manimux serve --collection <collection.yaml>
-camera:        python -m manimux.servers.camera.server --collection <collection.yaml>
-Pi05:          python -m manimux.servers.pi05 --collection <collection.yaml>
-XPolicyLab:    python -m manimux.servers.policy --collection <collection.yaml>
+# Formal study; each service uses its installed Python environment.
+runtime:       python -m manimux run --config-list <list.yaml>
+camera:        python -m manimux.servers.camera.server --config-list <list.yaml>
+XPolicyLab:    python -m manimux.servers.policy --config-list <list.yaml>
+
+# Unscored trial; reuse any concrete variant, without a list or copied YAML.
+runtime:       python -m manimux run --config <runtime.yaml>
+camera:        python -m manimux.servers.camera.server --config <runtime.yaml>
+XPolicyLab:    python -m manimux.servers.policy --config <runtime.yaml>
 ```
 
-Select only the matching model launcher and its installed environment. If entries
-use different cameras or model initialization, append the same `--experiment-id ID`
-to the affected service/runtime commands. The loader rejects ambiguous services;
-it never guesses the first camera configuration. Collection `recording.root` owns
-storage, and `--local` overrides collection `local:`. Inspect first with
-`python -m manimux inspect --collection <collection.yaml>`.
+For different camera/model recipes in one list, append the same `--experiment-id ID`
+to matching service/runtime commands. Ambiguous service selection fails rather than
+choosing the first entry. List `recording.root` owns formal storage; trials use a
+separate root. `--local` overrides the list/config station reference. Validate with
+`manimux inspect --config-list <list.yaml>` or `manimux inspect --config <runtime.yaml>`
+and the service `--check` flags. These checks open no cameras or motors and load no models.
 
-The following legacy forms are only for standalone development/bound exports without
-an `experiment` identity. Managed study variants must use their collection:
-
-```text
-runtime:        python -m manimux serve --config <experiment.yaml>
-camera server:  python -m manimux.servers.camera.server --experiment <experiment.yaml>
-Pi05 server:    python -m manimux.servers.pi05 --experiment <experiment.yaml>
-UMI_DP server:  python -m manimux.servers.umi_dp --experiment <experiment.yaml>
-XR-1 Tianji:    python manimux/servers/xiaomi_xr1_tianji_server.py --experiment <experiment.yaml>
-```
-
-Select the appropriate model server, using its own Python environment. Append
-`--local <path>` to each command when choosing a different station. For complete Pi05
-commands, see the [startup guide](../../../../guideline.html#launch).
+Use `--camera-config <camera.yaml>` only for advanced camera-component debugging.
+Model-specific launchers may use `--config` for model-only recipes and `--experiment`
+for runtime configs; these are advanced runbook interfaces. Prefer the common policy
+launcher for supported XPolicyLab deployments. Append the same `--local <path>` when
+choosing a different station. See the [startup guide](../../../../guideline.html#launch).
 
 The current `yam_pi05_rtc_joint_step30000.yaml` has `execute: true`,
 `move_to_start_on_connect: true` and `control_hz: 100`. The separate assembly example
@@ -214,12 +210,12 @@ Binding a station does not switch these experiment settings.
 
 | Entry point | Station-file behavior |
 | --- | --- |
-| Runtime `run` / `serve` | Reads the selected station automatically for CAN, controller IP, components and client addresses |
-| Camera `--experiment` | Uses the experiment's named camera components and the same station serials/listen addresses |
+| Runtime `run` / `run --once` | Reads the selected station automatically for CAN, controller IP, components and client addresses |
+| Camera `--config` / `--config-list` | Uses the experiment's named camera components and the same station serials/listen addresses |
 | Pi05 `--experiment` or `--config` | Uses the selected station's policy service and checkpoint root |
 | UMI_DP `--experiment` | Uses the same policy service and checkpoint binding |
 | XR-1 Tianji launcher | Uses the selected station's policy service, checkpoint, normalization and optional processor bindings |
-| Camera `--config` or `--experiment` | Uses the same camera recipe schema and selected station bindings |
+| Camera `--camera-config` | Reads a camera-only component recipe and selected station bindings |
 | UMI_DP standalone `--config` | Reads that standalone server configuration; use `--experiment` for shared station bindings |
 | RoboGUI process | Still uses its own launch options for network addresses and the web port |
 | Other model launchers | Follow their model runbooks; this change does not add shared station loading to every launcher |

@@ -139,6 +139,23 @@ class XR1YamAdapter(KinematicAdapter):
         self._required_cameras = tuple(str(value) for value in camera_map.values())
 
         self._anchors: OrderedDict[int, np.ndarray] = OrderedDict()
+        if policy["adapter"].get("gripper_output", "clip") != "clip":
+            raise ValueError("XR-1 YAM policy.adapter.gripper_output must be 'clip'")
+
+    def _gripper_targets(self, actions, anchor):
+        """Bound reconstructed openings, never the model's anchor-relative deltas."""
+        targets, start, clip_max_abs = {}, 0, 0.0
+        for name in self._group_order:
+            raw = anchor[start + ARM_JOINTS] + actions[:, ARM_SLICES[name]["gripper"]].ravel()
+            if not np.isfinite(raw).all():
+                raise ValueError(f"XR-1 {name}: reconstructed gripper targets must be finite")
+            targets[name] = np.clip(raw, 0.0, 1.0)
+            clip_max_abs = max(clip_max_abs, float(np.max(np.abs(targets[name] - raw))))
+            start += self._group_dims[name]
+        return targets, {
+            "gripper_output": "clip",
+            "gripper_clip_max_abs": clip_max_abs,
+        }
 
     def build_observation(self, snapshot: ObservationSnapshot) -> ObservationSnapshot:
         missing = [name for name in self._required_cameras if name not in snapshot.frames]
@@ -225,6 +242,9 @@ class XR1YamAdapter(KinematicAdapter):
             raise ValueError(
                 f"XR-1 actions must have shape (horizon, {ACTION_DIM}), got {actions.shape}"
             )
+        if not np.isfinite(anchor).all() or not np.isfinite(actions).all():
+            raise ValueError("XR-1 actions and observation anchor must be finite")
+        gripper_targets, gripper_metadata = self._gripper_targets(actions, anchor)
 
         if self.decode_pose_only:
             from manimux.kinematics.poses import matrix_pose
@@ -235,22 +255,24 @@ class XR1YamAdapter(KinematicAdapter):
                 reference = self._fk(name, q[:ARM_JOINTS], float(q[ARM_JOINTS]))
                 columns = ARM_SLICES[name]
                 rows = []
-                for row in actions:
+                for step, row in enumerate(actions):
                     target = reference.copy()
                     target[:3, 3] += reference[:3, :3] @ row[columns["pos"]]
                     target[:3, :3] = reference[:3, :3] @ _axis_angle_to_rotation(row[columns["aa"]])
-                    grip = float(q[ARM_JOINTS] + row[columns["gripper"]][0])
+                    grip = float(gripper_targets[name][step])
                     rows.append(np.r_[matrix_pose(target), grip])
                 targets[name] = np.asarray(rows)
                 start += width
-            return pose_chunk(context, targets, self._action_dt_ns)
+            return pose_chunk(context, targets, self._action_dt_ns, metadata=gripper_metadata)
         groups: dict[str, np.ndarray] = {}
         start = 0
         for name in self._group_order:
             width = self._group_dims[name]
             joints = anchor[start : start + ARM_JOINTS]
             gripper = float(anchor[start + ARM_JOINTS])
-            groups[name] = self._solve_arm(name, actions, joints, gripper, width)
+            groups[name] = self._solve_arm(
+                name, actions, joints, gripper, width, gripper_targets[name]
+            )
             start += width
 
         return ActionChunk(
@@ -261,6 +283,7 @@ class XR1YamAdapter(KinematicAdapter):
             action_space="joint_position",
             dt_ns=self._action_dt_ns,
             groups=groups,
+            metadata=gripper_metadata,
         )
 
     def _solve_arm(
@@ -270,6 +293,7 @@ class XR1YamAdapter(KinematicAdapter):
         joints: np.ndarray,
         gripper: float,
         width: int,
+        gripper_targets: np.ndarray,
     ) -> np.ndarray:
         columns = ARM_SLICES[group]
         anchor_pose = self._fk(group, joints, gripper)
@@ -301,7 +325,7 @@ class XR1YamAdapter(KinematicAdapter):
                 failures += 1
                 solved = seed
             out[step, :ARM_JOINTS] = solved
-            out[step, ARM_JOINTS] = gripper + float(row[columns["gripper"]][0])
+            out[step, ARM_JOINTS] = gripper_targets[step]
 
         if failures:
             log.warning("%s: IK did not converge on %d/%d chunk steps", group, failures, horizon)

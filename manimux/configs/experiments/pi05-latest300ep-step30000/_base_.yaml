@@ -1,6 +1,5 @@
 control_profile: ../../embodiment/robot/yam_control_unlimited.yaml
 run:
-  max_control_steps: 12000
   warmup_before_start: true
   sensor_reading:
     mode: background

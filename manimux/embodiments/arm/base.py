@@ -105,6 +105,26 @@ class ArmController(ABC):
         """Release owned resources; failed cleanup must remain retryable."""
         raise NotImplementedError
 
+    def validate_release(self) -> None:
+        """Reject close if this controller still supplies necessary support.
+
+        Override for host-controlled gravity compensation or torque loops.
+        Returning is a device-specific release contract, not a motion command.
+        """
+        return None
+
+    def configure_home(self, target: FloatArray, **arrival_limits) -> None:
+        """Bind an arm-only Home target before connecting, without motion."""
+        raise NotImplementedError("controller has no configured joint Home monitor")
+
+    def validate_motion_ready(self) -> None:
+        """Check control/feedback readiness without enabling or moving hardware."""
+        raise NotImplementedError("controller has no motion readiness check")
+
+    def confirm_supported_release(self) -> None:
+        """Called only after an operator explicitly confirms physical support."""
+        return None
+
 
 class ArmBase(ABC):
     """An independently connectable arm component that may include a built-in gripper.

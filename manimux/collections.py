@@ -24,6 +24,13 @@ def safe_id(value, label: str) -> str:
     return value
 
 
+def _has_rollout_records(session: Path) -> bool:
+    # A session manifest is written before Prepare. Empty sessions from setup
+    # failures contain no trials to protect; any rollout, including a partial,
+    # retains the full condition-compatibility check.
+    return any(session.glob("rollout-*"))
+
+
 def fingerprint(config: dict) -> str:
     """Effective scientific conditions; exclude storage, provenance and UI cosmetics."""
     from manimux.evaluation.rubric import explicit_evaluation
@@ -43,16 +50,21 @@ def fingerprint(config: dict) -> str:
             "recording",
         )
     }
+    # Display-only cold-start wait does not change rollout inference deadlines,
+    # actions or scoring. Preserve its value in manifests, not scientific identity.
+    if isinstance(fields.get("policy"), dict):
+        fields["policy"].get("options", {}).pop("warmup_request_timeout_s", None)
     fields["inference"] = inference_parameters(
         executor=config.get("executor", {}), **config.get("inference", {})
     )
+    run = config.get("run", {})
+    prompt = run.get("task_prompt", run.get("task"))
     fields["evaluation"] = explicit_evaluation(
-        config.get("evaluation"), task_id=config.get("run", {}).get("task", "task")
+        config.get("evaluation"), task_id=prompt or "task"
     )
     fields["run"] = {
         key: config.get("run", {}).get(key)
         for key in (
-            "task",
             "max_control_steps",
             "warmup_before_start",
             "sensor_reading",
@@ -60,6 +72,8 @@ def fingerprint(config: dict) -> str:
             "condition",
         )
     }
+    # Keep the scientific identity stable across the prompt field rename.
+    fields["run"]["task"] = prompt
     # Normalization of legacy, pre-defaulted manifests is done by their loader.
     return hashlib.sha256(json.dumps(fields, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -67,17 +81,70 @@ def fingerprint(config: dict) -> str:
 def service_contract(config: dict) -> dict:
     contract = shared_service_contract(config)
     robot = deepcopy(contract["robot"])
-    for key in ("start_joints", "start_duration_s"):
+    for key in ("start_joints", "start_duration_s", "move_to_start_on_connect"):
         robot.get("options", {}).pop(key, None)
     contract["robot"] = robot
     return contract
+
+
+def pose_configuration(base: dict, pose_id: str) -> dict:
+    """Keep the default destination; isolate recordings of an operator-selected pose."""
+    from manimux.configuration import select_initial_pose
+    from manimux.cli import prepare_experiment
+
+    if pose_id == initial_pose_metadata(base)["id"]:
+        return deepcopy(base)
+    config = select_initial_pose(base, pose_id)
+    root = Path(base["run"]["output_dir"])
+    config["run"].update(output_dir=root.with_name(root.name + "__pose_" + safe_id(pose_id, "pose id")),
+                         history_sessions=[])
+    if "collection" in config:
+        variant = base["collection"]["variant"] + "__pose_" + pose_id
+        config["experiment"]["variant"] = variant
+        config["collection"].update(variant=variant, conditions_sha256=fingerprint(config),
+                                     history_rejected=[])
+    for manifest in config["run"]["output_dir"].glob("session-*/session-manifest.json"):
+        if not _has_rollout_records(manifest.parent):
+            continue
+        saved = json.loads(manifest.read_text())
+        if not compatible_history(prepare_experiment(**saved["config"]), config):
+            raise ValueError(f"Conditions changed in selected-pose records: {manifest.parent}")
+    return config
+
+
+def compatible_history(saved: dict, current: dict) -> bool:
+    """Retain progress for a stop-budget change or versioned rubric extension.
+
+    Session fingerprints still include the stop budget. Continuing a study does
+    not make different stopping rules or rubrics equivalent for analysis.
+    """
+    from manimux.evaluation.rubric import explicit_evaluation
+
+    if fingerprint(saved) == fingerprint(current):
+        return True
+    saved = deepcopy(saved)
+    saved.setdefault("run", {})["max_control_steps"] = current.get("run", {}).get("max_control_steps")
+    if fingerprint(saved) == fingerprint(current):
+        return True
+    def profile(config):
+        run = config.get("run", {})
+        return explicit_evaluation(
+            config.get("evaluation"), task_id=run.get("task_prompt", run.get("task", "task"))
+        )
+    old, new = profile(saved), profile(current)
+    if (old["task_id"] != new["task_id"] or old["label"] != new["label"]
+            or old["rubric_id"] == new["rubric_id"]
+            or len(new["options"]) <= len(old["options"])
+            or any(option not in new["options"] for option in old["options"])):
+        return False
+    comparable = {**saved, "evaluation": current["evaluation"]}
+    return fingerprint(comparable) == fingerprint(current)
 
 
 def checked_history(config: dict, roots: list[Path]) -> tuple[list[str], list[dict]]:
     """Import individual sessions only when saved effective conditions match."""
     from manimux.cli import prepare_experiment
 
-    expected = fingerprint(config)
     accepted, rejected, seen = [], [], set()
     for root in roots:
         if not root.is_dir():
@@ -91,7 +158,7 @@ def checked_history(config: dict, roots: list[Path]) -> tuple[list[str], list[di
             try:
                 saved = json.loads(path.read_text())["config"]
                 saved = prepare_experiment(**saved)
-                if fingerprint(saved) != expected:
+                if not compatible_history(saved, config):
                     raise ValueError("saved experiment conditions differ")
             except (OSError, ValueError, KeyError, TypeError) as error:
                 rejected.append({"path": str(session), "reason": str(error)})
@@ -184,13 +251,15 @@ def load_collection(
             config["run"]["experiment_template"] = research_template(template)
         condition_hash = fingerprint(config)
         for manifest in output.glob("session-*/session-manifest.json"):
+            if not _has_rollout_records(manifest.parent):
+                continue
             saved = json.loads(manifest.read_text())
             if saved.get("collection", {}).get("conditions_sha256") != condition_hash:
                 # Older manifests hashed count/binary shorthand. Compare the
                 # saved effective configuration, never relabel its recordings.
                 from manimux.cli import prepare_experiment
                 prior = saved.get("config")
-                if not isinstance(prior, dict) or fingerprint(prepare_experiment(**prior)) != condition_hash:
+                if not isinstance(prior, dict) or not compatible_history(prepare_experiment(**prior), config):
                     raise ValueError(
                         f"Conditions changed for {task}/{variant}; choose a new variant ID"
                     )
@@ -214,7 +283,7 @@ def load_collection(
             raise ValueError("Experiment label must be nonempty")
         pose_id = initial_pose_metadata(config)["id"]
         if any(
-            c.config["run"]["task"] == config["run"]["task"]
+            c.config["run"]["task_prompt"] == config["run"]["task_prompt"]
             and c.label == label
             and initial_pose_metadata(c.config)["id"] == pose_id
             for c in choices
@@ -297,7 +366,8 @@ def inventory(root: Path) -> list[dict]:
             try:
                 saved = json.loads((path / "session-manifest.json").read_text())
                 entry["collection"] = saved.get("collection")
-                entry["task"] = saved["config"]["run"].get("task")
+                run = saved["config"]["run"]
+                entry["task"] = run.get("task_prompt", run.get("task"))
                 entry["inference"] = saved["config"].get("inference")
             except (OSError, ValueError, KeyError, TypeError) as error:
                 entry["manifest_error"] = str(error)

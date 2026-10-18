@@ -131,7 +131,7 @@ XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
 
 ```bash
 PYTHONPATH="$PWD/manimux/embodiments/end_effector/taccap/sdk/TacCap-Gripper/python" \
-.venv/bin/python -m manimux serve --config "$PI05_INTERHAND_EXPERIMENT"
+.venv/bin/python -m manimux run --config "$PI05_INTERHAND_EXPERIMENT"
 ```
 
 This installation uses the project's already-built TacCap 0.4.2 SDK. The explicit
@@ -159,7 +159,7 @@ owner is running, use the same SDK path for its startup:
 
 ```bash
 PYTHONPATH="$PWD/manimux/embodiments/end_effector/taccap/sdk/TacCap-Gripper/python" \
-.venv/bin/python -m manimux.servers.camera.server --experiment "$PI05_INTERHAND_EXPERIMENT"
+.venv/bin/python -m manimux.servers.camera.server --config "$PI05_INTERHAND_EXPERIMENT"
 ```
 
 For the final checkpoint, select the step59999 experiment in both terminals.

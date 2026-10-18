@@ -372,7 +372,7 @@ checks in `.agents/skills/manimux-inference/references/deployment/gr00t-yam.md`:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run --config manimux/configs/experiments/pick_box/yam_groot_aac.yaml
+envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/pick_box/yam_groot_aac.yaml
 ```
 
 First run is an infrastructure characterization, not a task-success claim. Record:

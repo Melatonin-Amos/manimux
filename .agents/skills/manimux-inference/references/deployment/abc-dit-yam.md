@@ -16,7 +16,7 @@ observation mapping, scheduling, execution, and recording. For installation and 
 | Input | Three RGB views: `top` ← `d405_front`, `left` ← `d405_left`, `right` ← `d405_right`; 14D joint state |
 | Images | 640×480 → aspect-preserving bicubic resize with antialiasing to 224×168, 28 zero rows padded above and below, then ImageNet normalization |
 | Output | `30 × 14` absolute joint positions in radians, `[6 joints, gripper]` per arm; gripper 0 closed, 1 open, clipped server-side to `[0,1]` |
-| Instruction | CLIP ViT-B/32 text embedding from `run.task` (overridden by a nonempty recipe `prompt`); official bottles instruction: `throw plastic bottles in bin` |
+| Instruction | CLIP ViT-B/32 text embedding from `run.task_prompt` (overridden by a nonempty recipe `prompt`); official bottles instruction: `throw plastic bottles in bin` |
 | Action interval / horizon / sampling steps | 1/30 s / 30 / 10 |
 | Noise seed | `inference_seed: 0`, reset on each RESET and advanced across requests |
 | Precision | fp32 (`fast_inference: false`, matching official deployment; bf16 fast-mode outputs have quantization increments of approximately 0.008 rad) |
@@ -46,7 +46,7 @@ Both configurations align execution with Pi05 Joint 30k (Direct executor, unrest
 | Serial K / RTC execution per chunk | 16 / s_min 16 | 16 / 16 | Official `--execute-chunk-dim=16` |
 | RTC method | PiGDM inference-time guidance, β 5 | ABC training-time prefix conditioning: prefix 4, lead 7 | Official deployment; see below |
 | Initial pose | Zero pose, grippers open | ABC-130k bottles ready pose (same as SAPolicy) | Zero pose is about 3σ from the ABC state mean and never occurs in ABC data |
-| `run.task` | Put the bottles into the bin. | throw plastic bottles in bin | Official bottles deployment instruction |
+| `run.task_prompt` | Put the bottles into the bin. | throw plastic bottles in bin | Official bottles deployment instruction |
 | Service / identity | `policy` / pi05 | `policy_abc_dit` / abc_dit | — |
 
 ABC hardware data uses two task names: `put_the_plastic_bottles_in_the_bin` and
@@ -75,7 +75,7 @@ The station file needs `services.policy_abc_dit.endpoint: ws://127.0.0.1:8530` (
 ```bash
 # 1: Cameras
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --collection manimux/configs/collections/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
+  --config-list manimux/configs/lists/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
 
 # 2: RoboGUI
 envs/yam/.venv/bin/python -m manimux.robogui.dashboard --robot yam --host 127.0.0.1 --port 8086
@@ -85,8 +85,8 @@ envs/abc/.venv/bin/python -m manimux.servers.abc_dit \
   --experiment manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/rtc_200k.yaml
 
 # 4: Runtime (for Serial, use yam_abc_dit_serial_200k.yaml; no model-service restart needed)
-envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
+envs/yam/.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
 ```
 
 Adding `--check` to the model command resolves only paths and contracts without loading the model. Serial and RTC share the same model service and identity.

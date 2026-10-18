@@ -58,7 +58,7 @@ From the ManiMux root:
 
 ```bash
 .venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
+  --config-list manimux/configs/lists/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml --check
 ```
 
@@ -74,7 +74,7 @@ handed over, start the policy server with the same experiment and station:
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
+  --config-list manimux/configs/lists/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml
 ```
 
@@ -84,8 +84,8 @@ integration does not start one automatically. After handing over the existing
 runtime, use the paired experiment for the observation-only ManiMux process:
 
 ```bash
-.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
+.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml
 ```
 

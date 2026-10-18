@@ -3,6 +3,8 @@
 > 2026-10-09: The old screwdriver, red-object, pass-ball and offline experiment entries below were retired. These commands are historical; select a current entry from the [experiment index](../../../../../manimux/configs/experiments/README.md). Diagnostic tools now require an explicit experiment argument.
 
 
+> 2026-10-18: RTC has been withdrawn from LingBot capabilities and experiment lists. Historical RTC measurements below are failure evidence, not launch recommendations.
+
 ## Overview
 
 LingBot-VLA2 has released full source and inference entry points. ManiMux now has a dedicated
@@ -87,10 +89,8 @@ independent safety boundaries.
 finetune server: manimux/configs/policy/lingbot-vla2/yam/finetune.yaml
 base server:     manimux/configs/policy/lingbot-vla2/yam/base.yaml
 infra:   manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
-rtc:     manimux/configs/experiments/pick_place/yam_lingbot_vla2_rtc.yaml
-step-15000 rtc: manimux/configs/experiments/assemble_screwdriver/lingbot-vla2/yam_lingbot_vla2_rtc_step15000.yaml
 adapter: XPolicyLab/policy/LingBot_VLA2/model.py
-sampler: XPolicyLab/policy/LingBot_VLA2/rtc.py
+sampler: XPolicyLab/policy/LingBot_VLA2/sampling.py  # PAINT / AutoHorizon
 server:  XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh
 profile: XPolicyLab/policy/LingBot_VLA2/robot_configs/yam_dual_absolute.yaml
 source:  XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/  # vendored upstream source
@@ -110,10 +110,8 @@ There is no second native server entry point. The standard launcher calls
 `XPolicyLab/setup_policy_server.py`, which loads `model.py` solely through `policy_name: LingBot_VLA2`.
 ManiMux uses it only through the shared WebSocket bridge.
 
-The official V2 sampler has no online RTC parameter, but exposes prefix KV caching and
-`predict_velocity(x_t, t)`. The XPolicy adapter therefore implements separate sampler-level RTC:
-it retains the official 10-step Euler flow loop and applies VJP soft-mask guidance to the clean action estimate
-at each denoising step, without altering generated chunks or splicing them.
+The shared flow bridge prepares normalized inputs and cached visual prefixes for
+PAINT and AutoHorizon. RTC is no longer exposed or implemented by this adapter.
 
 ## Explicit deployment configuration
 
@@ -191,16 +189,7 @@ The checker also reads `manimux/configs/experiments/pick_red_object/lingbot-vla2
 Thus mismatched training artifacts and execution timing fail before model loading instead of silently
 stretching actions in the hardware loop.
 
-RTC configurations use the same check entry point:
-
-```bash
-envs/yam/.venv/bin/python scripts/validation/check_lingbot_vla2_yam.py \
-  --config manimux/configs/policy/lingbot-vla2/yam/finetune-assemble-screwdriver-step15000.yaml \
-  --infra-config manimux/configs/experiments/assemble_screwdriver/lingbot-vla2/yam_lingbot_vla2_rtc_step15000.yaml
-```
-
-Besides the same Hz/dt/horizon contract, it checks sampler capabilities, `beta > 0`, the delay
-buffer, and `delay <= min_execute_policy_steps <= horizon - delay`.
+RTC configurations are rejected by the LingBot validation tool.
 
 Audit the existing foundation checkpoint's 55D projection:
 
@@ -313,7 +302,7 @@ Do not start a duplicate if a camera service already uses `5555`:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux-camera-server --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 ```
 
 Confirm all three RealSense cameras are open and both `REP bound` and `PUB bound` appear.
@@ -344,7 +333,7 @@ Run only when both report `ERROR-ACTIVE`:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run \
+envs/yam/.venv/bin/manimux run --once \
   --config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
 ```
 
@@ -388,37 +377,81 @@ bash XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
 # Use the camera-server command already validated at the station.
 
 # terminal 3: ManiMux
-envs/yam/.venv/bin/manimux run \
+envs/yam/.venv/bin/manimux run --once \
   --config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
 ```
 
 These fine-tuning commands still have no recorded GPU forward, server handshake, camera, CAN, or hardware evidence.
 
-## RTC implementation and boundaries
+## RTC withdrawal (2026-10-18)
 
-The complete path is:
+The removed implementation produced conditioned actions but failed the study's
+real-time budget: H=50, K=32, 30 Hz leaves 0.60 s after the replan threshold.
+Matched synthetic-input sampling measurements (12 warmed repetitions per mode):
+native ordinary 120.33 ms; custom ordinary loop 230.67 ms; gradient-enabled forward
+without backward 538.13 ms; full RTC 961.32 ms. These exclude preprocessing and transport.
+Recorded conditioned service requests averaged 1166.22 ms. The runtime also issued
+unconditioned requests when conditions were infeasible, so historical RTC-labelled
+records cannot establish the quality of continuously conditioned RTC.
 
-```text
-ManiMux RtcRuntime
-  -> raw absolute joint condition [H, 14] + soft mask [H]
-  -> XPolicy get_action_rtc
-  -> arm[12] + gripper[2]
-  -> checkpoint FeatureTransform normalization
-  -> valid-action mask + padding to canonical [H, 55]
-  -> every LingBot denoise step:
-       clean = x_t - t * velocity(x_t, t)
-       guidance = VJP(clean, (condition - clean) * weights)
-       guided_velocity = velocity - scale(t, beta) * guidance
-  -> official unnormalize/unpad
-  -> relative-arm + absolute-gripper chunk [H, 14]
-  -> lingbot_vla2_yam adapter restores absolute YAM joint waypoints
-```
+The no-gradient MoE kernel is unavailable with gradients enabled, and the custom
+loop bypassed parts of native compilation. This is evidence about this implementation,
+not proof that MoE can never support RTC. No optimized replacement is validated.
+Keep historical data; do not resume RTC collection or regenerate its configs.
 
-CPU-only offline tests cover guidance direction, zero-mask equivalence to native velocity, mask
-range, YAM 14D splitting, 55D padding/masking, and guidance executing at each step
-inside the flow loop.
+## Latest300ep compilation entry
 
-The step-15000 post-training checkpoint/stats are connected to sampler RTC; static configuration and CPU
-guidance tests passed. Actual conditioned GPU RTC forward inference and hardware measurements remain outstanding.
-`initial_delay_policy_steps: 12` and `min_execute_policy_steps: 20` satisfy static constraints only; they do not establish
-calibrated RTC latency parameters.
+`manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml` now selects
+`use_compile: true` for Serial, BID, Async and PAINT across five tasks.
+
+The anchor-relative YAM adapter supports repeated candidate decoding for BID:
+all candidates from one request share its captured observation joints. The
+bounded anchor cache must not consume the anchor after the first decode.
+Latest and bottles all-task BID variants request 16 sequential samples and use
+a 10-second runtime request deadline (ordinary single-chunk variants retain
+their own deadline). This is a timeout budget, not a measured inference latency.
+The fixed source window remains 32/50. The official CLI defaults compilation on;
+its server constructor defaults it off, so the wrapper must pass an explicit choice.
+Historical real-checkpoint CUDA requests returned finite ordinary, RTC and PAINT outputs on synthetic observations; RTC has since been withdrawn. This is not an eager/compiled equivalence or speedup benchmark.
+
+The 2026-10-18 moving-cube recordings exposed a PAINT stall: a 50-step chunk
+with a 32-step trigger leaves 0.60 s, but conditioned latency was 0.66–0.79 s.
+The shared strategy now pads an insufficient old suffix with its terminal target
+and submits normally; the runtime holds that target until the replacement arrives.
+New-chunk latency trimming and real request deadlines remain active. This allows
+waiting without changing the 32-step trigger or silently switching algorithms.
+Offline tests cover terminal hold and resumption; no new hardware run has validated
+this fix. An entire new horizon consumed by latency still fails explicitly.
+
+AutoHorizon attention capture currently requires eager execution. Its five task
+entries use `manimux/configs/lists/lingbot-vla2-latest300ep-step30000-autohorizon-eager.yaml`
+and an inline `policy_server.use_compile: false` override of the same checkpoint.
+Both lists resolve one shared service recipe without `--experiment-id`; do not mix
+both server recipes in one list or silently fall back. Switching lists requires
+operator-controlled service restart. `use_compile` participates in backend identity.
+Compiled variants use `_compile` suffixes under the existing study root; existing
+eager records are preserved. Configuration checks cover the historical variants, service
+selection, identity, poses and source windows. The model service was subsequently restarted for hardware-free HELLO and inference validation.
+
+
+### Compile handshake and cold-start verification
+
+The model must report `use_compile` from its loaded server object in
+`runtime_metadata()`. Adding only the runtime expected field fails HELLO even when
+the recipe enables compilation. Offline regression covers true, false, conflicting
+config metadata and missing-field rejection; a live HELLO from the loaded latest300ep
+checkpoint also passed.
+
+The 2026-10-18 synthetic observation probe (no robot) returned finite `[50,14]`
+actions for ordinary, RTC and PAINT. Ordinary first call took 86.52 s; subsequent
+ordinary calls took 150.90–225.11 ms. RTC subsequent calls took 1016.23–1106.34 ms;
+PAINT's second call took 666.18 ms. These websocket round-trip samples are neither
+steady-state statistical estimates nor a matched eager comparison. Do not claim
+compiled RTC is faster. Evidence: `data/analysis/lingbot-compile-debug/results.json`.
+
+`policy.options.warmup_request_timeout_s: 300` applies only to the negative-sequence,
+display-only requests issued by PolicyWarmup. Ordinary request timeout remains 20 s
+and formal runtime timing remains unchanged. The default for all other deployments
+is their existing request timeout. Manifests retain the warmup wait setting, but it
+is excluded from scientific condition fingerprints; changing the ordinary request
+timeout still changes the fingerprint. Runtime must restart to load this option.

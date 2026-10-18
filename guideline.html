@@ -79,7 +79,7 @@ and reference them with <code>config:</code>.</p>
 <tbody>
 <tr>
 <td>Task prompt</td>
-<td><code>tasks/&lt;task&gt;.yaml → run.task</code></td>
+<td><code>tasks/&lt;task&gt;.yaml → run.task_prompt</code></td>
 </tr>
 <tr>
 <td>Layouts / reference requirement; repeat budget</td>
@@ -151,13 +151,13 @@ and the controller's pure command validation still apply, without command transm
 This does not test motor readiness or successful physical execution. The resolved shared
 bounds, scalar cap, command-safety rates and control period are saved as
 <code>meta.json: command_limits</code>.</p>
-<p>Use the same <code>--local PATH</code> on entry points that support station binding. Pi05, camera and runtime
-support it; RoboGUI network options remain separate. A model launcher taking only <code>--config</code>
-must use the recipe paired with the experiment. See <a href=".agents/skills/manimux-station-setup/references/station.md#scope-and-remaining-independent-entry-points">entry-point scope</a>.</p>
+<p>Use the same <code>--local PATH</code> on entry points that support station binding. The common camera, policy and runtime entry points
+support it; RoboGUI network options remain separate. Advanced model-specific launchers
+may instead take a model recipe as <code>--config</code>. See <a href=".agents/skills/manimux-station-setup/references/station.md#scope-and-remaining-independent-entry-points">entry-point scope</a>.</p>
 <p><strong>Before launch, inspect the resolved config without connecting hardware:</strong></p>
 <pre><code class="language-bash">envs/yam/.venv/bin/python - &lt;&lt;'PY'
 from manimux.collections import load_collection
-catalog = load_collection('manimux/configs/collections/pi05-latest300ep-step30000.yaml')
+catalog = load_collection('manimux/configs/lists/pi05-latest300ep-step30000.yaml')
 cfg = catalog.choices['coin_rtc'].config
 for key in ('run', 'policy', 'inference', 'executor', 'evaluation'):
     print(key, cfg[key])
@@ -167,28 +167,117 @@ PY
 editing a file does not hot-reload a running deployment.</p>
 </section>
 <section aria-labelledby="launch" class="guide-page" data-page-id="launch" data-title="Launch commands" hidden=""><h2 id="launch">Launch</h2>
+<h3 id="managed-deployment">Agent-assisted managed deployment</h3>
+<p>On an installed station, start a fresh agent conversation in the checkout and ask to
+deploy a specific supported model/checkpoint and task, open RoboGUI, and leave preparation
+and execution to you. The <a href="https://github.com/SII-LiuLab/manimux/tree/main/.agents/skills/manimux-deploy">deployment skill</a>
+resolves existing recipes and station bindings. Missing physical camera mappings or an
+ambiguous checkpoint still require your input. This is a new conversation on a configured
+station; SDK installation, weights and calibration are separate setup work.</p>
+<p>The managed path supports <strong>Linux + tmux, one runtime config, local XPolicyLab
+WebSocket serving and a camera-server recipe</strong>. It reuses existing service entry
+points and isolated Python environments. Config-list studies, remote model hosts and other
+serving frameworks continue to use the manual launch commands below.</p>
+<pre><code class="language-bash"># Read-only checks; no devices opened and no model weights loaded.
+uv run manimux doctor \
+  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/serial32.yaml \
+  --local manimux/configs/local/station.yaml \
+  --runtime-python envs/yam/.venv/bin/python \
+  --policy-python XPolicyLab/policy/Pi_05/openpi/.venv/bin/python --json
+
+# Start camera, RoboGUI, model and interactive runtime. Wait for manual Prepare.
+uv run manimux up \
+  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/serial32.yaml \
+  --local manimux/configs/local/station.yaml \
+  --runtime-python envs/yam/.venv/bin/python \
+  --policy-python XPolicyLab/policy/Pi_05/openpi/.venv/bin/python --open --json
+
+uv run manimux status --json
+uv run manimux attach --service runtime  # detach: Ctrl-B, then D
+uv run manimux down --timeout 30 --json
+</code></pre>
+<p>Substitute your recipe and installed interpreters. Camera defaults to the runtime
+interpreter; use <code>--camera-python</code> when needed. Use <code>--output-dir</code> to
+select a separate trial root. <code>up --timeout</code> is a readiness deadline per service.
+JSON results stay on stdout and progress goes to stderr. <code>--open</code> opens the default
+browser; agents can instead open the returned <code>gui_url</code> in their browser panel.</p>
+<p>Private state, resolved plans and logs live under <code>.local/deployment</code> by default.
+Use the same <code>--deployment-dir</code> for all commands when overriding it. Repeated up
+reuses an unchanged healthy deployment owned by this tool. Changed configurations, partial
+deployments and external port owners are reported explicitly; no external process is
+adopted or stopped. Configuration source hashes are rechecked during startup. Restart after
+editing running service code. Preserve the state directory until its services have stopped.</p>
+<table><thead><tr><th>Status evidence</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>Preflight</td><td>Configuration, interpreters, selected artifact paths and ports checked; no device connectivity or inference claim.</td></tr>
+<tr><td>Fresh frames</td><td>Expected camera streams returned frames with valid recent timestamps.</td></tr>
+<tr><td>HELLO verified</td><td>Policy transport and configured backend identity checked; no reset or inference request was sent.</td></tr>
+<tr><td>HTTP responding</td><td>The owned RoboGUI process serves its configured address; browser rendering must still be inspected.</td></tr>
+<tr><td>Waiting for Prepare</td><td>The runtime session is reporting; robot connection and motion remain operator actions.</td></tr>
+<tr><td>Operator control</td><td>Prepare was requested. Inspect RoboGUI for preparation, execution, failure and cleanup details.</td></tr>
+</tbody></table>
+<p><strong>Shutdown:</strong> down signals the owned runtime first and waits for its existing
+cleanup. If it remains alive, dependencies and the operator terminal stay available;
+the command reports <code>shutdown_blocked</code>. Attach to the terminal and inspect
+RoboGUI. There is no force-kill or automatic RELEASE. Repeated down waits without sending
+another interrupt. When runtime has exited, policy, camera and RoboGUI stop in order.</p>
+<h3 id="deployment-demo-video">Rehearse and record the deployment demo</h3>
+<pre><code class="language-bash"># Synthetic preview: no camera, policy service, runtime or robot connection.
+uv run manimux up --demo --robot yam --gui-port 18086 \
+  --deployment-dir .local/demo --open --json
+uv run manimux status --deployment-dir .local/demo --json
+uv run manimux down --deployment-dir .local/demo --json
+
+# Terminal footage (requires VHS); run from the repository root.
+mkdir -p recordings
+vhs scripts/media/deployment-demo.tape
+
+# Full RoboGUI window recording on an X11 desktop.
+scripts/media/record-robogui.sh --duration 30
+</code></pre>
+<p>Demo uses isolated bridge/control ports and visibly labels the panel
+<strong>Synthetic preview · no hardware</strong>. It does not simulate a successful policy
+deployment or task. For the public film, capture a fresh conversation, real deployment
+progress, opening RoboGUI, manual Prepare/Warmup/Start, a continuous external robot view,
+and the resulting recording/replay. Keep the full take and label accelerated model-loading
+waits. Suggested 90-second edit: request 0–10s, deployment 10–25s, RoboGUI 25–40s, operator
+handoff 40–55s, robot execution 55–80s, recording/replay 80–90s. These are edit durations,
+not deployment latency guarantees.</p>
+<p><a href="https://github.com/remotion-dev/skills">Remotion's official skills</a> can compose
+real footage, captions and transitions; <a href="https://github.com/charmbracelet/vhs">VHS</a>
+renders repeatable terminal clips. Neither is a runtime dependency. Keep generated video
+in the ignored recordings directory and use task results only when supported by the take.</p>
+<p>Choose the workflow first: <strong>manage experiments</strong> or <strong>try once</strong>.
+An agent should ask when this is unclear, and reuse an existing answer for ongoing experiments.</p>
+<table><thead><tr><th>Workflow</th><th>Runtime command</th><th>Behavior</th></tr></thead><tbody>
+<tr><td>Manage experiments</td><td><code>manimux run --config-list &lt;file&gt;</code></td><td>Task/method selection, progress tracking and repeated Prepare/Start/Finish cycles.</td></tr>
+<tr><td>Try once, standalone</td><td><code>manimux run --config &lt;file&gt; --once</code></td><td>Connect immediately and exit after one rollout. GUI configurations still gate Start; headless configurations execute directly.</td></tr>
+<tr><td>Try one configuration (default)</td><td><code>manimux run --config &lt;file&gt;</code></td><td>Wait for Prepare Run and allow repeated unscored rollouts. Save separately under the trial root; no formal progress is consumed.</td></tr>
+</tbody></table>
+<p>To try an existing experiment variant, pass its YAML directly to <code>run --config</code>; no duplicate configuration or config list is needed. Use the same <code>--config</code> for camera and generic policy services. The GUI provides Prepare Run only. Use <code>--config-list</code> when formal scoring and progress tracking are wanted. The public <code>serve</code> command is removed. Camera/model <code>servers.*</code> remain separate services.</p>
 <p><strong>Current Pi05 / YAM study.</strong> Requires installed hardware/model environments,
 the checkpoint selected by the recipe, and a configured station. Run from the repository
-root in four terminals, using the same collection in cameras, model and runtime.</p>
+root in four terminals, using the same config list in cameras, model and runtime.</p>
+<p><strong>YAM fault shutdown:</strong> a camera/model failure stops task execution and requests zero Home only when robot connection and control health checks pass. Measured arrival is checked before opening grippers or closing motor control. If Home or feedback validation fails, the runtime retains control ownership and displays a persistent <strong>Hardware recovery</strong> panel in RoboGUI. Check <strong>Home path is clear</strong> and click <strong>Retry Home and finish</strong>, or physically support all arms and secure payloads, check the support confirmation and click <strong>Confirm support and release motor control</strong>. Release does not Home. There is no terminal input. Disconnection, timeout and stale requests never authorize release; without a GUI recovery channel, the process remains blocked. Do not kill that process or start another runtime while it owns the arms. This requires hardware validation and does not guarantee support after a drive fault or power loss.</p>
+<p>YAM Home keeps the Home target after interpolation and waits without an arrival deadline. Position error and speed must stay within the release limits continuously for <code>home_settle_duration_s: 0.25</code>, configured in <code>configs/embodiment/arm/yam.yaml</code>. While waiting, logs report joint error and speed every five seconds. Hardware feedback checks remain active; loss of control health stops motion rather than being ignored. The retired <code>home_settle_timeout_s</code> setting in old snapshots is ignored with a warning. RoboGUI displays <strong>Returning Home</strong>, <strong>Saving rollout</strong> or <strong>Actuator release blocked</strong> while cleanup owns the robot; its cleanup heartbeat does not certify motor health. Runtime and dashboard changes require restarting both processes after safe release; a browser refresh alone does not load Python changes.</p>
 <h3 id="1-camera-service">1 · Camera service</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
 </code></pre>
 <h3 id="2-robogui">2 · RoboGUI</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
   --robot yam --host 127.0.0.1 --port 8086
 </code></pre>
 <h3 id="3-pi05-model-service">3 · Pi05 model service</h3>
-<pre><code class="language-bash">XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+<pre><code class="language-bash">XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
 </code></pre>
 <h3 id="4-runtime">4 · Runtime</h3>
-<pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+<pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
 </code></pre>
-<p>Open <code>http://127.0.0.1:8086</code>. <code>serve</code> waits for GUI preparation; it does not launch the other
+<p>Open <code>http://127.0.0.1:8086</code>. <code>run</code> waits for GUI preparation; it does not launch the other
 three services. <strong>Prepare can connect hardware and move to the configured start pose.</strong>
-Use <strong>Prepare → adjust layout → Activate Warmup → Start rollout → Finish</strong>.</p><p>Recovery controls follow the connected runtime's declared capabilities and arm selections. When idle Home is available, <strong>Finish rollout</strong> does not home; use <strong>Return Home</strong>, which applies to all configured arms. Otherwise Finish preserves the experiment's <code>home_on_close</code>. Drag and Release finish an active rollout without homing. Tianji Release offers continuous or five-second cooperative hand-guiding when declared; loss of the recovery lease cancels it.</p><p>Pack-plate deployments select <code>tianji_taccap_pack_plate.yaml</code> for the saved <code>pack_plate_start</code> Home. Update older bound configurations and restart the runtime to load a changed assembly.</p><p>
+Use <strong>Prepare → adjust layout → Activate Warmup → Start rollout → Finish</strong>. After Finish, Prepare becomes available when the runtime is ready and evaluation is saved or skipped. A submitted Prepare stays pending until the runtime acknowledges it; repeated clicks do not create extra rollouts.</p><p>Recovery controls follow the connected runtime's declared capabilities and arm selections. The ordinary <strong>Finish &amp; Home</strong> button explicitly requests Home before the runtime closes hardware, even if a legacy configuration has <code>home_on_close: false</code>. A separate idle Home capability must not suppress this request. <strong>Return Home</strong> keeps an active rollout open. Explicit Drag and Release transitions finish without homing and remain subject to the embodiment's release checks; they are not the ordinary Finish action. If actuator release is blocked, keep the owning process alive: do not release control or kill it while the arms are unsupported. Tianji Release offers continuous or five-second cooperative hand-guiding when declared; loss of the recovery lease cancels it.</p><p>Pack-plate deployments select <code>tianji_taccap_pack_plate.yaml</code> for the saved <code>pack_plate_start</code> Home. Update older bound configurations and restart the runtime to load a changed assembly.</p><p>
 Warmup is explicit when <code>run.warmup_before_start: true</code>; otherwise go directly to Start. Follow the selected Finish/Home behavior before
 stopping runtime, then stop model, camera and GUI processes.</p>
 <p>For another compatible method, select it in RoboGUI. For another collection/model,
@@ -325,7 +414,7 @@ execution windows and ACT query intervals still limit submissions.</p>
 <tr>
 <td><code>inference.refill_threshold_s</code></td>
 <td><code>0.4</code></td>
-<td>Seconds of remaining actions at which refill becomes eligible; <code>0.1</code> means 100 ms. Use a positive value. Zero prevents refill even with an empty timeline.</td>
+<td>Refill becomes eligible when remaining action time is strictly below this threshold; <code>0.1</code> means 100 ms. The value must round to a positive, finite nanosecond duration. Zero and positive values that round to zero are rejected during configuration validation.</td>
 </tr>
 <tr>
 <td><code>inference.observation_hz</code></td>
@@ -957,7 +1046,7 @@ in the experiment YAML. These are overrides to the same RTC experiment:</p>
   temporal_ensemble:
     enabled: false</code></pre>
 <p>The combination flag defaults to false. Explicit false also overrides an enabled referenced preset.
-After changing YAML, finish the current rollout and restart <code>manimux serve --collection ...</code>
+After changing YAML, finish the current rollout and restart <code>manimux run --config-list ...</code>
 before preparing the next trial. The same model server can stay running for this flag change.
 For a controlled comparison, leave the other settings unchanged.</p>
 <p><code>coefficient: 0</code> still averages predictions with equal weights; it does not disable
@@ -1183,7 +1272,7 @@ decides availability. It does not establish task performance.</p>
 </tr>
 </tbody>
 </table>
-<p>OpenWAM specialized modes require eager execution and CFG scale 1. RTC can opt into DiT caching; PAINT/AutoHorizon requests remain uncached;
+<p>OpenWAM specialized modes require a single-stream, full-horizon backend and CFG scale 1. RTC permits compilation and can opt into DiT caching. Compiled RTC has synthetic CPU regression coverage; real-checkpoint CUDA validation is still required before claiming correctness or speed on a deployment. Existing eager experiments keep their recorded settings; compilation comparisons need distinct variants. PAINT/AutoHorizon currently require eager execution and remain uncached;
 AutoHorizon also requires the joint-attention driver. LingBot conditioned/attention modes
 require the native horizon; attention capture needs eager execution. Pi05 PyTorch and
 Pi05 EEF are outside this matrix. <a href=".agents/skills/manimux-inference/references/inference-matrix.md">Detailed model contracts</a></p>
@@ -1214,15 +1303,15 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 <tbody>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/pi05-yam.md">Pi05 / YAM</a></td>
-<td>OpenPI environment; <code>manimux.servers.policy --collection</code></td>
+<td>OpenPI environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/xiaomi-xr1-yam.md">XR1 / YAM</a></td>
-<td>XR1 environment; <code>manimux.servers.policy --collection</code></td>
+<td>XR1 environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/lingbot-vla2-yam.md">LingBot / YAM</a></td>
-<td>LingBot environment; <code>manimux.servers.policy --collection</code></td>
+<td>LingBot environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/dp-yam.md">DP / YAM</a></td>
@@ -1230,7 +1319,7 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 </tr>
 <tr>
 <td><a href=".agents/skills/manimux-inference/references/deployment/openwam-yam.md">OpenWAM / YAM</a></td>
-<td>OpenWAM environment; <code>manimux.servers.policy --collection</code></td>
+<td>OpenWAM environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 </tbody>
 </table>
@@ -1238,12 +1327,12 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 cannot add a missing sampler hook. Historical runbook measurements apply to their recorded
 revisions, not automatically to a new checkpoint.</p>
 </section>
-<section aria-labelledby="experiment-lists" class="guide-page" data-page-id="experiment-lists" data-title="Collections &amp; task switching" hidden=""><h2 id="experiment-lists">Collections &amp; task switching</h2>
-<p>A <strong>collection</strong> is the entry point for a study, including a single experiment. It selects reusable variants, the trial plan and one recording root. Camera, model and runtime commands use the same collection and station. Compatible task/method choices switch in RoboGUI after Finish, recovery and evaluation.</p>
+<section aria-labelledby="experiment-lists" class="guide-page" data-page-id="experiment-lists" data-title="Config lists &amp; task switching" hidden=""><h2 id="experiment-lists">Config lists &amp; task switching</h2>
+<p>A <strong>config list</strong> is the entry point for a study, including a single experiment. It selects reusable variants, the trial plan and one recording root. Camera, model and runtime commands use the same config list and station. Compatible task/method choices switch in RoboGUI after Finish, recovery and evaluation.</p>
 <h3 id="experiment-config-locations">Configuration ownership</h3>
-<p><strong>Published example:</strong> only <code>experiments/pi05-latest300ep-step30000/</code> and its collection are tracked in this checkout. Other study directories and collections are local and Git-ignored. Shared components and task definitions remain reusable. Update both allowlists in <code>.gitignore</code> explicitly when publishing another study.</p>
+<p><strong>Published example:</strong> only <code>experiments/pi05-latest300ep-step30000/</code> and its config list are tracked in this checkout. Other study directories and config lists are local and Git-ignored. Shared components and task definitions remain reusable. Update both allowlists in <code>.gitignore</code> explicitly when publishing another study.</p>
 <pre><code>manimux/configs/
-  collections/&lt;study&gt;.yaml                 # entries, trials, recording.root
+  lists/&lt;study&gt;.yaml                 # entries, trials, recording.root
   tasks/&lt;task&gt;.yaml                        # prompt, layouts, rubric, optional pose
   embodiment/{robot,sensor,initial_poses}/  # shared hardware and named poses
   policy/  inference/  executor/  local/
@@ -1255,11 +1344,11 @@ revisions, not automatically to a new checkpoint.</p>
 <tr><td>Component recipes</td><td>Model/artifacts, inference defaults, robot/camera contracts, executor</td><td>Trial counts and output directory</td></tr>
 <tr><td>Task</td><td>Exact prompt, available layouts, evaluation template, optional named initial pose</td><td>Which methods are compared</td></tr>
 <tr><td>Experiment variant</td><td>Component selection and deliberate parameter overrides; <code>experiment.task</code> and <code>experiment.variant</code></td><td>Recording root</td></tr>
-<tr><td>Collection</td><td>Entry IDs/labels, layout subset/repeats, recording root, optional station and historical inputs</td><td>Hidden algorithm overrides</td></tr>
-<tr><td>Local station</td><td>Device bindings, service endpoints and installed artifact paths</td><td>Study storage; <code>paths.output_dir</code> is rejected for collections</td></tr>
+<tr><td>Config list</td><td>Entry IDs/labels, layout subset/repeats, recording root, optional station and historical inputs</td><td>Hidden algorithm overrides</td></tr>
+<tr><td>Local station</td><td>Device bindings, service endpoints and installed artifact paths</td><td>Study storage; <code>paths.output_dir</code> is rejected for config lists</td></tr>
 </tbody></table>
 <p><code>_base_</code> accepts a file or list of files. Later bases override earlier ones, then the variant overrides its bases. Mappings merge; lists replace. References are relative to the file declaring them. Cycles and inheritance chains longer than four files are rejected. Prefer one shared base plus one task.</p>
-<pre><code class="language-yaml"># collections/my-study.yaml
+<pre><code class="language-yaml"># lists/my-study.yaml
 id: my-study
 recording:
   root: /data/robot-experiments             # user chooses; relative paths use this file's directory
@@ -1282,53 +1371,68 @@ inference:
     min_execute_policy_steps: 32
     beta: 10
 </code></pre>
-<p>The agent first establishes single-task versus multi-task scope, checkpoint/contract, observable success and optional partial scores, layouts/reset, stopping rules and storage. It writes the task, variants, collection and private station from the answers and validates them. Users do not need to fill YAML forms. Do not infer a different user's scoring weights, trial count or joint coordinates.</p>
+<p>The agent first establishes single-task versus multi-task scope, checkpoint/contract, observable success and optional partial scores, layouts/reset, stopping rules and storage. It writes the task, variants, config list and private station from the answers and validates them. Users do not need to fill YAML forms. Do not infer a different user's scoring weights, trial count or joint coordinates.</p>
 <h3 id="portable-config-paths">Portable paths and validation</h3>
 <p>Shared recipes use <code>${paths.checkpoints}/...</code> for model artifacts and
 <code>${repo}/...</code> for repository resources. Additional roots, such as
 <code>paths.sapolicy_workspace</code>, belong in the private station. Relative station roots
-resolve beside that file. Collection and standalone recipe readers use the same expansion;
+resolve beside that file. Config list and standalone recipe readers use the same expansion;
 a missing root is an error, not a guessed path.</p>
 <p>Unknown public configuration fields fail with their section and a spelling suggestion.
 Plugin-owned <code>options</code> remain extensible and are validated by their owner.
-Use <code>python -m manimux inspect --collection &lt;collection.yaml&gt; --local &lt;station.yaml&gt;</code>
+Use <code>python -m manimux inspect --config-list &lt;list.yaml&gt; --local &lt;station.yaml&gt;</code>
 to inspect resolved settings and output paths without starting services.
 Unresolved historical deployments live under ignored <code>configs/local/archived_experiments/</code>.
-The matrix generator preserves model cache/compile settings and leaves recording roots to collections.</p>
+The matrix generator preserves model cache/compile settings and leaves recording roots to config lists.</p>
 <h3 id="starting-pose-ownership">Initial pose and Home</h3>
 <p>Named YAM poses live in <code>embodiment/initial_poses/yam.yaml</code>: <code>home</code>,
 <code>raised_ready</code> and <code>table_ready</code>. A task or variant selects
 <code>initial_pose: {config: …, id: …}</code>. Pi05's shared base selects Home;
-conveyor variants explicitly select Raised ready. SAPolicy deployment variants explicitly
+the shared <code>tasks/pick_the_moving_cube.yaml</code> selects <code>raised_ready</code> and enables startup motion for all current YAM model variants of that task. The joint values and 5-second transition are defined once in the pose library. SAPolicy deployment variants explicitly
 select Table ready; the policy does not choose the robot start.</p>
+<p>The robot assembly declares its preset library with <code>initial_poses: ../initial_poses/yam.yaml</code>.
+RoboGUI reads validated presets from this library for both <code>--config</code> trials and
+<code>--config-list</code> studies; the menu is independent of the listed methods. A task's explicit
+<code>initial_pose.config</code> can select a different library. Only configured, dimension-checked
+poses are offered; another embodiment must provide its own verified coordinates.</p>
+<p>Selecting <b>Initial pose → Home</b> changes the next Prepare configuration without moving hardware.
+Selection is available only after rollout cleanup, evaluation and recovery are complete.
+Within a task, changing methods preserves an operator-selected pose when available; changing tasks
+restores the new task's default. Nondefault poses record under <code>&lt;variant&gt;__pose_&lt;pose-id&gt;</code>,
+with separate progress and a frozen initial target. Selecting the default again returns to the original
+variant's records. No extra experiment YAML is required.</p>
 <p>YAM startup motion requires <code>robot.options.execute: true</code> and
 <code>move_to_start_on_connect: true</code>; it retains sequential arm motion.
 Do not copy these driver options to a different embodiment without a supported motion implementation.
 Return Home remains a robot-owned operation, separate from the experiment's starting pose.
 Records distinguish the configured initial target, measured state and actual Home target.</p>
 <h3 id="study-storage-protocol">Recording identity and historical data</h3>
-<pre><code>&lt;recording.root&gt;/&lt;collection.id&gt;/&lt;experiment.task&gt;/&lt;experiment.variant&gt;/
+<p>A session created before Prepare may contain only a manifest. Such empty startup
+sessions do not prevent configuration fixes; their manifests are retained unchanged.
+Once any rollout record exists, including a partial rollout, condition checks apply.</p>
+<pre><code>&lt;recording.root&gt;/&lt;list.id&gt;/&lt;experiment.task&gt;/&lt;experiment.variant&gt;/
   session-&lt;timestamp&gt;-&lt;unique-id&gt;/
     session-manifest.json
     rollout-001/...
 </code></pre>
-<p>Restarting the same collection resumes progress from the same destination. Selecting an entry in RoboGUI and using <code>--experiment-id</code> resolve to the same identity and directory. Each launch/selection creates a session; repeats create rollouts, not new YAML files. Managed variants cannot launch directly through <code>serve --config</code> or <code>run --config</code>.</p>
-<p>Session manifests freeze the resolved configuration, component/base hashes and collection identity. Changed scientific conditions under an already recorded variant ID are rejected: create a clearly named variant. Labels and trial budgets can change without pretending that the model or algorithm changed.</p>
-<p>Existing recordings keep their paths, raw contents and recorded configurations. A collection entry may declare <code>history: [old-study/step32/coin/rtc_beta10]</code>, relative to <code>recording.root</code>. Only sessions with matching saved effective conditions count toward current progress. Canonical paths deduplicate aliases. Finalized, valid scored experiments count; partial, unlabelled and invalid attempts remain distinguishable. Historical 16-step data are preserved for analysis and never relabelled as 32-step trials.</p>
-<p><code>inspect --collection … --index</code> refreshes the derived <code>recordings-index-v2.json</code> inside the collection's recording directory. It inventories real session directories without following aliases. It is a snapshot, not the score authority; labels are read from recordings. The earlier <code>recordings-index.json</code> and migration/deletion receipts remain historical records. Index generation never rewrites raw episode files.</p>
+<p>Restarting the same config list resumes progress from the same destination. Selecting an entry in RoboGUI and using <code>--experiment-id</code> resolve to the same identity and directory. Each launch/selection creates a session; repeats create rollouts, not new YAML files. The same variant launched through <code>run --config</code> is an unscored trial. It does not load study history or consume repeat slots. Trial recordings default to <code>data/trials/&lt;task&gt;/&lt;variant&gt;/session-…</code>; <code>--output-dir</code> selects another trial root. For standalone configs without experiment identity, the directory uses the filename and a hash of its absolute path. If configured, <code>run.output_dir</code> replaces <code>data</code> as the parent of <code>trials/</code>.</p>
+<p>Session manifests freeze the resolved configuration, component/base hashes and config list identity. Changed scientific conditions under an already recorded variant ID are rejected: create a clearly named variant. Labels and trial budgets can change without pretending that the model or algorithm changed.</p>
+<p>Existing recordings keep their paths, raw contents and recorded configurations. A config list entry may declare <code>history: [old-study/step32/coin/rtc_beta10]</code>, relative to <code>recording.root</code>. Only sessions with matching saved effective conditions count toward current progress. Canonical paths deduplicate aliases. Finalized, valid scored experiments count; partial, unlabelled and invalid attempts remain distinguishable. Historical 16-step data are preserved for analysis and never relabelled as 32-step trials.</p>
+<p><code>inspect --config-list … --index</code> refreshes the derived <code>recordings-index-v2.json</code> inside the config list's recording directory. It inventories real session directories without following aliases. It is a snapshot, not the score authority; labels are read from recordings. The earlier <code>recordings-index.json</code> and migration/deletion receipts remain historical records. Index generation never rewrites raw episode files.</p>
 <h3 id="latest300ep-launch">Current Pi05 study: five tasks, 32-step fixed windows</h3>
-<p>Use <code>manimux/configs/collections/pi05-latest300ep-step30000.yaml</code>. It contains five tasks × six methods plus six conveyor raised-start variants. Pi05 fixed windows use 32/50, Direct and blend=0; RTC beta=10. AutoHorizon remains adaptive. Async uses <code>request_trigger: progress</code> and retains the full model horizon. Async/RTC/PAINT source progress includes latency-trimmed rows; this is not a guarantee of 32 physical commands.</p>
-<p>For this comparison, fixed windows use <code>K = round(H × 32/50)</code>: LingBot 32/50, OpenWAM 20/32, Xiaomi Robotics-1 19/30. This is the study's choice, not a universal default for new users. Xiaomi's collection currently includes Async and RTC. FastWAM has no bound YAM collection.</p>
+<p>Use <code>manimux/configs/lists/pi05-latest300ep-step30000.yaml</code>. It contains five tasks × six methods; moving-cube entries use the shared raised starting pose. Pi05 fixed windows use 32/50, Direct and blend=0; RTC beta=10. AutoHorizon remains adaptive. Async uses <code>request_trigger: progress</code> and retains the full model horizon. Async/RTC/PAINT source progress includes latency-trimmed rows; this is not a guarantee of 32 physical commands.</p>
+<p>For this comparison, fixed windows use <code>K = round(H × 32/50)</code>: LingBot 32/50, OpenWAM 20/32, Xiaomi Robotics-1 19/30. This is the study's choice, not a universal default for new users. Xiaomi's chunk-IK config list includes Async and RTC; its step-IK list includes Serial, Async, RTC and PAINT. FastWAM has no bound YAM config list.</p>
+<p>For Xiaomi/YAM, <code>policy.adapter.gripper_output: clip</code> explicitly declares the adapter's gripper handling: reconstruct absolute opening from the observation and predicted delta, then clip to <code>[0, 1]</code> for both chunk and step IK. Non-finite inputs and reconstructed openings fail. Chunk metadata records <code>gripper_clip_max_abs</code>. Raw observations, predicted deltas, pose targets and IK constraints remain unchanged. Current local experiment variants use <code>_grip_clip</code> to separate earlier tolerance-based recordings.</p>
 <pre><code class="language-bash">cd /home/ubuntu/manimux
 envs/yam/.venv/bin/python -m manimux inspect \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml --index
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml --index
 envs/yam/.venv/bin/python scripts/experiments/check_step_ratio.py \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml</code></pre>
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml</code></pre>
 <p>Start each long-running command in its own terminal after checking existing services:</p>
 <pre><code class="language-bash"># Camera service
 cd /home/ubuntu/manimux
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
 
 # RoboGUI
 cd /home/ubuntu/manimux
@@ -1337,23 +1441,48 @@ envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
 
 # Pi05 model service
 cd /home/ubuntu/manimux
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml
+XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
 
 # Runtime: Task / Method / Layout selection
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/pi05-latest300ep-step30000.yaml</code></pre>
-<p>Open <a href="http://127.0.0.1:8086">RoboGUI</a>. Choose Task → Method → Layout → Prepare Run / Prepare Experiment → Activate Warmup → Start → Finish → save/skip evaluation. Prepare may move to the configured initial pose. Only the moving-cube task offers the measured raised preset in this collection; other tasks use Home. Raised and Home are distinct recorded variants. General tasks may inherit an <code>initial_pose: {config: …, id: …}</code> from their task YAML; overrides belong to deliberate variants.</p>
-<h3 id="mixed300ep-launch">Other collections and service selection</h3>
-<p>The following collections are local examples, not included in a fresh clone. When present on your station, use <code>collections/lingbot-vla2-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-cached-all-tasks.yaml</code>, <code>openwam-bottles30k-rtc-cache-all-tasks.yaml</code> or <code>xiaomi-xr1-bottles30k-ratio64-all-tasks.yaml</code> as appropriate. These bottle-trained weights are being evaluated across tasks; inclusion is not evidence of training coverage or successful task performance.</p>
-<p>The generic XPolicyLab launcher is <code>python -m manimux.servers.policy --collection …</code>, using that model's installed Python environment. <code>--check</code> prints the resolved service recipe without loading weights. Camera <code>--check</code> resolves devices without opening them. Pi05's dedicated launcher additionally validates its artifact paths.</p>
-<p>OpenWAM cached Serial/Async uses the original compiled DiT cache recipe. The RTC-cache collection uses eager execution and the declared cache modes. Specialized sampling and compilation support remain model-specific; retain these flags and measured latency when comparing methods.</p>
+envs/yam/.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml</code></pre>
+<p>Open <a href="http://127.0.0.1:8086">RoboGUI</a>. Choose Task → Method → Layout → Prepare Run / Prepare Experiment → Activate Warmup → Start → Finish → save/skip evaluation. Prepare may move to the configured initial pose. The moving-cube task defaults to the measured Raised ready preset across the current Pi05, Xiaomi, LingBot and OpenWAM config lists. Other tasks retain their configured starts. Earlier Home-start Pi05 moving-cube variants remain available for historical reproduction but are excluded from the active list. Changed starts use distinct recorded variant IDs; existing recordings are not rewritten. General tasks may inherit an <code>initial_pose: {config: …, id: …}</code> from their task YAML; overrides belong to deliberate variants.</p>
+<h3 id="mixed300ep-launch">Other config lists and service selection</h3>
+<p>The following config lists are local examples, not included in a fresh clone. When present on your station, use <code>lists/lingbot-vla2-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-cached-all-tasks.yaml</code>, <code>openwam-bottles30k-rtc-cache-all-tasks.yaml</code> or <code>xiaomi-xr1-bottles30k-ratio64-all-tasks.yaml</code> as appropriate. These bottle-trained weights are being evaluated across tasks; inclusion is not evidence of training coverage or successful task performance.</p>
+<p>The generic XPolicyLab launcher is <code>python -m manimux.servers.policy --config-list …</code>, using that model's installed Python environment. <code>--check</code> prints the resolved service recipe without loading weights. Camera <code>--check</code> resolves devices without opening them. Pi05's dedicated launcher additionally validates its artifact paths.</p>
+<p>For this station's latest multi-task OpenWAM checkpoint, use <code>manimux/configs/lists/openwam-latest300ep-step60000.yaml</code> with the camera, model and runtime entry points above; use <code>envs/openwam/.venv/bin/python</code> for the model service. This local config list binds <code>yam_latest_300ep_30k_micro4_v3/checkpoint_step_60000.safetensors</code> and its matching normalization statistics on the external drive. The transfer record identifies six-task training weights and 60000 microsteps; the active study contains the five shared evaluation tasks, with Serial, Async and RTC at 20/32 source steps. DiT cache is enabled for <code>default</code> and <code>rtc</code>, with compilation disabled. Moving-cube variants use Raised ready. Results are stored under <code>data/experiments/openwam-latest300ep-step60000/</code>; old bottle-checkpoint records are not imported. Configuration and artifact validation do not establish real-model forward or robot-task success.</p>
+<p><strong>LingBot-VLA2 RTC withdrawn (2026-10-18).</strong> RTC is removed from the model capability list and all LingBot experiment entries. Measured conditioned sampling averaged 961.32 ms, exceeding the 0.60 s remaining-action budget at H=50, K=32 and 30 Hz. Historical RTC-labelled records include unconditioned fallbacks and must not be treated as a validated RTC baseline. Normal inference, PAINT and AutoHorizon retain their separate paths. Running processes must be restarted normally to load this removal; editing files does not update an already loaded model.</p>
+<p>This station's multi-task LingBot-VLA2 checkpoint uses <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml</code>, with <code>envs/lingbot-vla2/.venv/bin/python</code> for the model service. It binds <code>yam_latest300_micro8_v5_step30000</code> on the external drive, checkpoint-matched normalization and the existing relative-joint deployment projection. The main list contains five tasks × four fixed-window methods with <code>use_compile: true</code> and 32/50 windows. Serial is the initial selection; no <code>--experiment-id</code> is needed. AutoHorizon currently requires eager attention capture and uses <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000-autohorizon-eager.yaml</code> (five tasks); start its model service and runtime with that same list after stopping the previous run normally. Compiled variants have an <code>_compile</code> recording suffix, and <code>use_compile</code> is part of the model handshake identity. Configuration and live HELLO checks passed, followed by finite real-checkpoint CUDA ordinary/PAINT outputs on synthetic observations; this is not a hardware trial or a matched speedup benchmark. Compilation happens lazily during warmup. The first ordinary call in the probe took 86.52 seconds, so <code>policy.options.warmup_request_timeout_s: 300</code> permits display-only warmup to finish while the ordinary request timeout remains 20 seconds. A started server alone does not establish a warmed sampler. Moving-cube starts at Raised ready, other tasks at Home. Records use <code>data/experiments/lingbot-vla2-latest300ep-step30000/</code>, separately from the bottle-trained checkpoint.</p>
+<p><strong>PAINT waiting behavior:</strong> PAINT can keep running when inference exceeds the old chunk's remaining duration. It conditions the next prediction on the available suffix followed by a repeated terminal target, including the gripper. The runtime holds the last command until a valid result arrives, then applies the usual latency trimming. It does not reduce the configured execution steps or switch algorithms. Recorded metadata includes forecast and elapsed terminal-hold policy steps. Real request failures retain the common recovery path; a delay consuming the entire new prediction horizon still fails explicitly. The terminal-hold extension is covered by offline tests, not a new hardware validation.</p>
+<p>OpenWAM cached Serial/Async uses the original compiled DiT cache recipe. The RTC-cache config list uses eager execution and the declared cache modes. Specialized sampling and compilation support remain model-specific; retain these flags and measured latency when comparing methods.</p>
+<h3 id="single-config-trial">Try one existing configuration</h3>
+<p>No study YAML is required. Reuse a concrete variant, or let the agent write one runtime configuration from your robot, model and task requirements. Layouts, repetition budgets and a scoring rubric are optional for trials. Keep the same config and station across services; use the model's installed environment for policy serving.</p>
+<pre><code class="language-bash">cd /home/ubuntu/manimux
+# Validate only; opens no hardware and creates no recording directories.
+envs/yam/.venv/bin/python -m manimux inspect \
+  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+
+# Camera: separate terminal; append --check for configuration-only validation.
+envs/yam/.venv/bin/python -m manimux.servers.camera.server \
+  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+
+# Pi05 model: separate terminal; append --check to avoid loading weights.
+XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
+  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+
+# Runtime: separate terminal; reuse the RoboGUI command above.
+envs/yam/.venv/bin/python -m manimux run \
+  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+</code></pre>
+<p>The last command waits for Prepare Run. It does not start robot motion by itself. Optional <code>--once</code> connects immediately and exits after one rollout, so use it deliberately. A bare camera component recipe uses the advanced <code>--camera-config</code> flag; common <code>--config</code> always refers to a full runtime configuration.</p>
+<p><strong>Naming migration:</strong> configuration lists now live under <code>manimux/configs/lists/</code> and use <code>--config-list</code>. The list YAML contents, IDs, recording roots and existing episode files are unchanged. Internal <code>manimux.collections</code> helpers and saved <code>collection</code> metadata retain their schema names for historical compatibility.</p>
 <h3 id="experiment-switch-boundaries">Switching boundaries</h3>
 <table><thead><tr><th>Change</th><th>Behavior</th></tr></thead><tbody>
 <tr><td>Compatible task, method, parameters or named starting pose</td><td>Idle-only selection after recovery/evaluation. A fresh runtime on Prepare clears previous chunks and sampling state.</td></tr>
-<tr><td>Different camera set, checkpoint, robot or model initialization</td><td>May coexist in a collection, but cannot hot-switch. Select <code>--experiment-id ID</code> for runtime and matching services; restart affected services explicitly.</td></tr>
-<tr><td>Ambiguous camera/model launch</td><td>Without an explicit ID, that service's configurations must agree across the collection; otherwise launch fails with a selection error.</td></tr>
+<tr><td>Different camera set, checkpoint, robot or model initialization</td><td>May coexist in a config list, but cannot hot-switch. Select <code>--experiment-id ID</code> for runtime and matching services; restart affected services explicitly.</td></tr>
+<tr><td>Ambiguous camera/model launch</td><td>Without an explicit ID, that service's configurations must agree across the config list; otherwise launch fails with a selection error.</td></tr>
 <tr><td>YAML edited on disk</td><td>Restart runtime to reload. Restart model/camera services if their configuration changed. No automatic hardware restart.</td></tr>
 </tbody></table>
 <p id="experiment-list-records">Current recorded conditions remain the authority. Configuration inspection does not validate model outputs or physical execution. Validate the first trials' actual switch timing before collecting a full cohort.</p>
@@ -1394,12 +1523,20 @@ envs/yam/.venv/bin/python -m manimux serve \
 unless already agreed. It should not invent weights or require scoring for free inference.
 Keep PRM optional. Record protocol choices separately from runtime configuration.</p>
 <h3 id="configure-two-independent-templates">Define the task in one file</h3>
+<p>A new rubric version may add score options while keeping every existing option
+unchanged. The collection retains prior trial progress when execution settings match.
+Old recordings keep their original rubrics and scores; adding an option does not
+automatically regrade them or make scores across rubric versions interchangeable.</p>
 <p>Write <code>manimux/configs/tasks/&lt;task&gt;.yaml</code> with the exact prompt, available layouts,
-inline scoring rules and optional initial pose. Experiment variants inherit this task through
+inline scoring rules, <code>run.max_control_steps</code> and optional initial pose. The task owns
+the per-rollout control-tick limit; models and methods inherit it rather than duplicating it.
+A stop-budget-only change applies to subsequent sessions and retains study progress. Saved
+session budgets and condition fingerprints remain unchanged; compare results using those
+recorded stopping rules. Experiment variants inherit this task through
 <code>_base_</code>; do not create a separate scoring YAML. Set repeats and the recording root in the
 <a href="#experiment-lists">collection</a>. The sample task values below are replaceable.</p>
 <pre><code class="language-yaml">run:
-  task: put_the_coin_into_the_bin2  # Exact instruction sent to the policy
+  task_prompt: put_the_coin_into_the_bin2  # Exact instruction sent to the policy
   experiment_template:
     name: Coin layouts
     layout_ids: [near, far]
@@ -1421,7 +1558,7 @@ Prepare Run needs no layout or scoring. For Prepare Experiment, select Layout on
 its reference is attached automatically and scoring is offered after Finish.
 The <strong>Images</strong> panel is expanded by default. Historical replay has a separate command below.
 Task, policy and executor are read-only. Keep experiment name, condition and model parameters in YAML.
-The Top gallery matches <code>run.task</code> ignoring case, punctuation and spaces versus underscores;
+The Top gallery matches <code>run.task_prompt</code> ignoring case, punctuation and spaces versus underscores;
 store images in <code>data/evaluation_layouts/&lt;task&gt;/&lt;layout&gt;.png</code>.</p>
 <p>Repeat numbers are suggested from finalized, scored trials across sessions under the same
 <code>run.output_dir</code>, matched by task, experiment name, condition, layout and reference hash.
@@ -1456,6 +1593,17 @@ rubrics remain readable; no historical labels are rewritten.</p>
 Each rollout saves a snapshot; later YAML edits do not change historical scores.
 <a href="manimux/configs/tasks/coin.yaml">Current coin task</a> · <a href="manimux/configs/tasks/stack_blocks_medium.yaml">Stacking task</a></p>
 <h3 id="operator-errors">Errors and panel width</h3>
+<p>Rollout errors identify the source: <strong>Model service</strong>,
+<strong>Camera / sensor</strong>, <strong>Robot / CAN</strong>, or
+<strong>Action decoding / IK</strong>. The persistent card shows the failure stage,
+known device or endpoint, reason, and next step. Enable <strong>Show original error</strong> (its state persists across error updates)
+for the underlying exception. Unknown errors remain explicitly unclassified;
+a missing CAN interface alone does not establish DFU mode or a broken motor.
+The top status retains the failure category while the runtime is idle.
+For example, a model connection refusal means check model loading and its endpoint;
+a missing robot interface means restore that interface before another Prepare.
+A camera service that fails before runtime connection must also be checked in its
+own terminal; camera startup and read errors include the failing camera name.</p>
 <p>Operation failures appear in a persistent card with the operation, time and selectable
 error text. Live status updates do not overwrite it. <strong>Dismiss error message</strong>
 only hides the card; it does not reset a robot fault or send commands.
@@ -1797,7 +1945,7 @@ The failed attempt is excluded from successful tick data.</p>
 <tr><td><code>config.run.sensor_reading.poll_hz</code></td><td>Configured polling frequency of the owning control/sensor reader.</td></tr>
 <tr><td><code>config.run.sensor_reading.shutdown_timeout_s</code></td><td>Sensor-reader shutdown timeout, seconds.</td></tr>
 <tr><td><code>config.run.sensor_reading.startup_timeout_s</code></td><td>Startup/readiness timeout of the owning worker or sensor reader, seconds.</td></tr>
-<tr><td><code>config.run.task</code></td><td>Policy instruction in top-level meta; reference_layout.task is the reference-image gallery name, not the evaluation task_id.</td></tr>
+<tr><td><code>config.run.task_prompt</code></td><td>Policy instruction in top-level meta; reference_layout.task is the reference-image gallery name, not the evaluation task_id.</td></tr>
 <tr><td><code>config.run.timing_max_cycles</code></td><td>Maximum loop cycles retained by detailed timing capture.</td></tr>
 <tr><td><code>config.run.warmup_before_start</code></td><td>Enable model warmup before formal Start; current GUI requires explicit activation.</td></tr>
 <tr><td><code>config.sensors[].driver</code></td><td>Sensor driver plugin name.</td></tr>
@@ -1962,7 +2110,7 @@ The failed attempt is excluded from successful tick data.</p>
 </tbody></table></details>
 <details><summary>result.json — runtime outcome</summary><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>control_timing.status</code></td><td>Component status. control_timing.status=disabled means detailed per-stage loop timing was not saved.</td></tr>
-<tr><td><code>run_completed</code></td><td>Runtime reached normal finalization; not human task success. Replaces the legacy top-level runtime success key.</td></tr>
+<tr><td><code>run_completed</code></td><td>Runtime reached normal finalization after robot stop, configured Home and control-resource cleanup; not human task success. These operations precede video draining and Zarr writes. Cleanup failures retain run_completed=false and error details. Replaces the legacy top-level runtime success key.</td></tr>
 <tr><td><code>steps</code></td><td>Number of formally recorded control ticks. Does not count warmup ticks and is not a task-success metric.</td></tr>
 <tr><td><code>success</code></td><td>Legacy runtime result/event key meaning normal runtime finalization. Under evaluation.options[] it instead defines complete TASK success for that score option.</td></tr>
 <tr><td><code>terminal_reason</code></td><td>Why the run ended; robogui_finish_requested means the user requested Finish.</td></tr>
@@ -1970,7 +2118,7 @@ The failed attempt is excluded from successful tick data.</p>
 <tr><td><code>video_recording.enabled</code></td><td>Whether this specific component or recording feature is enabled.</td></tr>
 <tr><td><code>video_recording.error</code></td><td>Error detail if present; empty string or null means no error reported by this component.</td></tr>
 <tr><td><code>video_recording.frames_written</code></td><td>Total encoded frames summed over cameras. Three cameras with 1044 frames each give 3132, not 3132 synchronized time points.</td></tr>
-<tr><td><code>wall_time_s</code></td><td>Elapsed run() wall time until finalization is invoked, in seconds; includes startup, warmup and pauses. Not task completion time or video duration.</td></tr>
+<tr><td><code>wall_time_s</code></td><td>Elapsed run() wall time until the control loop exits, in seconds; includes startup, warmup and pauses, but excludes shutdown Home, resource cleanup and recording finalization. Not task completion time or video duration.</td></tr>
 </tbody></table></details>
 <details><summary>videos/index.json — encoded camera frames</summary><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>cameras.{camera}.capture_monotonic_ns</code></td><td>One host-monotonic capture timestamp per encoded camera frame, in MP4 frame order. Preserve each camera&#x27;s own timestamp sequence.</td></tr>
@@ -2168,7 +2316,7 @@ The failed attempt is excluded from successful tick data.</p>
 <tr><td><code>meta.json.identity_frozen</code></td><td>Whether first Start froze the final layout/reference. This field is absent in older records.</td></tr>
 <tr><td><code>events: warmup_activated</code></td><td>Explicit Warmup activation was accepted; separate from warmup_start_requested, which means the operator requested formal Start.</td></tr>
 <tr><td><code>events: rollout_identity_frozen</code></td><td>Final Start-time trial identity; same experiment/layout/reference field meanings as meta.json.</td></tr>
-<tr><td><code>result.json.incomplete</code></td><td>true for an interrupted .partial episode; not a completed trial.</td></tr>
+<tr><td><code>result.json.incomplete</code></td><td>true for an interrupted or failed episode; not a completed trial. A late GUI cleanup failure can mark an already finalized directory incomplete without rewriting its recorded data.</td></tr>
 <tr><td><code>result.json.detail</code></td><td>Exception/error detail accompanying the interruption reason.</td></tr>
 <tr><td><code>events: episode_aborted</code></td><td>Interrupted runtime with terminal_reason and detail.</td></tr>
 <tr><td><code>control_timing.status</code></td><td>disabled: no detailed timing files were captured. saved: timing capture was written. error: export failed, with an error message. Ordinary events.jsonl is independent.</td></tr>

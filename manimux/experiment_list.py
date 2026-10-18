@@ -19,7 +19,7 @@ class ExperimentChoice:
     def metadata(self) -> dict:
         return {
             "id": self.id, "label": self.label, "config_path": str(self.path),
-            "task": self.config["run"]["task"],
+            "task": self.config["run"]["task_prompt"],
             "method": self.config["inference"]["algorithm"],
             "initial_pose": initial_pose_metadata(self.config),
         }
@@ -29,7 +29,7 @@ def shared_service_contract(config: dict) -> dict:
     """Fail before launch if switching would require different external services.
 
     Model initialization arguments remain fixed, including sampler defaults and
-    normalization. Task instructions belong to run.task, not model identity.
+    normalization. Task instructions belong to run.task_prompt, not model identity.
     Runtime strategies/executors are rebuilt by Prepare and may differ.
     """
     policy = config["policy"]

@@ -251,7 +251,7 @@ as evaluation trials.
 
 ## Configurable human scoring
 
-Each shared `manimux/configs/tasks/<task>.yaml` owns the exact prompt (`run.task`),
+Each shared `manimux/configs/tasks/<task>.yaml` owns the exact prompt (`run.task_prompt`),
 available layouts (`run.experiment_template`) and inline scoring rules (`evaluation`).
 Experiment variants inherit the task through `_base_`. Do not create a separate
 scoring YAML. RoboGUI reads the resolved evaluation and displays mutually exclusive

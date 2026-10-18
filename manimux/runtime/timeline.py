@@ -535,9 +535,16 @@ class ActionTimeline:
             )
         return active
 
-    def sample(self, time_ns: int) -> GroupVector | None:
-        """Sample the model/source trajectory used by observers and RTC."""
+    def sample(self, time_ns: int, *, terminal_hold: bool = False) -> GroupVector | None:
+        """Sample source targets; optional terminal hold is for conditioning only.
+
+        Execution coverage is unchanged. Do not revive an earlier plan or fill
+        time before the owning plan activates.
+        """
         plan = self._plan_at(time_ns)
+        if (terminal_hold and plan is not None
+                and time_ns >= max(plan.activation_time_ns, plan.end_time_ns)):
+            return {name: values[-1].copy() for name, values in plan.groups.items()}
         return None if plan is None else _sample_plan(plan, time_ns)
 
     def _sample_runtime(self, time_ns: int) -> GroupVector | None:

@@ -77,8 +77,9 @@ logs/
 /manimux/configs/experiments/*
 !/manimux/configs/experiments/README.md
 !/manimux/configs/experiments/pi05-latest300ep-step30000/
-/manimux/configs/collections/*
-!/manimux/configs/collections/pi05-latest300ep-step30000.yaml
+/manimux/configs/lists/*
+!/manimux/configs/lists/pi05-latest300ep-step30000.yaml
+!/manimux/configs/lists/README.md
 
 # Task definitions used only by private/historical experiment variants.
 /manimux/configs/local/tasks/

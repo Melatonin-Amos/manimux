@@ -9,6 +9,7 @@ from manimux.policies.worker import PolicyWorkerClient
 from manimux.policy_adapter.base import PolicyAdapter
 from manimux.runtime.inference import (
     InferenceStrategy,
+    InferenceTimingError,
     StrategyChunkSelector,
     build_warmup_submission,
     decode_strategy_action,
@@ -104,6 +105,10 @@ class PolicyWarmup:
     def advance(self, *, paused: bool, snapshot: ObservationSnapshot) -> None:
         try:
             self._advance(paused=paused, snapshot=snapshot)
+        except InferenceTimingError:
+            # A measured infeasible schedule cannot be fixed by repeatedly
+            # warming the same recipe. Let EdgeRuntime stop and Home normally.
+            raise
         except Exception as exc:  # IPC failures must remain visible while motion stays paused.
             self.phase = "error"
             self._preview = None

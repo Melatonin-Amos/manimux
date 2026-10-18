@@ -11,6 +11,20 @@ experiment through `read_experiment`, its model recipe, adapter and loaded backe
 Pi05 JAX/PyTorch, DP diffusion/flow and OpenWAM variants have different capabilities.
 The live HELLO sampling modes are authoritative; a method name or YAML is not proof.
 
+## Choose the launch workflow
+
+Before giving runtime commands, establish whether the user wants to **manage
+experiments** or **try once**. If context does not already answer this, ask the user.
+Reuse the decision for an ongoing study. Follow the
+[experiment workflow](../manimux-experiments/SKILL.md#start-from-the-users-experiment):
+`run --config-list` manages experiments. `run --config` tries one concrete runtime
+config interactively, including an existing experiment variant; records go to a
+separate trial root and no study scoring/progress is enabled. No list or duplicate
+config is needed. Optional `--once` connects immediately and exits after one rollout.
+Use the same input flag/file and station for camera, generic policy and runtime.
+Validate with `inspect --config` or `inspect --config-list` and service `--check`.
+Camera/model services remain separate from the runtime command.
+
 ## Configure a comparison
 
 Keep checkpoint, normalization, camera mapping, action interval/horizon and executor
@@ -53,6 +67,26 @@ EE motion for scoring. Return full chunks plus execution metadata so fixed-horiz
 adapters decode before runtime cropping. Do not score relative rows as absolute joints.
 DP's observation history and `n_obs_steps - 1` output offset remain model contracts.
 
+## Withdrawn model combinations
+
+LingBot-VLA2 RTC was withdrawn on 2026-10-18 after real-checkpoint latency and
+recording audits. Do not generate RTC variants or recommend historical LingBot
+RTC lists. PAINT/AutoHorizon retain their separate support boundaries. A callable
+sampler is not proof of real-time feasibility; require conditioned-request latency,
+actual execution/condition coverage and explicit fallback accounting before
+claiming a model-algorithm combination is ready for a physical study.
+
+## Compilation settings
+
+Before reusing or creating a deployment recipe, verify the official launch entry,
+constructor defaults, effective recipe overrides and the selected sampler's compile
+support. Do not copy an old `false` flag or extrapolate one attention-hook restriction
+to every algorithm. Cache, precision, attention implementation and graph compilation
+are distinct settings. Record the source and reason for deviations; compilation is
+not proven active merely because a flag is true. Check model identity and first-call
+warmup separately from steady-state timing. Do not mix compiled and eager results
+under one experiment variant. See the dated audit in [the matrix](references/inference-matrix.md#compilation-audit-2026-10-18).
+
 ## Validate and report
 
 For implementation changes, test fixed-noise no-condition/zero-weight equivalence,
@@ -66,4 +100,4 @@ Distinguish loader/CPU checks, real-weight inference and physical trials. Real-m
 validation checks actual specialized requests, full finite actions, candidate diversity
 or guidance effects, latency/memory and reset. Offline integration does not authorize
 starting services, GPU jobs or robot motion. Return to
-[experiments](../manimux-experiments/SKILL.md) for collection and evaluation.
+[experiments](../manimux-experiments/SKILL.md) for data collection and evaluation.

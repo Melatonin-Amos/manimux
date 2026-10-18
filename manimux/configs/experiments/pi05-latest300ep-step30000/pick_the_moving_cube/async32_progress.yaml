@@ -13,3 +13,8 @@ inference:
 experiment:
   task: pick_the_moving_cube
   variant: async32_progress
+
+# Historical Home-start variant, excluded from the active config list.
+initial_pose:
+  config: ../../../embodiment/initial_poses/yam.yaml
+  id: home

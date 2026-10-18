@@ -90,14 +90,14 @@ checkpoint。
 cd /path/to/manimux
 conda run -n xense-taccap --no-capture-output python \
   -m manimux.servers.camera.server \
-  --experiment manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
+  --config manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
   --local .local/tianji_taccap.yaml
 ```
 
 保持模板中的 `execute: false`，先运行 runtime 观察握手、推理延迟、IK 与保存记录：
 
 ```bash
-conda run -n xense-taccap --no-capture-output python -m manimux run \
+conda run -n xense-taccap --no-capture-output python -m manimux run --once \
   --config manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
   --local .local/tianji_taccap.yaml
 ```

@@ -1,5 +1,6 @@
 run:
-  task: put_the_coin_into_the_bin2
+  max_control_steps: 6000
+  task_prompt: put_the_coin_into_the_bin2
   experiment_template:
     name: put_the_coin_into_the_bin2 - ten layouts, three repeats
     layout_ids:

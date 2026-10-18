@@ -1,4 +1,4 @@
-"""Launch a collection's XPolicyLab model in its existing model environment."""
+"""Launch a config or config list's model in its existing model environment."""
 
 from __future__ import annotations
 
@@ -10,18 +10,27 @@ from pathlib import Path
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--collection", required=True, type=Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path, help="One runtime config; read its policy_server")
+    source.add_argument(
+        "--config-list", type=Path, help="Config list; select a shared model recipe"
+    )
     parser.add_argument("--experiment-id")
     parser.add_argument("--local", type=Path)
     parser.add_argument(
         "--check", action="store_true", help="Resolve configuration only; no model load"
     )
     args = parser.parse_args(argv)
-    from manimux.collections import select_service
-
-    config = select_service(
-        args.collection, "policy_server", local=args.local, experiment=args.experiment_id
-    )
+    if args.experiment_id and args.config_list is None:
+        parser.error("--experiment-id requires --config-list")
+    if args.config_list is not None:
+        from manimux.collections import select_service
+        config = select_service(
+            args.config_list, "policy_server", local=args.local, experiment=args.experiment_id
+        )
+    else:
+        from manimux.cli import read_experiment, resolve_local_path
+        config = read_experiment(args.config, local=resolve_local_path(args.config, args.local))
     if config["policy"]["worker"] != "xpolicylab_ws":
         raise ValueError("This launcher supports XPolicyLab deployments only")
     recipe = config["policy_server"]

@@ -1,5 +1,6 @@
 run:
-  task: put_bottles_into_the_bin
+  max_control_steps: 6000
+  task_prompt: put_bottles_into_the_bin
   experiment_template:
     name: put_bottles_into_the_bin - ten layouts, three repeats
     layout_ids:

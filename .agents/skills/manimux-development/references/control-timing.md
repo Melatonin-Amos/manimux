@@ -13,8 +13,8 @@ Finish the current rollout and restart only the ManiMux runtime with the diagnos
 flag. Existing camera, RoboGUI and policy services can stay running:
 
 ```bash
-envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
+envs/yam/.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
   --control-timing
 ```
 

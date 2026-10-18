@@ -1,5 +1,6 @@
 run:
-  task: stack_blocks
+  max_control_steps: 6000
+  task_prompt: stack_blocks
   experiment_template:
     name: stack_blocks - ten layouts, three repeats
     layout_ids:

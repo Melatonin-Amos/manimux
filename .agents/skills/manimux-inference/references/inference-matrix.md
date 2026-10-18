@@ -10,7 +10,7 @@ capacity, closed-loop stability, or task success.
 |---|---|---|---|---|---|
 | Pi05 JAX joint | Existing | Existing | Existing | Existing; full chunk decoding fixed | Existing |
 | Xiaomi XR1 | Existing | Existing | Added flow hook | Added independent batched candidates | Added action attention hook |
-| LingBot-VLA2 | Existing | Existing | Added flow hook | Added repeated independent inference | Added action attention hook |
+| LingBot-VLA2 | Existing | Withdrawn (2026-10-18; latency budget failure) | Added flow hook | Added repeated independent inference | Added action attention hook |
 | DP U-Net DDPM | Existing runtime paths | Added VP guidance adaptation | Not applicable | Added batched candidates | Not applicable |
 | OpenWAM joint flow | Existing runtime paths | Added joint-flow guidance | Added joint-flow inversion adaptation | Added independent seeds | Added MoT attention hook |
 
@@ -19,11 +19,14 @@ policy architecture. Pi05 PyTorch and Pi05 EEF are outside this matrix. Other
 embodiments need their own action conversion validation.
 
 The loaded server's `HELLO.capabilities.sampling_modes` is authoritative.
-OpenWAM specialized flow modes require `compile_enabled: false` and CFG scale 1;
-RTC can opt into `dit_cache_enabled: true` with `dit_cache_modes: [default, rtc]`.
+OpenWAM specialized flow modes require CFG scale 1 and a single-stream, full-horizon
+backend. RTC allows either compile setting and can opt into `dit_cache_enabled: true`
+with `dit_cache_modes: [default, rtc]`. Compiled RTC has synthetic CPU regression
+coverage; real-checkpoint CUDA correctness and latency still require a separate probe.
+PAINT/AutoHorizon retain the current `compile_enabled: false` support boundary.
 PAINT/AutoHorizon requests always disable reuse; unsupported cache modes fail. AutoHorizon additionally requires
-the joint self-attention MoT driver. LingBot requires a complete native horizon
-for RTC/PAINT/AutoHorizon and eager execution for attention capture. AutoHorizon
+the joint self-attention MoT driver. LingBot RTC is withdrawn. LingBot requires a complete native horizon
+for PAINT/AutoHorizon and eager execution for attention capture. AutoHorizon
 needs at least three denoising evaluations and one action token per waypoint.
 Unsupported combinations must fail rather than execute the default sampler.
 
@@ -189,3 +192,30 @@ RTC stores corrected action predictions and native video predictions; reuse
 skips forward and VJP together. Preserve native similarity and skip rules.
 For an all-task example and commands see [RTC cache](../../../../guideline.html#openwam-rtc-cache).
 Keep uncached parity tests distinct from approximate cached quality/latency tests.
+
+## Compilation audit (2026-10-18)
+
+Scope: all eleven policy-family directories currently present under
+`manimux/configs/policy`, plus FastWAM requested by the operator. This is a source
+and configuration audit, not a GPU benchmark or a claim about every XPolicyLab
+adapter. Missing source or runtime evidence is explicitly retained below.
+
+| Family | Effective configured/source path | Official comparison and limit |
+|---|---|---|
+| Pi05 | Current JAX deployment uses `nnx_utils.module_jit` in `policy/Pi_05/openpi/src/openpi/policies/policy.py`; not disabled. PyTorch is a separate path. | [Official policy](https://github.com/Physical-Intelligence/openpi/blob/main/src/openpi/policies/policy.py) also JITs JAX sampling. Do not infer Torch compilation from JAX status. |
+| LingBot-VLA2 | Latest300ep main recipe now explicitly sets `use_compile: true`; legacy recipes remain false. Main list has 20 compiled variants; the separate eager AutoHorizon list has five. | [Official deploy](https://github.com/Robbyant/lingbot-vla-v2/blob/main/deploy/lingbot_vla_v2_policy.py): CLI default true, constructor default false. Our AutoHorizon hook requires eager attention capture; PAINT is advertised with compilation. RTC was withdrawn after measured conditioned latency exceeded the real-time budget; finite historical outputs did not establish real-time support. |
+| OpenWAM | Latest300ep recipe and experiment base still false; ordinary finetune recipes true. RTC compilation restriction was removed with CPU AOT/Inductor tests; existing eager records/configs were not silently changed. | [Official deploy.yaml](https://github.com/OpenWAM-Official/OpenWAM/blob/main/configs/deploy.yaml) enables compilation and DiT cache. PAINT/AutoHorizon integration still requires eager. Real-checkpoint compiled RTC CUDA remains unverified. |
+| Xiaomi Robotics-1 | No compile switch or wrapping in the selected checkpoint loader. | [Official XR1 loader](https://github.com/XiaomiRobotics/Xiaomi-Robotics-1/blob/main/xr1/mibot/server/deploy.py) builds, casts and loads the model without `torch.compile`; the adapter follows that path. HF compile capability flags do not enable it. |
+| FastWAM | Independent `policy/FastWAM` model, not DP. No bound ManiMux recipe/list. RoboTwin wrapper does not pass `compile_action_infer`; native default false. | [LIBERO config](https://github.com/yuantianyuan01/FastWAM/blob/main/configs/sim_libero.yaml) enables it; [RoboTwin deploy](https://github.com/yuantianyuan01/FastWAM/blob/main/experiments/robotwin/fastwam_policy/deploy_policy.py) does not. Local custom-denoise hooks currently reject compile; needs dedicated integration validation. |
+| ABC-DiT | `policy/abc_dit/yam/put-bottles/pretrained-200k.yaml` selects `fast_inference: true`; adapter compiles velocity and captures sampler CUDA graphs. | Local `policy/ABC_DiT/model.py::_enable_fast_inference` is the evidence for this recipe; no new online upstream/default or GPU validation in this audit. |
+| SAPolicy | Recipe-specific: tcp_rot20 and teleopMV51 source configs disable backbone/action compilation; caps1010_3task_tcp enables action compilation and disables backbone compilation. tcp_rot20 also has a separate compiled config. | Adapter delegates to checkpoint-bound SpatialAlign source/config; no single official default is established across these source snapshots. Do not infer current flags from a comment about another variant. |
+| GR00T-N1.7 | Adapter constructs `Gr00tPolicy`; no inference compile wrapping in that loaded policy path. | Official [benchmark](https://github.com/NVIDIA/Isaac-GR00T/blob/main/scripts/deployment/benchmark_inference.py) explicitly adds action-head compilation as a separate benchmark backend; [policy API](https://github.com/NVIDIA/Isaac-GR00T/blob/main/gr00t/policy/gr00t_policy.py) does not automatically enable it. |
+| DP | Adapter loads the saved workspace/policy and calls prediction without adding compile. Exact checkpoint policy remains the owner. | The [official U-Net policy](https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/policy/diffusion_unet_hybrid_image_policy.py) has no automatic compile wrapper; this is not proof that arbitrary checkpoint plugins cannot compile internally. |
+| UMI-DP | Adapter instantiates the checkpoint policy with Hydra and calls `predict_action`, without a compile override. | No fresh checkpoint-specific upstream compile-default verification; do not claim an optimization was disabled or that adding a YAML flag would enable it. |
+| Isaac-0.5 | Adapter loads `PerceptronIsaacPolicy.from_pretrained`; no explicit torch.compile call in the inspected local integration. | The official [project](https://github.com/perceptron-ai-inc/isaac) delegates inference to a pinned LeRobot/runtime stack. This audit does not establish compilation inside all checkpoint-owned/runtime implementations. |
+| StarVLA | Recipes expose no compile setting; launcher delegates to `StarVLA/deployment/model_server/serve.py`. That checkout is absent on this station. | Cannot verify effective backend compilation here. A configured framework label or HF capability is not runtime evidence. |
+
+Keep the live service separate from the files on disk: edits take effect only
+when the operator restarts the model service and runtime. First-call compilation
+can exceed normal inference timeouts; warm up each selected sampling branch before
+measuring steady state. Do not remove timeout/safety checks to conceal a cold start.

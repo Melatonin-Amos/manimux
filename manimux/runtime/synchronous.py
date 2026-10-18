@@ -71,7 +71,7 @@ class SynchronousChunkStrategy:
                 observation_time_ns=snapshot.state.monotonic_ns,
                 deadline_ns=now_ns + int(self._config["policy"]["timeout_s"] * 1e9),
                 observation=adapter.build_observation(snapshot),
-                instruction=self._config["run"]["task"],
+                instruction=self._config["run"]["task_prompt"],
                 **({} if default_sampling else self.request_options()),
             ),
             event_fields={"conditioned": False} if default_sampling else self.submission_fields(),

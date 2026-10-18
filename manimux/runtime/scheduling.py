@@ -72,7 +72,9 @@ def validate_request_schedule(values: dict, *, provided=frozenset()) -> None:
         if type(steps) is not int or steps < 1:
             raise ValueError("progress trigger requires positive integer chunk_policy_steps")
     if ordinary_async and trigger not in {"refill", "continuous", "progress"}:
-        raise ValueError("ordinary asynchronous requests require refill, continuous or progress trigger")
+        raise ValueError(
+            "ordinary asynchronous requests require refill, continuous or progress trigger"
+        )
     if not ordinary_async and trigger != "algorithm":
         raise ValueError(f"{algorithm} with {schedule} requires request_trigger=algorithm")
     if trigger != "refill" and "refill_threshold_s" in provided:
@@ -82,6 +84,13 @@ def validate_request_schedule(values: dict, *, provided=frozenset()) -> None:
         math.isfinite(threshold) and threshold >= 0
     ):
         raise ValueError("refill_threshold_s must be finite and non-negative")
+    if trigger == "refill":
+        threshold_ns = threshold * 1e9
+        if not math.isfinite(threshold_ns) or round(threshold_ns) <= 0:
+            raise ValueError(
+                "refill_threshold_s must round to a positive, finite nanosecond duration "
+                "for request_trigger=refill"
+            )
     rate = values["observation_hz"]
     if rate is None:
         if schedule == "multi_inflight":

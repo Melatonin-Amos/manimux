@@ -6,8 +6,8 @@ reference images and evaluation. This checkout keeps the team study register at
 `experiments.md`, outside the public documentation build. Other studies may
 use their own register; everyday inference does not require one.
 
-`manimux serve` keeps one configuration available for repeated GUI-driven Prepare
-requests. Each creates a fresh rollout. `manimux run` creates one runtime immediately;
+`manimux run` keeps one configuration available for repeated GUI-driven Prepare
+requests. Each creates a fresh rollout. `manimux run --config ... --once` creates one runtime immediately;
 with RoboGUI enabled it starts paused, but connection/startup motion can already occur.
 Neither command launches camera, model or RoboGUI services for you.
 

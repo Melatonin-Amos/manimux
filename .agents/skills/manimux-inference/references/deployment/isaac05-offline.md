@@ -18,7 +18,7 @@ The public checkpoint is a **LIBERO Spatial** policy, not a YAM policy:
 
 Do not send these `7D` actions directly to YAM. YAM requires a separately fine-tuned checkpoint, matching stats,
 and a validated Isaac-to-YAM action adapter. Until these requirements are met, this integration supports only model serving and
-offline forward validation, with no `manimux run/serve` hardware configuration.
+offline forward validation, with no `manimux run` hardware configuration.
 
 ## Pinned versions
 

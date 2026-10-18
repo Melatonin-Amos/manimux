@@ -114,6 +114,26 @@ delay_steps: d
 - let `ActionTimeline.commit` trim the generated prefix that elapsed during inference;
 - reject a response when actual trimming exceeds the prefix length used during generation.
 
+PAINT submits at the configured execution step even when the old chunk cannot
+cover the forecast delay. The condition contains the available old suffix plus
+repetitions of its terminal target (including gripper); the shared runtime holds
+the last command after execution coverage ends. Timestamp-aligned combinations
+use the owning timeline plan's terminal target and never revive a superseded plan.
+Latency trimming of the new chunk remains unchanged. A response that exceeds its
+conditioned prefix is rejected, updates the delay estimate, and can be retried
+while holding. No unconditioned fallback or smaller execution window is hidden.
+
+Only a forecast consuming the entire *new* chunk (`d >= H`) is a fatal timing
+failure: there would be no future action after latency trimming. Model deadlines,
+camera faults and hardware faults retain their existing handling. Accepted-plan
+metadata records forecast and elapsed terminal-hold policy steps (an estimate
+from policy timing, not independently measured mechanical stillness).
+
+The 2026-10-18 LingBot moving-cube recordings had `H=50`, `s=32`, 30 Hz and
+0.66–0.79 s conditioned latency. The old implementation submitted no second plan
+because only 18 steps (0.60 s) remained. The terminal-hold extension permits
+waiting in this case. It has offline regression coverage, not new hardware validation.
+
 PAINT configs require `blend_policy_steps: 0`. Otherwise Timeline would rewrite the old chunk at commit,
 while the next PAINT request still conditions on its pre-blend values. Smooth/MPC execution limits and
 Safety remain explicit outer hardware layers; their effect must be reported separately from PAINT's
@@ -182,7 +202,7 @@ achieved-state, start-pose and emergency-stop checks. Only the operator starts t
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run \
+envs/yam/.venv/bin/manimux run --once \
   --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_paint_step1000.yaml
 ```
 

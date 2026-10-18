@@ -4,17 +4,28 @@
 
 Source paths below are relative to the repository root.
 
+Service configuration checks must not import recording storage dependencies.
+`manimux.recording.recording_parameters` is lightweight; the package loads
+`EpisodeRecorder` lazily only when runtime recording is requested. Verify model
+and camera `--check` entry points with `zarr` and `numcodecs` imports blocked.
+
 ## Collections, composition and idle selection
 
 `manimux/configuration.py` composes file-relative `_base_` experiment/task references
 and resolves named poses. `manimux/cli.py` loads component references and local bindings.
-`manimux/collections.py` validates `collections/*.yaml`, assigns stable output identity,
+`manimux/collections.py` validates `configs/lists/*.yaml`, assigns stable output identity,
 selects trial budgets, checks saved-condition fingerprints and imports matching history.
 `manimux/experiment_list.py` is the internal selection/metadata representation.
 
-The public entry is `serve --collection ... [--experiment-id ...]`. Managed variants
-cannot bypass collection storage via `serve/run --config`; standalone development
-examples still support `--config`. Collection recording.root is authoritative; reject
+Formal studies use `run --config-list ... [--experiment-id ...]`. Any concrete
+runtime variant can also use `run --config` for interactive unscored trials, or
+`run --config --once` for one rollout. `_trial_config` copies the resolved recipe,
+clears study history/layout/repeat state and assigns a separate trial output root.
+The session and GUI both reject experiment preparation in this route. Camera and
+generic policy launchers accept the same two inputs. Config inspection must not
+import robot implementations or hardware dependencies. Public `serve` is removed. The stored/internal launch-mode values
+remain `serve` (interactive) and `run` (once); these are record/protocol fields, not
+public CLI names. Collection recording.root is authoritative; reject
 station output overrides and variant output paths. Task/method selection and explicit
 ID selection use the same `<root>/<collection>/<task>/<variant>/session-…` output.
 
@@ -23,6 +34,47 @@ checks shared service contracts before creating a session and rejects incompatib
 switches. Collections may enumerate incompatible services, but camera/model launchers
 require an explicit ID when their recipes differ. No automatic service restart or hot
 model reload. Starting-pose-only changes are compatible and take effect at Prepare.
+
+Prepare uses a retained `prepare_request_id`: reading controls does not consume it.
+The idle session acknowledges admission with `rollout_prepare_accepted` and repeats
+`prepare_ack` in idle heartbeats. The GUI clears transmission only on matching
+acknowledgment, episode start, failure or a new service boundary. The session ignores
+repeated admission of the same ID; a lost reply must neither strand Preparing nor
+create another rollout. Resource cleanup finishes before the session advertises idle.
+
+`manimux/failures.py` attaches diagnostic source/stage/target at operation boundaries
+without changing exception types or recovery decisions. The session retains structured
+`failure` metadata and the complete exception chain in both failure events and idle
+heartbeats. RoboGUI renders source, reason and next step, with expandable original
+details; idle status keeps the category. Missing legacy metadata uses conservative
+message classification, and unrecognized failures remain unknown. Never infer DFU,
+motor damage or physical readiness from a generic connection error. Camera server
+startup/read exceptions include the exact camera name, including before runtime connects.
+
+`runtime/lifecycle.py` publishes `runtime_shutdown` during blocking cleanup. A dedicated
+thread owns its ZMQ publisher; it never reads or commands hardware. Phases are stopping,
+homing, closing, finalizing and release_blocked, scoped by run_dir and episode_id.
+The embodiment's `observe_release` callback reports a manual gate without importing
+GUI code. The dashboard blocks controls during cleanup and uses this heartbeat
+separately from achieved-state freshness. Reporter liveness does not prove motion
+progress or controller health. A lost cleanup heartbeat leaves hardware state unknown.
+
+Both CLI `run --config` and session `run --config-list` call `build_runtime`, which
+constructs `EdgeRuntime` for every registered inference strategy. Model workers return
+actions and capabilities; they do not own robot Home or release. OpenWAM cache/sampling
+variants use the same lifecycle. FastWAM's XPolicyLab adapter alone is not evidence of
+a configured ManiMux real-hardware deployment.
+
+Exit capabilities currently differ by embodiment and must not be conflated:
+
+| Assembly | Current exit contract |
+| --- | --- |
+| YAM | Mandatory `home_before_close`, health-checked Home and measured release gate, independent of model/algorithm. |
+| Tianji-TacCap | Has Home, but controller `stop()` disables control; has not opted into YAM's mandatory-Home contract. Audit ordering before enabling it. |
+| CAN arm assembly (Piper/ARX) | Home is not implemented; `home_on_close=True` is rejected. Do not advertise automatic Home. |
+
+Changing one shared path requires a strategy regression matrix and an embodiment
+capability audit. The same interface name does not establish equivalent hardware behavior.
 
 A fresh runtime is constructed at Prepare. Manifests retain resolved configuration,
 source hashes, collection identity and selection metadata. Historical snapshots are
@@ -52,6 +104,12 @@ strategy only when transport admission allows a request. The strategy retains
 algorithm readiness (RTC/PAINT execution windows, ACT query interval, selected
 AAC/AutoHorizon prefix), sampling fields, chunk preparation and response feedback.
 Do not reimplement transport busy checks in each algorithm.
+
+For `request_trigger: refill`, `refill_threshold_s` must convert to a finite,
+positive integer nanosecond duration using the scheduler's rounding. Reject zero
+and positive values that round to zero during configuration validation. Admission
+remains strictly below the threshold; an empty or exhausted timeline has zero
+remaining duration and is therefore eligible with every valid refill threshold.
 
 Ordinary Async can opt into `request_trigger: progress` with `single_inflight`.
 The shared `chunk_policy_steps` becomes its source-progress threshold rather than
@@ -314,8 +372,15 @@ Record runtime evidence under `manimux/recording/`. Distinguish predicted action
 sent commands and measured motion; RoboGUI refresh rate is not control frequency.
 Do not reintroduce teleoperation or demonstration collection as part of replay.
 
+At rollout exit, stop the robot and policy worker, perform the configured Home
+only after a successful stop on a non-fault exit, and close control resources
+before video draining or Zarr finalization. Cleanup failures must leave
+`run_completed: false` and their details in `result.json`; no successful finish
+event is published when control cleanup fails. A late GUI cleanup error corrects
+the saved result without rewriting trajectories or encoding videos again.
+
 Idle recovery between rollouts (**Clear error**, **Return Home**, **Drag**, **Release**) is
-scheduled by the `manimux serve` session and implemented by the robot assembly. The
+scheduled by the `manimux run` session and implemented by the robot assembly. The
 session reads the assembly's `recovery_actions`, `hand_guiding_actions` and `drag_selections`.
 It calls `clear_errors()`, `recover_home(stop)` or the selected hand-guiding handler on a
 fresh, disconnected assembly using the configured construction options. Hand-guiding
@@ -597,3 +662,13 @@ joint recording and failure events remain visible without reproducing execution
 logic in the control loop. The same executor instance remains available for
 existing pause, gap hold, reset and forecast behavior. No waypoint scheduling or
 waypoint-time stretching is introduced by this component split.
+
+### Model identity changes require a HELLO check
+
+Adding a field to `backend_identity.fields` changes the runtime handshake contract.
+A successful config loader or `--check` is insufficient: verify that the loaded
+model's `runtime_metadata()` or the server's explicit metadata allowlist actually
+publishes that field in HELLO_ACK. Prefer the loaded model's effective setting over
+copying an expected value into the response. Exercise matching, mismatching and
+missing fields through the HELLO builder and runtime comparator before providing
+launch commands. Do not remove identity checks to make a missing-field error pass.

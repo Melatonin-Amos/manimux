@@ -20,6 +20,16 @@ from manimux.types import (
 )
 
 
+class InferenceTimingError(RuntimeError):
+    """A schedule cannot progress; abort through the shared fault/Home path."""
+
+    def __init__(self, message: str, *, algorithm: str) -> None:
+        super().__init__(message)
+        self.manimux_failure = {
+            "source": "inference", "stage": "timing feasibility", "target": algorithm,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class RequestState:
     in_flight: bool
@@ -207,7 +217,7 @@ class DefaultChunkStrategy:
             observation_time_ns=snapshot.state.monotonic_ns,
             deadline_ns=deadline_ns,
             observation=adapter.build_observation(snapshot),
-            instruction=self._config["run"]["task"],
+            instruction=self._config["run"]["task_prompt"],
         )
         return InferenceSubmission(request=request, event_fields=progress_fields)
 
@@ -341,7 +351,7 @@ def build_warmup_submission(
             observation_time_ns=snapshot.state.monotonic_ns,
             deadline_ns=now_ns + int(config["policy"]["timeout_s"] * 1_000_000_000),
             observation=adapter.build_observation(snapshot),
-            instruction=config["run"]["task"],
+            instruction=config["run"]["task_prompt"],
         ),
         event_fields={"conditioned": False},
     )

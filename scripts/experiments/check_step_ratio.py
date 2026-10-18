@@ -14,10 +14,10 @@ from manimux.collections import load_collection
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--collection", required=True, type=Path)
+    parser.add_argument("--config-list", required=True, type=Path)
     parser.add_argument("--ratio", type=float, default=32 / 50)
     args = parser.parse_args()
-    catalog = load_collection(args.collection)
+    catalog = load_collection(args.config_list)
     for choice in catalog.choices.values():
         config = choice.config
         inference = config["inference"]

@@ -11,6 +11,32 @@ use the development skill only when a required component or behavior is missing.
 
 ## Start from the user's experiment
 
+First establish the workflow: **manage experiments** or **try once**. If the user
+has not already made this clear, ask: "Do you want to manage experiments with
+task/method switching and progress tracking, or just try one rollout?" Reuse an
+explicit answer or an ongoing study's context; do not ask again on every launch.
+
+- **Manage experiments:** `manimux run --config-list <file>`. Keep the runtime open
+  for Task/Method/Layout selection and repeated Prepare/Start/Finish cycles.
+- **Try a configuration:** `manimux run --config <file>`. Reuse a concrete experiment
+  variant directly, or write one minimal runtime config. No list, layout budget or
+  scoring rubric is required. The GUI offers Prepare Run; starting this service
+  does not Prepare or Start the robot. Trial recordings default to `data/trials/`
+  and do not consume formal study progress. `--output-dir` selects another trial root.
+- **One rollout then exit:** add `--once` to `run --config`. This connects immediately;
+  GUI-enabled configurations still gate Start, while headless configurations execute
+  directly. Do not select this mode merely because the user says "try once".
+
+Use the same `--config` or `--config-list`, station and optional list entry ID for
+`manimux.servers.camera.server`, `manimux.servers.policy` and `manimux run`.
+Model services use their own installed Python environment. For trials, validate with
+`manimux inspect --config <file>` and both services' `--check`; these do not open devices.
+Do not require users to build a study or duplicate a managed variant just to try it.
+
+The public `serve` command has been removed. `servers.*` remains the namespace for
+camera/model services, which are started separately. Starting the default interactive
+runtime does not automatically Prepare or Start the robot.
+
 Collect task requirements conversationally; do not ask users to understand or fill
 YAML schemas. The agent writes and validates configuration from their answers.
 Inspect existing configuration and decisions before asking questions. Resolve only
@@ -27,12 +53,12 @@ Checkpoint training coverage and requested evaluation tasks are separate facts.
 If the requested multi-task weights are unavailable, report that and clarify the
 checkpoint choice while preparing the requested catalog; do not substitute a
 single-task launch command as though it satisfies the study.
-Use a `--collection` entry point for formal studies, including single-task/single-
-variant studies. Multiple tasks and methods appear in RoboGUI. Keep the same collection,
+Use a `--config-list` entry point for formal studies, including single-task/single-
+variant studies. Multiple tasks and methods appear in RoboGUI. Keep the same config list,
 station and optional `--experiment-id` in camera, model and runtime commands. Different
 service contracts may be listed together, but require explicit selection and service
 restarts; compatible entries switch idle without restarting the model. Inspect through
-`python -m manimux inspect --collection <path>` before giving launch commands.
+`python -m manimux inspect --config-list <path>` before giving launch commands.
 
 Free inference needs no rubric, study register or PRM. For scoring, ask whether binary
 success is sufficient or partial credit is wanted. Define observable outcomes and
@@ -52,12 +78,12 @@ Do not present the following checklist as one long form.
 | Success and partial credit | Ask what observable outcome counts as success and whether intermediate stages need scores. Obtain stage definitions and scores; distinguish achieved milestones from final-state scoring. |
 | Scene and starting pose | Establish layout/reference source, reset procedure and Home or a named robot pose. Reuse known presets; do not invent joint coordinates from prose or an image. |
 | Trial boundaries | Establish timeout/stopping rules and what counts as an invalid trial versus a policy failure. |
-| Collection plan | Establish tasks, methods, layout subset and repetitions. Repeats create rollouts, not copied config files. |
+| Config list plan | Establish tasks, methods, layout subset and repetitions. Repeats create rollouts, not copied config files. |
 | Storage | Ask for the recording root when unknown, inspect existing progress, and explain resolved absolute output locations. Never silently change roots to bypass completed trials. |
 
 For example, after the task and hardware are known: "What counts as complete? Do you
 want binary scoring or partial scores? If partial, describe the stages and scores."
-Ask about poses/layouts and collection size separately when still missing. Free runs
+Ask about poses/layouts and study size separately when still missing. Free runs
 do not require an evaluation interview. Do not impose this team's stage scores,
 layout count, repeat count or execution window on another user's study.
 
@@ -68,7 +94,7 @@ round. Reuse component configs and shared task definitions. Keep scoring inline 
 `success`. Explicitly list 0/1 even for binary tasks, and each count/score for
 quantity tasks. Never hide requested partial scores behind `target_count` or
 defaults. Keep historical rubric snapshots intact. Keep task semantics (prompt,
-available layouts, rubric and default pose) separate from collection choices (layout
+available layouts, rubric and default pose) separate from config list choices (layout
 subset, repetitions, selected variants and recording root). Variants should express
 deliberate differences rather than duplicate shared settings. Show a concise summary
 of the task, rubric, pose, trial plan and output paths, link the authored files, and
@@ -79,12 +105,13 @@ The implemented protocol is documented in
 [Collections and storage](../../../guideline.html#experiment-lists).
 `manimux.configuration.compose` owns file-relative `_base_` composition;
 `manimux.collections.load_collection` owns identity, trial plan, storage and history.
-Do not create a second catalog format or suggest direct managed-variant launches.
+Do not create a second catalog format. Direct variant launches are unscored trials;
+formal scoring/progress requires `--config-list`.
 
 Publication is explicit: this checkout tracks only the `pi05-latest300ep-step30000`
-experiment group and its collection. Other studies remain local through `.gitignore`.
+experiment group and its config list. Other studies remain local through `.gitignore`.
 Do not force-add ignored studies. If the user requests publishing another study,
-update the experiment and collection allowlists together and verify its dependencies.
+update the experiment and config list allowlists together and verify its dependencies.
 
 ## Build a new real-robot experiment
 
@@ -101,30 +128,45 @@ Follow the stages that remain unfinished; do not repeat an already working deplo
    the matching deployment reference. Confirm weights, normalization, camera mapping,
    state/action representation, action interval and horizon. Runtime, camera and model
    services must use the same experiment/station; do not substitute weights for a method.
-3. **Write shared task and deliberate variants.** Put prompt, available layouts,
+3. **Write shared task and deliberate variants.** Put the exact model instruction in
+   `run.task_prompt`; reserve `experiment.task` for the stable task/storage ID.
+   Put the per-rollout `run.max_control_steps` limit in the task YAML, not in
+   model bases or duplicated method variants. It counts control ticks, not chunk
+   source steps. A stop-budget-only change retains progress; saved session
+   fingerprints and budgets remain distinct for analysis.
+   Put prompt, available layouts,
    inline `evaluation` rules and optional named initial pose in `manimux/configs/tasks/`.
    Reuse shared `embodiment/initial_poses/` presets; never infer joint coordinates.
-   Put variants in `experiments/<model-checkpoint>/<task>/`, with `_base_.yaml` for
+   The assembly's `initial_poses` library supplies RoboGUI's independent pose menu
+   for both trials and studies. Verify Home is present for assemblies with verified
+   Home coordinates; do not add duplicate experiment files merely to expose it.
+   Selection is idle-only and does not move hardware until Prepare. Nondefault
+   poses have separate `__pose_<id>` recording/progress directories; task switches
+   restore task defaults, while method switches preserve an available operator pose.
+    Put variants in `experiments/<model-checkpoint>/<task>/`, with `_base_.yaml` for
    common choices only when useful. Declare `experiment.task` and `experiment.variant`.
    File-relative `_base_` supports mapping merge and list replacement. Keep inheritance
    shallow. Variants must not have `run.output_dir`.
-4. **Create the collection.** Save `collections/<study>.yaml` with stable `id`, the
+4. **Create the config list.** Save `lists/<study>.yaml` with stable `id`, the
    user's `recording.root`, and entries `{id, config, label?, trials?}`. `trials` owns
    layout subsets and repetitions. Algorithm overrides belong in variants, never in
-   collection entries. Reusing the collection restores its output path/progress.
+   config list entries. Reusing the config list restores its output path/progress.
    Changed scientific conditions require a new variant ID when records already exist.
    Version rubrics; retain saved old snapshots. Optional `history` imports individual
-   old sessions only after saved conditions match. Never relocate raw data just to
+   sessions after matching execution conditions. A versioned rubric may add options
+   while retaining every old option unchanged; this preserves config list progress,
+   not score equivalence. Regrading old trials still needs the user's assessment.
+   Never relocate raw data just to
    match a new config tree or count old 16-step trials as new 32-step trials.
-5. **Validate and launch.** Inspect the collection, selected service recipes and output
-   directories without constructing hardware. `inspect --collection ... --index`
+5. **Validate and launch.** Inspect the config list, selected service recipes and output
+   directories without constructing hardware. `inspect --config-list ... --index`
    refreshes the derived inventory; camera and generic policy `--check` do not start
-   devices/model. Deliver all service commands with the same `--collection`, station
+   devices/model. Deliver all service commands with the same `--config-list`, station
    and explicit ID when service configuration differs. Use the model's environment.
    This Pi05 comparison uses fixed 32-step windows, not 16; other models use the
    agreed ratio. Report AutoHorizon separately as adaptive. Configuration work does
    not authorize service startup or motion.
-6. **Collect and evaluate.** In serve mode select Task/Method/Layout → Prepare Run
+6. **Collect and evaluate.** In interactive run mode select Task/Method/Layout → Prepare Run
    or Prepare Experiment → Activate Warmup → Start → Finish → save/skip evaluation.
    Prepare may connect/move the robot as configured. Each attempt gets a new rollout;
    reset the scene per protocol. Report generation is a separate offline step below.
@@ -170,7 +212,7 @@ per-metric included counts and missing reasons. Missing results remain missing.
 
 ## Deliver
 
-For setup: link the new experiment, station/model references, rubric/collection,
+For setup: link the new experiment, station/model references, rubric/config list,
 resolved timing and output paths; give validation results and the operation sequence.
 For evaluation: link the versioned report and reproducible cohort, update only the
 agreed study rows, and distinguish collected, evaluated and still-missing evidence.

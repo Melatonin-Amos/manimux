@@ -1,5 +1,6 @@
 run:
-  task: pass_ball
+  max_control_steps: 6000
+  task_prompt: pass_ball
 evaluation:
   kind: stages
   task_id: pass_ball

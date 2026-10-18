@@ -161,6 +161,13 @@ Upgrading an existing checkout? See the [RoboGUI interface migration](guideline.
 
 ### Run on your robot
 
+For an installed local station, the [deployment skill](.agents/skills/manimux-deploy/SKILL.md)
+can take a fresh agent conversation from a supported model recipe to RoboGUI waiting
+for the operator. `manimux doctor` checks the plan; `manimux up` starts the matching
+services; `status`, `attach` and `down` retain process ownership and operator terminals.
+See [managed deployment](guideline.html#managed-deployment) for interpreter selection,
+scope and a hardware-free `up --demo` rehearsal. Prepare and Start remain operator actions.
+
 1. Select a [model/robot runbook](guideline.html#support)
    and prepare its hardware and model environments.
 2. Bind devices, service addresses and checkpoint paths in your private
@@ -172,20 +179,24 @@ Upgrading an existing checkout? See the [RoboGUI interface migration](guideline.
    then review records. For your own task/study, start with the
    [experiment skill](.agents/skills/manimux-experiments/SKILL.md).
 
-`manimux serve` keeps the service available for repeated GUI-driven rollouts.
-`manimux run` executes one rollout. Preparation can connect and move the selected robot
-as configured; use the runbook matching your actual setup.
+`manimux run` keeps the service available for repeated GUI-driven rollouts.
+`manimux run --config <runtime.yaml>` tries one configuration with Prepare Run and
+separate trial recordings. `manimux run --config-list <list.yaml>` adds task/method
+switching and formal experiment progress. Camera and generic model services accept
+the same two inputs. Add `--once` to connect immediately and exit after one rollout;
+GUI configurations still gate Start. Preparation can move the selected robot as
+configured; use the runbook matching your actual setup.
 
 [Configuration explained](manimux/configs/README.md) · [Current study and launch commands](guideline.html#latest300ep-launch)
 
 ## Run an experiment campaign
 
-A collection organizes tasks, methods, trial counts and a recording root. RoboGUI
+A config list organizes tasks, methods, trial counts and a recording root. RoboGUI
 exposes **Task → Method / Config → Layout**; compatible entries switch while idle.
 Task files define instructions, layouts and scoring. Each trial records its resolved
 settings, trajectories and optional human assessment for reproducible comparisons.
 
-The [published Pi05 study](manimux/configs/collections/pi05-latest300ep-step30000.yaml)
+The [published Pi05 study](manimux/configs/lists/pi05-latest300ep-step30000.yaml)
 illustrates five tasks and six inference methods, with additional starting-pose variants.
 Use it as a concrete example; choose task rules, checkpoints and comparison settings
 for your own study. Offline reports combine human scores, motion metrics and optional

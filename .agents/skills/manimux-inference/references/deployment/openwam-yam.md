@@ -80,10 +80,10 @@ envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
 After the probe succeeds, start the camera service and ManiMux runtime:
 
 ```bash
-envs/yam/.venv/bin/manimux-camera-server --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 
-envs/yam/.venv/bin/manimux serve \
-  --collection manimux/configs/collections/openwam-custom-standalone.yaml --experiment-id put_bottles_manimux_step30000
+envs/yam/.venv/bin/manimux run \
+  --config-list manimux/configs/lists/openwam-custom-standalone.yaml --experiment-id put_bottles_manimux_step30000
 ```
 
 ```bash
@@ -119,13 +119,17 @@ Only after real-checkpoint offline validation and robot setup, run the ordinary
 ManiMux runtime for task evaluation, recording and robogui output:
 
 ```bash
-manimux run --config /path/to/deployment/openwam.yaml
+manimux run --once --config /path/to/deployment/openwam.yaml
 ```
 
 For RoboDojo simulation, use the policy's standard `eval.sh` and
 `setup_eval_*` scripts. YAM real-robot task evaluation uses ManiMux, not an
 ARX simulator. The YAM full-horizon adapter also supports AAC and local RTC/PAINT/AutoHorizon
-sampler hooks. Specialized modes require eager execution and CFG scale 1.
+sampler hooks. Specialized modes require a single-stream, full-horizon backend and
+CFG scale 1. RTC permits compilation; PAINT/AutoHorizon retain the current eager-only
+support boundary. Compiled RTC has synthetic CPU regression coverage, not a validated
+real-checkpoint CUDA performance claim. Existing eager experiment records retain
+their settings; use a distinct variant when comparing compilation.
 RTC can use native DiT caching via `dit_cache_modes: [default, rtc]`; PAINT and
 AutoHorizon remain uncached. See the [cache settings and commands](../../../../guideline.html#openwam-rtc-cache). CPU/dummy tests do not establish GPU inference,
 training convergence, task success, or real-robot safety.

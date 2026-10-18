@@ -41,7 +41,7 @@ services can be reused.
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 ```bash
@@ -52,12 +52,12 @@ envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 ```bash
-envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
+envs/yam/.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 The model endpoint is `ws://127.0.0.1:8530`. RoboGUI flow is Prepare, Start rollout,

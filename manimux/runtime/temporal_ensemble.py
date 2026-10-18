@@ -219,7 +219,7 @@ class ACTTemporalEnsembleStrategy:
             observation_time_ns=snapshot.state.monotonic_ns,
             deadline_ns=deadline_ns,
             observation=adapter.build_observation(snapshot),
-            instruction=self._config["run"]["task"],
+            instruction=self._config["run"]["task_prompt"],
         )
         self._next_query_ns = now_ns + self._query_interval_ns
         return InferenceSubmission(

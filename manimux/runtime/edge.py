@@ -15,10 +15,12 @@ import numpy as np
 from manimux.clock import Clock, SystemClock
 from manimux.configuration import initial_pose_metadata, initial_pose_targets
 from manimux.embodiments.robot import RobotBase, build_robot
+from manimux.embodiments.robot.release import observe_release
 from manimux.embodiments.sensor import build_sensor
 from manimux.embodiments.sensor.reader import SensorReader
 from manimux.evaluation.identity import rollout_identity, start_identity
 from manimux.evaluation.rubric import evaluation_parameters
+from manimux.failures import failure_context
 from manimux.policies import ActionDecoderClient, PolicyCapabilities, metadata_mismatches
 from manimux.policies.base import action_interval
 from manimux.policies.worker import PolicyWorkerClient
@@ -42,6 +44,7 @@ from manimux.runtime.inference import (
     prepare_strategy_chunk,
     seed_strategy_warmup,
 )
+from manimux.runtime.lifecycle import ShutdownStatus
 from manimux.runtime.safety import RuntimeState, SafetyGuard
 from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
@@ -112,6 +115,10 @@ def _exception_detail(exc: BaseException, *, depth: int = 3) -> str:
     nothing about what actually went wrong.
     """
     text = f"{type(exc).__name__}: {exc}"
+    origin = getattr(exc, "manimux_failure", None)
+    if origin:
+        location = " / ".join(str(origin[key]) for key in ("source", "stage", "target") if origin.get(key))
+        text = f"[{location}] {text}"
     if depth <= 0:
         return text
     if isinstance(exc, BaseExceptionGroup):
@@ -278,7 +285,7 @@ class EdgeRuntime:
             enabled=config["robogui"]["enabled"],
             robot=config["robogui"]["robot"],
             policy=config["robogui"]["policy_label"] or "manimux-local",
-            instruction=config["run"]["task"] if config["robogui"]["policy_label"] else "",
+            instruction=config["run"]["task_prompt"] if config["robogui"]["policy_label"] else "",
             camera_hz=config["robogui"]["camera_hz"],
             control=config["robogui"].get("control", {}),
         )
@@ -484,10 +491,11 @@ class EdgeRuntime:
         """Validate and dispatch; retain a failed attempt outside successful tick data."""
         failure_stage = "safety_validation"
         try:
-            with stage("safety_command"):
+            with stage("safety_command"), failure_context("action", "command safety validation"):
                 self._safety.validate_command(command)
             failure_stage = "robot_dispatch"
-            self._robot.send_command(command)
+            with failure_context("robot", "command dispatch"):
+                self._robot.send_command(command)
         except Exception as exc:
             # A controller can fail after submitting only part of its batch.
             # Never label such a failure as a successfully sent command.
@@ -542,7 +550,7 @@ class EdgeRuntime:
             metadata={
                 "episode_id": episode_id,
                 "session_id": self._session_id,
-                "task": self._config["run"]["task"],
+                "task": self._config["run"]["task_prompt"],
                 "initial_pose": initial_pose_metadata(self._config),
                 "collection": deepcopy(self._config.get("collection")),
                 "evaluation": dict(self._evaluation),
@@ -617,8 +625,56 @@ class EdgeRuntime:
         terminal_reason = "completed"
         abort_reason = "runtime_exception"
         abort_detail = ""
-        home_on_close = bool(self._config["robot"]["options"].get("home_on_close", False))
         warmup = None
+        shutdown_attempted = False
+        shutdown_status = ShutdownStatus(
+            enabled=self._config["robogui"]["enabled"],
+            robot=self._config["robogui"]["robot"],
+            policy=self._config["robogui"]["policy_label"],
+            run_dir=str(self._run_dir.resolve()), episode_id=episode_id,
+            home=(self._robot.home
+                  if self._config["robot"]["options"].get("execute", False) else None),
+        )
+
+        def shutdown_runtime(*, faulted: bool) -> list[BaseException]:
+            """Release control resources before waiting for recording I/O."""
+            nonlocal shutdown_attempted
+            if shutdown_attempted:
+                return []
+            shutdown_attempted = True
+            shutdown_status.update("stopping")
+            self._state = RuntimeState.IDLE
+            errors: list[BaseException] = []
+            try:
+                self._worker.request_stop()
+            except BaseException as exc:
+                errors.append(exc)
+            # The dispatch loop has stopped. Home while actuator control is
+            # still owned: some SDK stop() calls disable position control.
+            # Robot.close() performs stop only after its measured release gate.
+            if robot_connected:
+                try:
+                    logger.warning("shutdown_home_started faulted=%s", faulted)
+                    shutdown_status.update("homing")
+                    self._robot.home()
+                    logger.info("shutdown_home_completed")
+                except BaseException as exc:
+                    logger.error("shutdown_home_failed: %s", _exception_detail(exc))
+                    errors.append(exc)
+            closers = [self._robot.close, self._worker.close]
+            if self._decoder is not None:
+                closers.append(self._decoder.close)
+            closers.append(sensor_reader.close)
+            for closer in closers:
+                try:
+                    shutdown_status.update("closing")
+                    with observe_release(shutdown_status.update, recover=shutdown_status.wait_for_release):
+                        closer()
+                except BaseException as exc:
+                    errors.append(exc)
+            shutdown_status.update("finalizing")
+            return errors
+
         try:
             if self._config["run"].get("warmup_before_start", False):
                 warmup = PolicyWarmup(
@@ -626,17 +682,27 @@ class EdgeRuntime:
                     strategy=build_inference_strategy(self._config),
                     adapter=self._build_adapter(), session_id=self._session_id, clock=self._clock,
                 )
-            sensor_reader.start()
-            self._worker.start()
+            with failure_context("camera", "sensor startup"):
+                sensor_reader.start()
+            with failure_context("model", "model connection", str(self._config["policy"].get("options", {}).get("server", ""))):
+                self._worker.start()
             logger.info("policy_worker_ready session=%s", self._session_id)
             if self._decoder is not None:
-                self._decoder.start()
+                with failure_context("action", "decoder startup"):
+                    self._decoder.start()
             self._validate_policy_capabilities()
             capabilities = getattr(self._worker, "capabilities", PolicyCapabilities())
             recorder.update_metadata(
                 policy_backend=dict(capabilities.backend_metadata),
             )
-            self._robot.connect()
+            # Policy startup can be slow; recheck sensors before enabling hardware.
+            with failure_context("camera", "fresh frame check before robot connection"):
+                sensor_reader.read()
+            with observe_release(shutdown_status.update, recover=shutdown_status.wait_for_release):
+                channels = self._config["robot"].get("options", {}).get("component_hardware", {})
+                target = ", ".join(f"{name}: {binding['channel']}" for name, binding in channels.items() if "channel" in binding)
+                with failure_context("robot", "robot connection", target):
+                    self._robot.connect()
             robot_connected = True
             initial_state = self._robot.get_state()
             logger.info(
@@ -669,7 +735,7 @@ class EdgeRuntime:
                 "episode_id": episode_id,
                 "episode_dir": str(recorder.final_dir.resolve()),
                 "run_dir": str(self._run_dir.resolve()),
-                "instruction": self._config["run"]["task"],
+                "instruction": self._config["run"]["task_prompt"],
                 "evaluation": dict(self._evaluation),
                 "max_steps": self._config["run"]["max_control_steps"],
                 "control_mode": self._strategy.control_mode,
@@ -707,10 +773,11 @@ class EdgeRuntime:
                 )
                 loop_start_ns = self._clock.now_ns()
                 now_ns = loop_start_ns
-                state = self._robot.get_state()
+                with failure_context("robot", "robot feedback"):
+                    state = self._robot.get_state()
                 with stage("safety_state"):
                     self._safety.validate_state(state)
-                with stage("camera_read", mode=sensor_reader.mode):
+                with stage("camera_read", mode=sensor_reader.mode), failure_context("camera", "frame acquisition"):
                     frames = sensor_reader.read()
 
                 with stage("robogui_control"):
@@ -734,10 +801,8 @@ class EdgeRuntime:
                     timing.set_phase("stopped")
                     # Stop model requests before Home/recording cleanup can take time.
                     self._worker.request_stop()
-                    if robogui_control.finish_home is not None:
-                        home_on_close = robogui_control.finish_home
                     terminal_reason = "robogui_finish_requested"
-                    recorder.event("robogui_finish_requested", step=steps, home=home_on_close)
+                    recorder.event("robogui_finish_requested", step=steps, home=True)
                     break
                 if robogui_control.home_requested:
                     timing.set_phase("homing")
@@ -1552,12 +1617,18 @@ class EdgeRuntime:
                 timing.end()
 
             timing.end(completed=False)
+            # Keep the rollout duration independent of Home and cleanup latency.
+            wall_time_s = time.perf_counter() - started_wall
+            cleanup_errors = shutdown_runtime(faulted=False)
+            if cleanup_errors:
+                raise BaseExceptionGroup("runtime cleanup failed", cleanup_errors)
             episode_dir = recorder.finish(
                 run_completed=True,
                 terminal_reason=terminal_reason,
                 steps=steps,
-                wall_time_s=time.perf_counter() - started_wall,
+                wall_time_s=wall_time_s,
             )
+            shutdown_status.close()
             with stage("robogui_publish_event"):
                 self._robogui.publish_event(
                     "episode_finished",
@@ -1591,38 +1662,20 @@ class EdgeRuntime:
         finally:
             timing.end(completed=False)
             faulted = not completed and abort_reason != "KeyboardInterrupt"
-            self._state = RuntimeState.IDLE
-            cleanup_errors: list[BaseException] = []
-            stopped_cleanly = True
-            try:
-                self._robot.stop()
-            except BaseException as exc:
-                stopped_cleanly = False
-                cleanup_errors.append(exc)
-            if robot_connected and stopped_cleanly and not faulted and home_on_close:
-                try:
-                    self._robot.home()
-                except BaseException as exc:
-                    cleanup_errors.append(exc)
-            closers = [self._robot.close, self._worker.close]
-            if self._decoder is not None:
-                closers.append(self._decoder.close)
-            for closer in closers:
-                try:
-                    closer()
-                except BaseException as exc:
-                    cleanup_errors.append(exc)
-            try:
-                sensor_reader.close()
-            except BaseException as exc:
-                cleanup_errors.append(exc)
+            cleanup_errors = shutdown_runtime(faulted=faulted)
+            shutdown_status.close()
             try:
                 self._robogui.close()
             except BaseException as exc:
                 cleanup_errors.append(exc)
-            if not completed:
+            if not completed or cleanup_errors:
+                detail = "; ".join(filter(None, [
+                    abort_detail, *(_exception_detail(exc) for exc in cleanup_errors),
+                ]))
                 try:
-                    recorder.abort(abort_reason, detail=abort_detail)
+                    recorder.abort(
+                        "runtime_cleanup_failed" if completed else abort_reason, detail=detail,
+                    )
                 except BaseException as exc:
                     cleanup_errors.append(exc)
             if cleanup_errors:

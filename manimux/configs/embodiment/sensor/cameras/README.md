@@ -91,10 +91,10 @@ Both entry points use `--local`, or the default private
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
+  --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --collection manimux/configs/collections/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000
+  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000
 ```
 
 Use one of these commands, not both on the same ports/devices. The station template

@@ -119,11 +119,12 @@ def read_experiment(
     source = Path(path).expanduser().resolve()
     from manimux.configuration import apply_initial_pose, compose
     raw, sources = compose(source)
+    if "task" in raw.get("run", {}):
+        raise ValueError("Rename run.task to run.task_prompt; experiment.task remains the task ID")
     from manimux.config_validation import EXPERIMENT_FIELDS, check_fields
     check_fields(raw, EXPERIMENT_FIELDS, "experiment")
     raw["config_sources"] = sources
-    from manimux.embodiments.layout import assembly_action_contract
-    from manimux.embodiments.robot import apply_action_contract
+    from manimux.embodiments.layout import apply_action_contract, assembly_action_contract
     from manimux.policies.base import backend_identity_from_recipe
 
     backend_identity = None
@@ -345,6 +346,7 @@ def _create_run_dir(config: dict, config_path: Path, *, mode: str,
             {
                 "session_id": run_id,
                 "mode": mode,
+                "workflow": "experiment" if experiment_selection else "trial",
                 "created_at": datetime.now(UTC).isoformat(),
                 "git_sha": repositories["manimux"].get("head"),
                 "xpolicylab_git_sha": (
@@ -369,16 +371,42 @@ def _create_run_dir(config: dict, config_path: Path, *, mode: str,
     return run_dir
 
 
-def _run(
+def _trial_config(config: dict, config_path: Path, output_dir: Path | None = None) -> dict:
+    """Reuse a runtime recipe without borrowing study identity, progress or storage."""
+    from manimux.collections import safe_id
+
+    trial = deepcopy(config)
+    trial.pop("collection", None)
+    run = trial.setdefault("run", {})
+    root = (output_dir if output_dir is not None
+            else Path(run.get("output_dir") or "data") / "trials")
+    identity = trial.get("experiment") or {}
+    if identity:
+        destination = (root / safe_id(identity.get("task"), "task id")
+                       / safe_id(identity.get("variant"), "variant id"))
+    else:
+        # Equal filenames in separate directories must not share a trial namespace.
+        source_id = hashlib.sha256(str(config_path.resolve()).encode()).hexdigest()[:8]
+        destination = root / f"{config_path.stem}-{source_id}"
+    run.update(
+        output_dir=destination.expanduser().resolve(), experiment_mode=False,
+        experiment_name="", condition="", notes="", layout_id="", repeat_id=None,
+        reference_layout=None, experiment_template=None, history_sessions=[],
+    )
+    return trial
+
+
+def _run_once(
     config_path: Path, executor: str | None = None, *, local: Path | None = None,
-    control_timing: bool = False,
+    control_timing: bool = False, output_dir: Path | None = None,
 ) -> int:
     from manimux.runtime import build_runtime
     from manimux.runtime.lock import RuntimeLockError
 
-    config = _load_config(config_path, executor, local=local, control_timing=control_timing)
-    if config.get("experiment"):
-        raise ValueError("Managed variants require serve --collection <file> --experiment-id <id>")
+    config = _trial_config(
+        _load_config(config_path, executor, local=local, control_timing=control_timing),
+        config_path, output_dir,
+    )
     try:
         with _runtime_lock(config, config_path, mode="run"):
             run_dir = _create_run_dir(config, config_path, mode="run")
@@ -398,10 +426,11 @@ def _run(
     return 0 if result.run_completed else 2
 
 
-def _serve(
+def _run_interactive(
     config_path: Path | None, executor: str | None = None, *, local: Path | None = None,
     control_timing: bool = False,
     collection: Path | None = None, experiment_id: str | None = None,
+    output_dir: Path | None = None,
 ) -> int:
     # Session/recovery dependencies are only needed for the interactive service.
     from manimux.runtime.lock import RuntimeLockError
@@ -410,22 +439,35 @@ def _serve(
     catalog = None
     if collection is not None:
         from manimux.collections import load_collection
-        if executor is not None or control_timing:
-            raise ValueError("Set execution/timing options in the variant, not collection CLI overrides")
+        if executor is not None or control_timing or output_dir is not None:
+            raise ValueError(
+                "Config-list runs own their output root and variant parameters; edit the YAML"
+            )
         catalog = load_collection(collection, local=local, experiment=experiment_id)
         first = catalog.choices[catalog.default_id]
         config_path, config = first.path, deepcopy(first.config)
     else:
-        config = _load_config(config_path, executor, local=local, control_timing=control_timing)
-        if config.get("experiment"):
-            raise ValueError("Managed variants require --collection and optional --experiment-id")
+        config = _trial_config(
+            _load_config(config_path, executor, local=local, control_timing=control_timing),
+            config_path, output_dir,
+        )
     if experiment_id is not None and collection is None:
-        raise ValueError("--experiment-id requires --collection")
+        raise ValueError("--experiment-id requires --config-list")
 
+    # Preserve the historical record/protocol mode; the public command is now run.
     def create_selection_dir(choice_id: str) -> Path:
         choice = catalog.choices[choice_id]
         return _create_run_dir(choice.config, choice.path, mode="serve",
                                experiment_selection=catalog.selection(choice_id))
+
+    def create_pose_dir(selected: dict) -> Path:
+        from manimux.configuration import initial_pose_metadata
+        if catalog:
+            choice_id = selected["collection"]["experiment_id"]
+            choice = catalog.choices[choice_id]
+            selection = {**catalog.selection(choice_id), "initial_pose": initial_pose_metadata(selected)}
+            return _create_run_dir(selected, choice.path, mode="serve", experiment_selection=selection)
+        return _create_run_dir(selected, config_path, mode="serve")
 
     try:
         with _runtime_lock(config, config_path, mode="serve"):
@@ -434,6 +476,8 @@ def _serve(
             RuntimeSessionService(
                 config, run_dir, experiment_list=catalog,
                 selection_dir_factory=create_selection_dir if catalog else None,
+                pose_dir_factory=create_pose_dir,
+                allow_experiments=catalog is not None,
             ).serve()
     except KeyboardInterrupt:
         print("runtime service stopped by operator")
@@ -460,8 +504,14 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser, *, allow_list: bool 
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--config", type=Path)
     if allow_list:
-        source.add_argument("--collection", type=Path, help="Experiment collection with recording root")
-        parser.add_argument("--experiment-id", help="Initially select this collection item")
+        source.add_argument(
+            "--config-list", type=Path, help="Config list with trial plan and recording root"
+        )
+        parser.add_argument("--experiment-id", help="Initially select this config-list entry")
+    parser.add_argument(
+        "--output-dir", type=Path,
+        help="Trial recording root for --config only; default: <run.output_dir>/trials",
+    )
     parser.add_argument(
         "--local", type=Path,
         help="Station bindings (default: manimux/configs/local/station.yaml)",
@@ -482,27 +532,59 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser, *, allow_list: bool 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="manimux")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    run_parser = subparsers.add_parser("run", help="run one local robot-policy session")
-    _add_runtime_arguments(run_parser)
-    serve_parser = subparsers.add_parser(
-        "serve", help="keep one runtime service available for RoboGUI-controlled rollouts"
+    run_parser = subparsers.add_parser(
+        "run", help="try one config or manage a config list; --once exits after one trial"
     )
-    _add_runtime_arguments(serve_parser, allow_list=True)
-    inspect_parser = subparsers.add_parser("inspect", help="Validate a collection without starting services")
-    inspect_parser.add_argument("--collection", type=Path, required=True)
+    _add_runtime_arguments(run_parser, allow_list=True)
+    run_parser.add_argument(
+        "--once", action="store_true",
+        help=("Run one standalone --config rollout and exit; connects immediately "
+              "(GUI still gates Start)"),
+    )
+    inspect_parser = subparsers.add_parser(
+        "inspect", help="Validate configuration without starting services"
+    )
+    source = inspect_parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path)
+    source.add_argument("--config-list", type=Path)
+    inspect_parser.add_argument("--output-dir", type=Path, help="Trial recording root for --config")
     inspect_parser.add_argument("--local", type=Path)
     inspect_parser.add_argument("--experiment-id")
     inspect_parser.add_argument("--index", action="store_true", help="Refresh derived record index")
+    from manimux.deployment import add_commands
+    add_commands(subparsers)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     mp.freeze_support()
     signal.signal(signal.SIGTERM, _handle_termination)
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command in {"doctor", "up", "status", "down", "attach"}:
+        from manimux.deployment import main as deployment_main
+        return deployment_main(args)
+    if args.command == "run":
+        if args.once and args.config_list is not None:
+            parser.error(
+                "--once requires a standalone --config; "
+                "select a concrete variant with --config for a standalone trial"
+            )
+        if args.experiment_id is not None and args.config_list is None:
+            parser.error("--experiment-id requires --config-list")
     if args.command == "inspect":
+        if args.config is not None:
+            if args.index or args.experiment_id:
+                parser.error("--index and --experiment-id require --config-list")
+            config = _trial_config(_load_config(args.config, local=args.local),
+                                   args.config, args.output_dir)
+            print(json.dumps({"workflow": "trial", "config": config},
+                             indent=2, default=str, ensure_ascii=False))
+            return 0
+        if args.output_dir is not None:
+            parser.error("--output-dir is for --config trials; config lists own recording.root")
         from manimux.collections import load_collection, write_inventory
-        catalog = load_collection(args.collection, local=args.local, experiment=args.experiment_id)
+        catalog = load_collection(args.config_list, local=args.local, experiment=args.experiment_id)
         rows = []
         for choice in catalog.choices.values():
             c = choice.config
@@ -520,13 +602,15 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if args.command == "run":
-        return _run(
+        if args.once:
+            return _run_once(
+                args.config, args.executor, local=args.local, control_timing=args.control_timing,
+                output_dir=args.output_dir,
+            )
+        return _run_interactive(
             args.config, args.executor, local=args.local, control_timing=args.control_timing,
-        )
-    if args.command == "serve":
-        return _serve(
-            args.config, args.executor, local=args.local, control_timing=args.control_timing,
-            collection=args.collection, experiment_id=args.experiment_id,
+            collection=args.config_list, experiment_id=args.experiment_id,
+            output_dir=args.output_dir,
         )
     raise AssertionError(f"unhandled command {args.command}")
 
@@ -537,6 +621,12 @@ def run_parameters(**options) -> dict:
     from manimux.embodiments.sensor.reader import sensor_reading_parameters
     from manimux.evaluation.identity import research_template
 
+    # Saved manifests used run.task before task_prompt became the public field.
+    # Normalize only at this boundary; live YAML rejects the old spelling above.
+    if "task" in options:
+        if "task_prompt" in options:
+            raise ValueError("Specify task_prompt only; both task and task_prompt were supplied")
+        options["task_prompt"] = options.pop("task")
     if "max_steps" in options:
         raise ValueError("unsupported run field: max_steps")
     values = merge_parameters({
@@ -554,7 +644,7 @@ def run_parameters(**options) -> dict:
         "layout_id": "",
         "repeat_id": None,
         "reference_layout": None,
-    }, options, 'run', extra=('task', 'initial_pose', 'history_sessions'))
+    }, options, 'run', extra=('task_prompt', 'initial_pose', 'initial_pose_options', 'history_sessions'))
     if values.get("output_dir") is not None:
         values["output_dir"] = Path(values["output_dir"])
     if not isinstance(values["warmup_before_start"], bool):

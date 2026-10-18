@@ -59,6 +59,8 @@ def build_matrix(
         for m in methods
         if family == "DP" and m in {"paint", "autohorizon"}
     }
+    if family == "LingBot_VLA2" and "rtc" in methods:
+        skipped["rtc"] = "LingBot RTC withdrawn: conditioned latency exceeds the validated real-time budget"
     selected = [m for m in methods if m not in skipped]
     if "paint" in selected and (
         paint_delay_steps is None

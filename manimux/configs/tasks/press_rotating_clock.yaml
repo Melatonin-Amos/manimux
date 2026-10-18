@@ -1,5 +1,6 @@
 run:
-  task: press_rotating_clock
+  max_control_steps: 6000
+  task_prompt: press_rotating_clock
   experiment_template:
     name: press_rotating_clock - ten layouts, three repeats
     layout_ids:

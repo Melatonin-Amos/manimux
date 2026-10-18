@@ -10,6 +10,24 @@ editing and use the [station walkthrough](references/station.md) for commands an
 binding schemas. Paths are relative to the checkout. A clone does not install SDKs,
 create CAN interfaces, download weights or identify the user's devices.
 
+## Choose the launch workflow
+
+For a supported single-config deployment on an installed station, use
+[managed deployment](../manimux-deploy/SKILL.md) to check and start services together,
+then open RoboGUI and hand over to the operator before Prepare.
+
+Before giving runtime commands, establish whether the user wants to **manage
+experiments** or **try once**. If context does not already answer this, ask the user.
+Reuse the decision for an ongoing study. Follow the
+[experiment workflow](../manimux-experiments/SKILL.md#start-from-the-users-experiment):
+`run --config-list` manages experiments. `run --config` tries one concrete runtime
+config interactively, including an existing experiment variant; records go to a
+separate trial root and no study scoring/progress is enabled. No list or duplicate
+config is needed. Optional `--once` connects immediately and exits after one rollout.
+Use the same input flag/file and station for camera, generic policy and runtime.
+Validate with `inspect --config` or `inspect --config-list` and service `--check`.
+Camera/model services remain separate from the runtime command.
+
 ## Agent-assisted setup
 
 Own the local setup work; do not hand the user a template and ask them to fill YAML.
@@ -28,8 +46,8 @@ item and continue independent setup rather than handing off the whole task.
 Validate resolved device mappings, checkpoint/normalization paths, client/server
 addresses and interpreter imports. Check existing listeners before suggesting ports;
 do not silently kill processes, rename CAN interfaces or reconfigure networking.
-For a collection, reject any station output override; recording.root belongs to the
-collection. Help the user choose it once, then reuse it on subsequent launches. Keep secrets and machine bindings out of shared YAML.
+For a config list, reject any station output override; recording.root belongs to the
+config list. Help the user choose it once, then reuse it on subsequent launches. Keep secrets and machine bindings out of shared YAML.
 
 Return the written station path, a short binding summary, remaining unverified items
 and matched launch commands. Distinguish static validation from device connectivity
@@ -59,11 +77,11 @@ and actual motion. Setup alone does not authorize launching services or moving h
   grippers share arm CAN; TacCap gripper serials are separate from camera serials.
 - Camera mapping is physical device → component → server stream → runtime sensor →
   `policy.adapter.camera_map`. A RoboGUI preview does not change model input mapping.
-- Use one collection/station across runtime, camera and model launchers for studies.
+- Use one config list/station across runtime, camera and model launchers for studies.
   If services differ across entries, pass the same explicit `--experiment-id`; do not
   select an arbitrary child config for cameras. Legacy standalone examples use one
   experiment/station.
-  Selection precedence is CLI `--local`, collection `local:`, then the default station.
+  Selection precedence is CLI `--local`, config list `local:`, then the default station.
   Standalone examples use experiment `local:` instead.
   CLI paths are cwd-relative; experiment references and station paths have their own
   file-relative bases. Read the walkthrough's scope table for unsupported entry points.

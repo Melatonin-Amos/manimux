@@ -32,7 +32,7 @@ and RoboGUI processes when their configuration matches.
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --collection manimux/configs/collections/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
+  --config-list manimux/configs/lists/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
 ```
 
 ```bash
@@ -47,8 +47,8 @@ XPolicyLab/policy/DP/.venv/bin/python -m manimux.servers.dp \
 ```
 
 ```bash
-envs/yam/.venv/bin/python -m manimux serve \
-  --collection manimux/configs/collections/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
+envs/yam/.venv/bin/python -m manimux run \
+  --config-list manimux/configs/lists/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
 ```
 
 The policy endpoint is `ws://127.0.0.1:8520`; a private station may override it

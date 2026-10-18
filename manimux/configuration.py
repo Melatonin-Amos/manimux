@@ -71,52 +71,95 @@ def compose(path: str | Path, stack: tuple[Path, ...] = ()) -> tuple[dict, dict[
     return _merge(result, resolve(deepcopy(raw))), sources
 
 
-def apply_initial_pose(raw: dict) -> None:
-    """Resolve a named robot pose as part of the experiment, not its collection."""
+def _validated_pose(pose_id: str, pose: dict, dimensions: dict, default_duration) -> dict:
     import math
+    import re
 
-    from manimux.cli import read_yaml
-
-    selection = raw.pop("initial_pose", None)
-    if selection is None:
-        return
-    if not isinstance(selection, dict) or set(selection) != {"config", "id"}:
-        raise ValueError("initial_pose requires config and id")
-    path = Path(selection["config"])
-    poses = read_yaml(path)["poses"]
-    pose = poses[selection["id"]]
-    options = raw["robot"].setdefault("options", {})
-    if not options.get("move_to_start_on_connect"):
-        raise ValueError("Initial pose requires move_to_start_on_connect")
+    if not isinstance(pose_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", pose_id):
+        raise ValueError("Initial pose ID must be path-safe")
     joints = pose["joints"]
-    dimensions = raw["robot"].get("group_dims", {})
     if set(joints) != set(dimensions):
         raise ValueError("Initial pose must specify every robot group")
     for group, size in dimensions.items():
         q = joints[group]
-        if (
-            not isinstance(q, list)
-            or len(q) != size
-            or any(
+        if (not isinstance(q, list) or len(q) != size or any(
                 isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
-                for v in q
-            )
-        ):
+                for v in q)):
             raise ValueError(f"Invalid initial pose joints: {group}")
-    duration = pose.get("duration_s", options.get("start_duration_s"))
-    if (
-        isinstance(duration, bool)
-        or not isinstance(duration, (float, int))
-        or not math.isfinite(duration)
-        or duration <= 0
-    ):
+    duration = pose.get("duration_s", default_duration)
+    if (isinstance(duration, bool) or not isinstance(duration, (float, int))
+            or not math.isfinite(duration) or duration <= 0):
         raise ValueError("Initial pose duration must be finite and positive")
-    options.update(start_joints=deepcopy(joints), start_duration_s=duration)
-    raw.setdefault("run", {})["initial_pose"] = {
-        "id": selection["id"],
-        "label": pose.get("label", selection["id"]),
-        "joints": deepcopy(joints),
-        "duration_s": duration,
-        "source": deepcopy(pose.get("source")),
-    }
+    label = pose.get("label", pose_id)
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError("Initial pose label must be nonempty")
+    return {"id": pose_id, "label": label, "joints": deepcopy(joints),
+            "duration_s": duration, "source": deepcopy(pose.get("source"))}
+
+
+def apply_initial_pose(raw: dict) -> None:
+    """Resolve the selected pose and expose validated embodiment presets to the UI.
+
+    Loading and selecting configurations never connects hardware. An explicit task
+    preset file takes precedence over the assembly's preset library.
+    """
+    from manimux.cli import read_yaml
+
+    selection = raw.pop("initial_pose", None)
+    robot = raw["robot"]
+    options = robot.setdefault("options", {})
+    path = None
+    if selection is not None:
+        if not isinstance(selection, dict) or set(selection) != {"config", "id"}:
+            raise ValueError("initial_pose requires config and id")
+        if not options.get("move_to_start_on_connect"):
+            raise ValueError("Initial pose requires move_to_start_on_connect")
+        path = Path(selection["config"])
+    elif robot.get("config"):
+        assembly_path = Path(robot["config"])
+        reference = read_yaml(assembly_path).get("initial_poses")
+        if reference:
+            path = (assembly_path.parent / reference).resolve()
+    if path is None:
+        return
+    presets = read_yaml(path)["poses"]
+    poses = [_validated_pose(key, value, robot.get("group_dims", {}),
+                             options.get("start_duration_s"))
+             for key, value in presets.items()]
+    if len({p["label"] for p in poses}) != len(poses):
+        raise ValueError("Initial pose labels must be unique")
+    run = raw.setdefault("run", {})
+    if selection is not None:
+        selected = next((p for p in poses if p["id"] == selection["id"]), None)
+        if selected is None:
+            raise ValueError(f"Unknown initial pose: {selection['id']}")
+        options.update(start_joints=deepcopy(selected["joints"]),
+                       start_duration_s=selected["duration_s"])
+        run["initial_pose"] = deepcopy(selected)
+    current = initial_pose_metadata(raw)
+    if current["id"] not in {p["id"] for p in poses}:
+        # Preserve legacy inline starts or intentional hold as the default choice.
+        current.setdefault("duration_s", options.get("start_duration_s"))
+        poses.insert(0, current)
+    run["initial_pose_options"] = poses
     raw.setdefault("config_sources", {})[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def select_initial_pose(config: dict, pose_id: str) -> dict:
+    """Return a fresh configuration for a validated preset, without hardware I/O."""
+    result = deepcopy(config)
+    poses = result["run"].get("initial_pose_options", [])
+    selected = next((p for p in poses if p["id"] == pose_id), None)
+    if selected is None:
+        raise ValueError(f"Unknown initial pose: {pose_id}")
+    options = result["robot"].setdefault("options", {})
+    if pose_id == "hold":
+        options["move_to_start_on_connect"] = False
+        result["run"].pop("initial_pose", None)
+    else:
+        selected = _validated_pose(pose_id, selected, result["robot"]["group_dims"],
+                                   options.get("start_duration_s"))
+        options.update(move_to_start_on_connect=True, start_joints=deepcopy(selected["joints"]),
+                       start_duration_s=selected["duration_s"])
+        result["run"]["initial_pose"] = selected
+    return result

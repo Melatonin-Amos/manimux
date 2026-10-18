@@ -201,7 +201,7 @@ run:
 
 ```bash
 cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run \
+envs/yam/.venv/bin/manimux run --once \
   --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_autohorizon_step1000.yaml
 ```
 

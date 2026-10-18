@@ -1,5 +1,6 @@
 run:
-  task: plate
+  max_control_steps: 6000
+  task_prompt: plate
 evaluation:
   kind: stages
   task_id: plate

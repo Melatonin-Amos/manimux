@@ -254,3 +254,50 @@ model contributes the supported tool coordinates. A new tool implements
 `EndEffectorBase`/`GripperBase`. It owns the scalar gripper state/command meaning;
 the offline tool model owns flange-to-TCP geometry. Put actual addresses and serials
 in the private station file. This is a configuration fragment, not a shipped driver.
+
+## Hardware exit safety
+
+An episode failure and actuator release are separate operations. Before granting
+release, audit the loaded driver rather than relying on method names.
+
+YAM declares the code-owned capability `home_before_close=True`. After a completed
+connection, every runtime exit requests Home, including software failures, step limits
+and legacy Finish requests with `home=false`. Configuration cannot disable it.
+A stop exception does not by itself establish a hardware fault: Home checks all
+controllers before motion and refuses unhealthy control. Other embodiments must
+implement and validate this capability before opting in. YAM
+requires both CAN feedback and SDK state to advance, and rejects motor error codes
+other than the SDK's healthy `0x1`. Start/Home retain the SDK's 50-interval linear
+waypoints, now checking feedback before each command and cancelling peer motion
+on a move failure. These checks are outside the policy control tick. Home arrival is measured before opening grippers
+and again before closing control. Camera health is rechecked after policy startup,
+before robot connection; a camera can still fail during the subsequent connection.
+
+`ArmController.validate_release()` is the device-owned release gate. YAM requires
+stationary zero Home (six arm joints; gripper excluded); tolerances are explicit in
+`embodiment/arm/yam.yaml`. `RobotBase.close()` validates every opened controller
+before releasing any, including partial-connect cleanup. If validation fails, the
+owning process retains control and waits for the persistent RoboGUI Hardware recovery
+panel. The operator can confirm a clear Home path and retry Home, or confirm physical
+support of ALL arms and secured payloads before releasing motor control. There is no
+terminal input. Session/episode identity and a fresh gate token scope every request;
+Home failures invalidate that token. Home retry rechecks every controller before close
+and does not grant supported-release permission. GUI loss, timeout and interrupts do
+not approve release; without a recovery channel the process remains blocked.
+Direct YAM controller close repeats the check to cover other callers and late faults.
+This retains existing control resources; it cannot restore a broken drive, protect
+against power loss/SIGKILL, or establish collision clearance for a Home path.
+
+An aborted Home is only retried after an explicit GUI action. The blocked state means
+the current runtime still owns the hardware; do not kill it or launch another CAN owner. The ordinary RoboGUI Finish & Home action explicitly requests Home, independently
+of `home_on_close` and idle recovery capabilities. Verify the actual GUI button request
+through runtime shutdown, including a false legacy config: stop, Home, measured
+arrival, then close. Other embodiments' explicit hand-guiding transitions may request
+no Home; YAM's mandatory Home capability cannot be bypassed that way. Receive-only YAM may
+still have an enabled SDK session: closing that session also requires the release gate.
+
+Audit findings for other controllers must remain explicit: Tianji `stop()` requests
+mode 0 (disable), PiPER close disconnects transport, and ARX X5 delegates stop/close to
+its SDK process. None is automatically equivalent to YAM position hold. Their physical
+braking/support behavior and fault-Home paths require vendor-specific validation; the
+base no-op release hook is not evidence of physical safety for a new controller.
