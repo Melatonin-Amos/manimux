@@ -13,14 +13,44 @@ workstation paths, ports, installed agent plugins, or other skills are required.
 
 ## What the editor needs
 
+**The subject is real model-generated execution trajectories on physical robots.**
+For each primary take, an actual trained policy/checkpoint must run inference on
+the task observations, and its actions must drive the robot through ManiMux's
+normal adaptation, scheduling and execution path. A connected robot or moving GUI
+is not enough. Capture the resulting physical motion and its corresponding GUI
+trajectory/action view together in the same continuous shot.
+
+**All three must remain visible in the nominated interval:**
+1. The physical robot and task through a live camera.
+2. RoboGUI's robot and action/trajectory visualization from this run.
+3. The active model/checkpoint identity and genuine live inference activity.
+
+Use real completed-inference counts, inference latency/results or action-chunk IDs
+from the running model/runtime. A static model name, loaded/connected badge,
+generic spinner, camera FPS or browser animation is not live inference evidence.
+If the GUI lacks model telemetry, arrange an existing read-only live model-status
+panel beside it within the same recording, sourced from the actual active service.
+Do not invent telemetry or add a decorative model badge in post-production.
+If one view is hidden, unavailable or only supplied in a separate clip, the primary
+shot is incomplete. Resolve the framing/telemetry gap before declaring it ready.
+
+Verify the model → inference output → runtime execution → physical motion chain
+from the active run. Record the public model/checkpoint identity and how that
+chain was established. Displayed future chunks are predictions, not measured or
+executed paths; identify which kind of trajectory the GUI shows. Do not fabricate
+an executed-path overlay if this local version only displays predicted chunks.
+Scripted paths, demos, teleoperation, replay and unexecuted model predictions do
+not meet the primary footage requirement. Successful task completion is optional;
+authentic model execution is required.
+
 The product film moves from full-screen RoboGUI into the upper-left cell of a
 6 × 6 wall, then blurs to a white title card. The editor supplies the transitions,
 labels, music and title. Submit clean continuous footage, not an edited trailer.
 Do not build your own wall, add titles, animate the camera, or accelerate execution.
 
 **Required per station:** one actual RoboGUI screen recording, preferably 30–60
-seconds, with a nominated continuous 12–20 second interval of visible physical
-robot execution. Two to four genuinely different takes are welcome if readily
+seconds, with a nominated continuous 12–20 second interval of visible execution
+of a real model's actions by the physical robot. Two to four genuinely different takes are welcome if readily
 available; do not repeat the same clip to inflate the count. Different embodiments
 and tasks are more useful than many identical runs. Do not perform new training or
 invent a model/algorithm combination just for this capture.
@@ -29,9 +59,11 @@ invent a model/algorithm combination just for this capture.
   30 fps is welcome if smooth; native 1280×720 at 30 fps is an accepted fallback.
 - H.264 MP4, yuv420p, original speed, no audio in the submission. Keep the source
   recording locally. Never upscale a smaller source just to satisfy resolution.
-- Capture the full RoboGUI content area: robot view, live physical camera panel(s),
-  and relevant run state/task. Exclude address bars, desktop, terminal, notifications
-  and private information. Keep the window and 3D viewpoint fixed during the take.
+- Capture RoboGUI's robot/trajectory view, live physical camera panel(s), active
+  model identity, live inference state and relevant run state/task together.
+  An adjacent genuine model-status panel is acceptable; exclude unrelated terminal
+  content, address bars, desktop, notifications and private information.
+  Keep the layout and 3D viewpoint fixed during the take.
 - Make at least one live physical camera view large enough to recognize the robot,
   object and task. A moving 3D model alone is not evidence of physical execution.
 - Start capture about 3 seconds before the operator starts; retain about 3 seconds
@@ -109,6 +141,13 @@ its `.source.json` sidecar records source SHA-256 and original media properties.
 Transcoding cannot repair dropped capture frames. Inspect actual motion playback.
 
 Fill [manifest fields](references/manifest.md), using evidence from the active run.
+For primary takes, set `trajectory_source` to `model_inference`, identify
+`trajectory_display`, and supply a known public policy/checkpoint identity.
+Explain in `execution_evidence` how actual inference and robot execution were
+verified; an open port, model config filename or moving 3D scene is insufficient.
+Set `model_identity_visible`, `live_inference_visible`, and `trajectory_visible`
+only after reviewing their simultaneous visibility with the physical camera.
+Record the actual signal source in `inference_visibility_evidence`.
 The GUI path must be a relative file under `clips/`. Mark task outcome separately
 from evidence mode; a service exit or animation does not establish task success.
 Set `visual_reviewed: true` only after actually watching the nominated interval.

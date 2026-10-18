@@ -4,6 +4,13 @@ Give this complete folder (or its ZIP) to a colleague. It contains a self-contai
 agent skill, capture guidance, an optional X11 recorder, and a validator/packager.
 It has no model weights, footage, host credentials, or absolute station paths.
 
+**We need real trained-model execution trajectories on physical robots:** actual
+model inference produces actions, ManiMux executes them, and the footage shows the
+resulting physical motion. Generic robot motion, scripted demonstrations, teleop,
+trajectory replay or predicted-but-unexecuted paths do not qualify as primary takes.
+The physical camera, robot/action visualization, active model identity and genuine
+inference activity must all be visible together throughout the nominated interval.
+
 ## Use with a local agent
 
 Extract it, then place `manimux-wall-capture/` under the local ManiMux project's
@@ -18,6 +25,12 @@ Paste this prompt into the colleague's agent:
 > GUI and available recorder. Help us produce one or two clean 30–60 second RoboGUI
 > clips for the ManiMux multi-embodiment video wall, with a continuous 12–20 second
 > nominated execution interval in each. Use 1080p30 when smooth, or 720p30 if needed.
+> The required subject is a real model's execution trajectory: verify the actual
+> checkpoint, inference outputs and physical execution belong to this run. Show
+> the GUI action/trajectory view, live physical camera, active model identity and
+> genuine live inference status together throughout the nominated interval;
+> distinguish predicted chunks from executed commands or measured motion. Do not
+> substitute scripted paths, teleoperation, replay or a synthetic animation.
 > Coordinate physical actions with the operator; do not start robot motion yourself
 > unless explicitly authorized. Record actual provenance and any limitations, then
 > validate and package the submission ZIP. Return the ZIP path for me to forward.

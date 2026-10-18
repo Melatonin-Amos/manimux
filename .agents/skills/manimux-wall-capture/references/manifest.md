@@ -26,20 +26,40 @@ path, or entire session directory into the submission.
   A simulated scene or replay of trajectory commands is not a live policy run.
   Mixed mode should be split into truthful continuous intervals/takes, not hidden.
 - `policy.name`: model family/version; `checkpoint_id`: shareable name, revision or
-  hash, never a token or private absolute path. Unknown is acceptable when disclosed.
+  hash, never a token or private absolute path. Both must be known for a primary
+  real-model take. Keep unresolved footage as a candidate until identity is verified.
+- `trajectory_source`: `model_inference` for primary takes: actual inference at the
+  time of the recorded run generated the actions subsequently executed on hardware.
+  For other footage, use a truthful value such as scripted, teleoperation or replay.
+- `trajectory_display`: `predicted_chunks`, `executed_commands`, `measured_motion`
+  or `none`. This describes the GUI overlay, not whether the robot is executing.
+  Predicted chunks can include future actions never executed. Executed commands
+  are not measured feedback. A camera-only candidate uses none rather than inventing
+  a trace, but is not eligible as primary footage until the required view is visible.
 - `inference.name`: active strategy, with any verified timing/chunk/sampling values
   in `inference.settings`. Do not infer settings from a filename or visual behavior.
 - `session_id`: corresponding real run identifier if available; null otherwise.
 - `config_label` / `config_sha256`: shareable config label and file SHA-256 if known.
   Do not attach the full config merely to fill provenance fields.
-- `execution_evidence`: concise basis for evidence mode, e.g. the operator observed
-  the policy-controlled arm through the live camera during this session. Clearly
+- `execution_evidence`: basis for the model-to-robot chain: the loaded checkpoint,
+  actual inference output observed in this session, runtime action execution, and
+  corresponding physical camera/feedback observations. Identify the relevant run
+  or timestamp range when available. Model server availability alone is insufficient.
+  Record normal runtime action conversion/scheduling without claiming raw model
+  outputs are identical to controller commands. Clearly
   state when the source is an older recording rather than a newly captured run.
 - `task_outcome`: `success`, `failure`, or `unknown`; `outcome_basis`: actual operator
   assessment or record that supports a claimed success/failure. None is inferred
   from GUI state alone. Success is not a condition for submitting honest footage.
 - `camera_names`: public view labels; `gui_physical_camera_visible`: true only if
   a live camera of the physical robot/workspace is visible in the GUI recording.
+- `model_identity_visible`, `live_inference_visible`, `trajectory_visible`: true
+  only if the active model/checkpoint identity, real inference activity, and robot
+  action/trajectory view are simultaneously visible with the physical camera
+  throughout the nominated interval. These are required for primary takes.
+- `inference_visibility_evidence`: what on-screen signal shows actual inference,
+  its real data source, and how it is tied to the model executing this run. Static
+  identity, connection badges, camera FPS and fabricated counters do not qualify.
 - `capture_issues`: observed dropouts/freezes/latency or other defects, else [].
 - `visual_reviewed`: true only after watching the full nominated interval.
 - `gui.path`: e.g. `clips/take-001/gui.mp4`. `suggested_in_seconds` and
