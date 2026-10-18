@@ -91,7 +91,7 @@ def base(chapter, footer):
     im = BACKGROUND.copy()
     d = ImageDraw.Draw(im)
     d.line((96, 112, 1824, 112), fill=LINE)
-    text(im, (96, 53), 'manimux', 34, MINT, 750)
+    text(im, (96, 53), 'manimux', 34, FG, 750)
     tracked(im, (1400, 62), 'PRODUCT PREVIEW / V4', 17, 2)
     text(im, (96, 984), footer, 21, MUTED)
     text(im, (1690, 982), f'{chapter:02d} / 07', 23, MUTED, mono=True)
@@ -347,7 +347,7 @@ def showcase(t):
         def centered(value,y,size,color,weight=500,delay=0):
             tile=text_image(value,size,color,weight)
             text(im,((W-tile.width)/2,y),value,size,color,weight,t=age,delay=delay,rise=20)
-        centered('ManiMux',352,148,'#151515',750,9.6)
+        centered('ManiMux',352,148,'#28513a',750,9.6)
         centered('Any embodiment × Any policy × Any inference',558,42,'#343434',550,10.1)
         a=ease((age-10.3)/.8)
         ImageDraw.Draw(im).rectangle((W//2-int(90*a),655,W//2+int(90*a),660),fill='#76b900')

@@ -13,8 +13,9 @@
 
 Use Manrope at varied weights and JetBrains Mono for code. Current palette:
 charcoal #121212, panels #1E1E1E, text #F5F5F5, accent #76B900. The closing
-background is white with a faint blurred wall. Logo color can change independently
-of the accent. Use a small number of brand colors rather than tinting every label.
+background is white with a faint blurred wall. The video wordmark is white on
+charcoal and deep green #28513A on the white closing card; the accent remains
+#76B900. Use a small number of brand colors rather than tinting every label.
 
 Blocks fall with acceleration, slight tilt, soft bounce, then settle into stable
 rows. Clip entries to the container interior, not across the headline. Commands
