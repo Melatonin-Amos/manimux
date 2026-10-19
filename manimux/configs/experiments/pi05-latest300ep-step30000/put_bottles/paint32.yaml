@@ -13,4 +13,4 @@ inference:
   algorithm: paint
 experiment:
   task: put_bottles
-  variant: paint32
+  variant: paint32_four_bottles_v1

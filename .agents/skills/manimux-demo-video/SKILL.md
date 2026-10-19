@@ -46,7 +46,9 @@ FFmpeg/libx264 and a systemd user manager are required. Read
    restrained green accents, charcoal surfaces, and the white closing card.
 3. Show independent embodiment, policy, and inference choices with falling tiles.
    Then explain how choices connect to the ManiMux runtime, RoboGUI, and records.
-   “Any” communicates extensibility, not a validated full Cartesian product.
+   Use supported-integration wording. Do not claim “Any policy” or “Any inference”:
+   compatibility depends on the model and backend. Older film exports retain the
+   earlier slogan and need a separate text revision before using that claim again.
 4. Type commands one character at a time with subtle uneven pauses and a cursor.
    Preserve captured output verbatim; label editorial timing and planned requests.
 5. Keep human review → score → save in the story. Until captured from working UI,

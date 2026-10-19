@@ -11,6 +11,53 @@ from manimux.robogui.communication import ControlClient, RoboGUIPublisher, Runti
 log = logging.getLogger(__name__)
 
 
+class OperationStatus:
+    """A liveness/progress reporter for blocking work; never access hardware."""
+
+    def __init__(self, *, enabled, robot, policy, event, identity,
+                 publisher_factory=RoboGUIPublisher, interval_s=0.5):
+        self.enabled, self.robot, self.policy = enabled, robot, policy
+        self.event, self.identity = event, dict(identity)
+        self._factory, self._interval = publisher_factory, interval_s
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._thread = None
+        self._phase, self._since = "Preparing runtime", time.monotonic()
+
+    def update(self, phase):
+        with self._lock:
+            self._phase, self._since = phase, time.monotonic()
+        if self.enabled and self._thread is None:
+            try:
+                reporter = threading.Thread(target=self._run, daemon=True,
+                                            name="robogui-operation-status")
+                reporter.start()
+                self._thread = reporter
+            except Exception:
+                log.exception("Cannot start operation reporter; runtime ownership is unchanged")
+
+    def _run(self):
+        try:
+            publisher = self._factory()
+            try:
+                while not self._stop.is_set():
+                    with self._lock:
+                        metadata = {**self.identity, "phase": self._phase,
+                                    "elapsed_s": time.monotonic() - self._since}
+                    publisher.publish(RuntimeEvent(self.event, robot=self.robot,
+                                                   policy=self.policy, metadata=metadata))
+                    self._stop.wait(self._interval)
+            finally:
+                publisher.close()
+        except Exception:
+            log.exception("Operation progress reporting failed")
+
+    def close(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+
+
 class ShutdownStatus:
     """Own a separate publisher thread only during cleanup; never touch hardware.
 

@@ -44,7 +44,7 @@ from manimux.runtime.inference import (
     prepare_strategy_chunk,
     seed_strategy_warmup,
 )
-from manimux.runtime.lifecycle import ShutdownStatus
+from manimux.runtime.lifecycle import OperationStatus, ShutdownStatus
 from manimux.runtime.safety import RuntimeState, SafetyGuard
 from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
@@ -636,12 +636,20 @@ class EdgeRuntime:
                   if self._config["robot"]["options"].get("execute", False) else None),
         )
 
+        preparation = OperationStatus(
+            enabled=self._config["robogui"]["enabled"],
+            robot=self._config["robogui"]["robot"],
+            policy=self._config["robogui"]["policy_label"], event="runtime_preparing",
+            identity={"run_dir": str(self._run_dir.resolve()), "episode_id": episode_id},
+        )
+
         def shutdown_runtime(*, faulted: bool) -> list[BaseException]:
             """Release control resources before waiting for recording I/O."""
             nonlocal shutdown_attempted
             if shutdown_attempted:
                 return []
             shutdown_attempted = True
+            preparation.close()
             shutdown_status.update("stopping")
             self._state = RuntimeState.IDLE
             errors: list[BaseException] = []
@@ -682,8 +690,10 @@ class EdgeRuntime:
                     strategy=build_inference_strategy(self._config),
                     adapter=self._build_adapter(), session_id=self._session_id, clock=self._clock,
                 )
+            preparation.update("Starting cameras")
             with failure_context("camera", "sensor startup"):
                 sensor_reader.start()
+            preparation.update("Connecting policy backend")
             with failure_context("model", "model connection", str(self._config["policy"].get("options", {}).get("server", ""))):
                 self._worker.start()
             logger.info("policy_worker_ready session=%s", self._session_id)
@@ -696,8 +706,10 @@ class EdgeRuntime:
                 policy_backend=dict(capabilities.backend_metadata),
             )
             # Policy startup can be slow; recheck sensors before enabling hardware.
+            preparation.update("Checking fresh camera frames")
             with failure_context("camera", "fresh frame check before robot connection"):
                 sensor_reader.read()
+            preparation.update("Connecting robot and moving to the selected initial pose")
             with observe_release(shutdown_status.update, recover=shutdown_status.wait_for_release):
                 channels = self._config["robot"].get("options", {}).get("component_hardware", {})
                 target = ", ".join(f"{name}: {binding['channel']}" for name, binding in channels.items() if "channel" in binding)
@@ -726,6 +738,7 @@ class EdgeRuntime:
                 inference_seed=capabilities.backend_metadata.get("model", {}).get("inference_seed"),
             )
             previous_command = copy_group_vector(initial_state.groups)
+            preparation.update("Preparing action execution")
             self._execution.warmup(initial_state.groups)
             last_command = copy_group_vector(initial_state.groups)
             self._state = RuntimeState.RUNNING
@@ -754,6 +767,7 @@ class EdgeRuntime:
             robogui_episode_metadata["home_available"] = (
                 "home" in self._robot.recovery_actions
             )
+            preparation.close()
             self._robogui.set_state_metadata(robogui_episode_metadata)
             with stage("robogui_publish_event"):
                 self._robogui.publish_event(
@@ -797,19 +811,51 @@ class EdgeRuntime:
                             paused=robogui_control.paused, **control_diagnostics,
                         )
                         last_control_status = control_status
-                if robogui_control.finish_requested:
+                request_matches = (
+                    getattr(robogui_control, "episode_id", "") == episode_id
+                    and getattr(robogui_control, "control_run_dir", "")
+                    == robogui_episode_metadata["run_dir"]
+                )
+                robogui_episode_metadata["control_status"] = {
+                    "paused": robogui_control.paused,
+                    "revision": getattr(robogui_control, "control_revision", ""),
+                    "reason": (control_diagnostics or {}).get("reason", "unknown"),
+                }
+                self._robogui.set_state_metadata(robogui_episode_metadata)
+                if robogui_control.finish_requested and (
+                    not getattr(robogui_control, "finish_request_id", "") or request_matches
+                ):
                     timing.set_phase("stopped")
                     # Stop model requests before Home/recording cleanup can take time.
                     self._worker.request_stop()
                     terminal_reason = "robogui_finish_requested"
                     recorder.event("robogui_finish_requested", step=steps, home=True)
                     break
-                if robogui_control.home_requested:
+                if robogui_control.home_requested and (
+                    not getattr(robogui_control, "home_request_id", "") or request_matches
+                ):
                     timing.set_phase("homing")
                     if pending_response is not None:
                         reject_response(pending_response, "invalidated_by_pause_or_home")
                         pending_response = None
-                    self._robot.home()
+                    home_status = OperationStatus(
+                        enabled=self._config["robogui"]["enabled"],
+                        robot=self._config["robogui"]["robot"],
+                        policy=self._config["robogui"]["policy_label"],
+                        event="runtime_home", identity={
+                            "run_dir": str(self._run_dir.resolve()), "episode_id": episode_id,
+                            "home_request_id": getattr(robogui_control, "home_request_id", ""),
+                        },
+                    )
+                    home_status.update("Returning Home and verifying arrival")
+                    try:
+                        self._robot.home()
+                    finally:
+                        home_status.close()
+                    robogui_episode_metadata["home_ack"] = getattr(
+                        robogui_control, "home_request_id", ""
+                    )
+                    self._robogui.set_state_metadata(robogui_episode_metadata)
                     state = self._robot.get_state()
                     self._safety.reset(state)
                     self._timeline = self._build_timeline()
@@ -1023,10 +1069,12 @@ class EdgeRuntime:
                                         if handoff_reference is None
                                         else handoff_reference.plan_id
                                     ),
+                                    # first_step_when_ready has no expected start until commit.
                                     seed_to_expected_start_ms=(
-                                        start_ns - seed.monotonic_ns
-                                    )
-                                    / 1e6,
+                                        None
+                                        if start_ns is None
+                                        else (start_ns - seed.monotonic_ns) / 1e6
+                                    ),
                                     expected_decode_ms=round(
                                         self._decode_forecast.seconds * 1e3, 3
                                     ),
@@ -1628,6 +1676,7 @@ class EdgeRuntime:
                 steps=steps,
                 wall_time_s=wall_time_s,
             )
+            preparation.close()
             shutdown_status.close()
             with stage("robogui_publish_event"):
                 self._robogui.publish_event(
@@ -1663,6 +1712,7 @@ class EdgeRuntime:
             timing.end(completed=False)
             faulted = not completed and abort_reason != "KeyboardInterrupt"
             cleanup_errors = shutdown_runtime(faulted=faulted)
+            preparation.close()
             shutdown_status.close()
             try:
                 self._robogui.close()

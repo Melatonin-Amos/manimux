@@ -19,37 +19,21 @@
     <a class="nav-code" href="https://github.com/SII-LiuLab/manimux" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
   </header>
   <main id="main">
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-intro wrap">
-        <div><p class="eyebrow"><span class="status-dot"></span> The real-world manipulation harness</p>
-          <h1 id="hero-title">Any embodiment.<br>Any policy.<br><span>Any inference.</span></h1>
-        </div>
-        <div class="hero-aside"><p class="hero-lead">Bring your policy.<br> Make the real world move.</p><p class="muted">One open-source workflow for deployment, execution, and experiments. Built around RoboGUI.</p>
-          <div class="actions"><button class="button light" data-film="product"><span aria-hidden="true">▶</span> Watch the film <span class="duration">1:32</span></button><a class="text-link" href="https://sii-liulab.github.io/manimux/" target="_blank" rel="noreferrer">Get started ↗</a></div>
-        </div>
-      </div>
-      <div class="execution-story" id="execution-story">
-        <div class="story-sticky wrap">
-          <div class="stage-bar"><span><span class="status-dot"></span> ROBOGUI / EXECUTION ARCHIVE</span><button id="motion-toggle" class="motion-toggle" aria-pressed="false">Pause motion <span aria-hidden="true">Ⅱ</span></button></div>
-          <div class="stage" id="stage">
-            <div class="wall-grid" aria-hidden="true">
-              <img src="assets/execution-poster.jpg" alt=""><img src="assets/wall-1.jpg" alt=""><img src="assets/wall-2.jpg" alt=""><img src="assets/wall-3.jpg" alt="">
-              <img src="assets/wall-2.jpg" alt=""><img src="assets/wall-3.jpg" alt=""><img src="assets/execution-poster.jpg" alt=""><img src="assets/wall-1.jpg" alt="">
-              <img src="assets/wall-3.jpg" alt=""><img src="assets/wall-1.jpg" alt=""><img src="assets/wall-2.jpg" alt=""><img src="assets/execution-poster.jpg" alt="">
-              <img src="assets/wall-1.jpg" alt=""><img src="assets/wall-2.jpg" alt=""><img src="assets/execution-poster.jpg" alt=""><img src="assets/wall-3.jpg" alt="">
-            </div>
-            <div class="execution-frame" id="execution-frame"><video id="hero-video" muted loop playsinline preload="none" poster="assets/execution-poster.jpg" aria-label="Archived RoboGUI recording, including physical robot camera views"><source data-src="assets/execution.mp4" type="video/mp4"></video></div>
-            <div class="wall-message"><p class="eyebrow">One interface. A wider world.</p><h2>Many possibilities.<br>One <em>ManiMux.</em></h2><p>The same workflow, across your robotics stack.</p><a href="#architecture" class="button light">Explore the architecture <span aria-hidden="true">↓</span></a></div>
-          </div>
-          <div class="stage-caption"><span>Archived RoboGUI footage · Original playback speed</span><span class="single-caption">Scroll to expand the view <span aria-hidden="true">↓</span></span><span class="wall-caption">Wall preview · Repeated frames from one recording</span></div>
-        </div>
+    <section class="hero cinema-hero" aria-labelledby="hero-title" id="hero-stage">
+      <video id="hero-video" muted loop playsinline preload="none" poster="assets/hero-poster.jpg" aria-label="Continuous RoboGUI orbit from a synthetic preview. No hardware execution."><source data-src="assets/hero-robogui.mp4" type="video/mp4"></video>
+      <div class="cinema-shade" aria-hidden="true"></div>
+      <div class="cinema-top wrap"><p class="eyebrow"><span class="status-dot"></span> From policy to possibility</p><button id="motion-toggle" class="motion-toggle" aria-pressed="false">Pause motion Ⅱ</button></div>
+      <div class="cinema-copy wrap"><h1 id="hero-title">Real robot experiments.<br><span>One inference harness.</span></h1><p>Deploy policies, explore supported inference strategies,<br>and turn real-world runs into reproducible experiments.</p></div>
+      <div class="cinema-bottom wrap">
+        <div class="actions"><button class="button light" data-film="product"><span aria-hidden="true">▶</span> Watch the film <span class="duration">1:32</span></button><a class="text-link" href="#architecture">Explore ManiMux ↓</a></div>
+        <p class="cinema-disclosure">Product animation · Synthetic RoboGUI footage<br>Recorded UI preview · No hardware execution</p>
       </div>
     </section>
 
     <section class="architecture paper" id="architecture" aria-labelledby="architecture-title">
       <div class="wrap">
         <div class="section-top"><p class="eyebrow">01 / Built to connect</p><span class="section-note">Policy × Runtime × Embodiment</span></div>
-        <div class="section-heading"><h2 id="architecture-title">Your stack.<br><span class="ink-green">Without the silos.</span></h2><p>Connect the robot you have, the policy you choose, and the inference strategy your experiment needs.</p></div>
+        <div class="section-heading"><h2 id="architecture-title">Your stack.<br><span class="ink-green">Without the silos.</span></h2><p>Connect supported embodiments, policies, and inference strategies in one experiment workflow.</p></div>
         <div class="axes" id="axes">
           <article class="axis" style="--axis-index:0"><div class="axis-top"><span class="axis-number">01</span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 40h32M17 40V29l12-10-6-9M16 8l10-3 6 10-10 9M29 19l7 5 5-5M10 35h14"/><circle cx="17" cy="29" r="4"/></svg></div><h3>Embodiment</h3><p>The physical connection.</p><div class="chips" aria-label="Explore embodiments"><button data-axis="embodiment" data-value="yam" aria-pressed="true">YAM</button><button data-axis="embodiment" data-value="tianji" aria-pressed="false">Tianji–TacCap</button><button data-axis="embodiment" data-value="arx" aria-pressed="false">ARX X5 <small>EXP.</small></button><button data-axis="embodiment" data-value="piper" aria-pressed="false">PiPER <small>EXP.</small></button></div><p class="axis-detail" id="embodiment-detail" aria-live="polite">Dual-arm integration with deployment recipes and RoboGUI visualization.</p></article>
           <article class="axis" style="--axis-index:1"><div class="axis-top"><span class="axis-number">02</span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 5 18 10-18 10L6 15 18-10ZM6 24l18 10 18-10M6 33l18 10 18-10"/></svg></div><h3>Policy</h3><p>The model behind the motion.</p><div class="chips" aria-label="Explore policies"><button data-axis="policy" data-value="pi05" aria-pressed="true">π₀.₅</button><button data-axis="policy" data-value="xr1" aria-pressed="false">XR-1</button><button data-axis="policy" data-value="lingbot" aria-pressed="false">LingBot-VLA2</button><button data-axis="policy" data-value="dp" aria-pressed="false">Diffusion Policy</button><button data-axis="policy" data-value="openwam" aria-pressed="false">OpenWAM</button><button data-axis="policy" data-value="abc" aria-pressed="false">ABC-DiT</button></div><p class="axis-detail" id="policy-detail" aria-live="polite">Pi05 deployment recipes, with model serving separate from robot execution.</p></article>
@@ -84,7 +68,7 @@
       <div class="section-heading"><h2 id="recordings-title">The interface<br>meets the world.</h2><p>Physical camera views, robot visualization, and execution information, brought together in RoboGUI.</p></div>
       <div class="recording-grid">
         <button class="recording-card" data-film="archive"><div class="recording-image"><img src="assets/execution-poster.jpg" loading="lazy" width="1280" height="720" alt="Archived RoboGUI showing physical robot cameras and the robot visualization"><span class="play-icon" aria-hidden="true">↗</span><span class="media-badge">ARCHIVED RECORDING</span></div><div class="recording-meta"><h3>RoboGUI in the real world</h3><span>00:12</span></div><p>Excerpt from the repository’s real-robot demo. Full model and inference provenance was not supplied with this archive.</p></button>
-        <button class="recording-card" data-film="product"><div class="recording-image"><img src="assets/product-poster.jpg" loading="lazy" width="1280" height="720" alt="ManiMux product film architecture scene"><span class="play-icon" aria-hidden="true">↗</span><span class="media-badge">PRODUCT WALKTHROUGH</span></div><div class="recording-meta"><h3>From a request to an experiment</h3><span>01:32</span></div><p>The complete product film. Includes synthetic RoboGUI footage and an illustrative evaluation sequence.</p></button>
+        <button class="recording-card" data-film="product"><div class="recording-image"><img src="assets/product-poster.jpg" loading="lazy" width="1280" height="720" alt="ManiMux title over the execution-wall product animation"><span class="play-icon" aria-hidden="true">↗</span><span class="media-badge">PRODUCT WALKTHROUGH</span></div><div class="recording-meta"><h3>From a request to an experiment</h3><span>01:32</span></div><p>The complete product film. Includes synthetic RoboGUI footage and an illustrative evaluation sequence.</p></button>
       </div>
       <div class="contribute"><div><span class="status-dot"></span><strong>Different stations. Shared evidence.</strong><p>We’re collecting continuous recordings with the physical robot, model identity, and live inference visible together.</p></div><a class="button outline" href="https://github.com/SII-LiuLab/manimux" target="_blank" rel="noreferrer">Explore the project ↗</a></div>
     </div></section>

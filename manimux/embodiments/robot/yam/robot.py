@@ -95,7 +95,7 @@ class YamRobot(RobotBase):
                 self._start_duration,
                 "start position",
                 interrupt=True,
-                parallel=False,
+                parallel=True,
             )
 
     def _validated_targets(self, targets, label):

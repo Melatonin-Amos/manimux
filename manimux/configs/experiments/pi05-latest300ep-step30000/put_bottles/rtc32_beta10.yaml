@@ -14,4 +14,4 @@ inference:
   algorithm: rtc
 experiment:
   task: put_bottles
-  variant: rtc32_beta10
+  variant: rtc32_beta10_four_bottles_v1

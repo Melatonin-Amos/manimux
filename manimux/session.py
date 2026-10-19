@@ -220,7 +220,7 @@ class RuntimeSessionService:
         runtime_factory: RuntimeFactory | None = None,
         control_factory: ControlFactory = ControlClient,
         publisher_factory: PublisherFactory = RoboGUIPublisher,
-        poll_interval_s: float = 0.1,
+        poll_interval_s: float = 0.02,
         announcement_interval_s: float = 1.0,
         experiment_list: ExperimentList | None = None,
         selection_dir_factory: Callable[[str], Path] | None = None,
@@ -471,7 +471,6 @@ class RuntimeSessionService:
         )
         while max_rollout_attempts is None or attempts < max_rollout_attempts:
             request = self._wait_for_rollout_request()
-            self._refresh_record_index()
             attempts += 1
             self._last_error = ""
             self._last_failure = {}
@@ -498,7 +497,19 @@ class RuntimeSessionService:
                     repeat_id=request.get("repeat_id"),
                     reference_layout=deepcopy(request.get("reference_layout")),
                 )
-                result = self._runtime_factory(rollout_config, self._run_dir).run()
+                from manimux.runtime.lifecycle import OperationStatus
+                progress = OperationStatus(
+                    enabled=True, robot=self._config["robogui"]["robot"],
+                    policy=self._config["robogui"]["policy_label"], event="runtime_preparing",
+                    identity={"run_dir": str(self._run_dir.resolve()),
+                              "prepare_request_id": self._prepare_ack},
+                )
+                progress.update("Building runtime")
+                try:
+                    runtime = self._runtime_factory(rollout_config, self._run_dir)
+                finally:
+                    progress.close()
+                result = runtime.run()
             except KeyboardInterrupt:
                 raise
             except Exception as exc:  # noqa: BLE001 - keep the session alive after one failed episode

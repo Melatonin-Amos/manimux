@@ -267,7 +267,8 @@ A stop exception does not by itself establish a hardware fault: Home checks all
 controllers before motion and refuses unhealthy control. Other embodiments must
 implement and validate this capability before opting in. YAM
 requires both CAN feedback and SDK state to advance, and rejects motor error codes
-other than the SDK's healthy `0x1`. Start/Home retain the SDK's 50-interval linear
+other than the SDK's healthy `0x1`. After all controllers connect, initial-pose movement runs both arms concurrently,
+just like Home; SDK connection/calibration itself remains sequential. Start/Home retain the SDK's 50-interval linear
 waypoints, now checking feedback before each command and cancelling peer motion
 on a move failure. These checks are outside the policy control tick. Home arrival is measured before opening grippers
 and again before closing control. Camera health is rechecked after policy startup,

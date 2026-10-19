@@ -423,15 +423,25 @@ waiting without changing the 32-step trigger or silently switching algorithms.
 Offline tests cover terminal hold and resumption; no new hardware run has validated
 this fix. An entire new horizon consumed by latency still fails explicitly.
 
-AutoHorizon attention capture currently requires eager execution. Its five task
-entries use `manimux/configs/lists/lingbot-vla2-latest300ep-step30000-autohorizon-eager.yaml`
-and an inline `policy_server.use_compile: false` override of the same checkpoint.
-Both lists resolve one shared service recipe without `--experiment-id`; do not mix
-both server recipes in one list or silently fall back. Switching lists requires
-operator-controlled service restart. `use_compile` participates in backend identity.
-Compiled variants use `_compile` suffixes under the existing study root; existing
-eager records are preserved. Configuration checks cover the historical variants, service
-selection, identity, poses and source windows. The model service was subsequently restarted for hardware-free HELLO and inference validation.
+PAINT and AutoHorizon now support `use_compile: true` through cached compiled
+prefix and native velocity-prediction regions; sampling control remains in Python. AutoHorizon returns the third-step action attention tensor from
+model forward, then applies the unchanged selector outside compilation. It does
+not attach a mutable Python hook to the compiled network.
+
+Use `manimux/configs/lists/lingbot-vla2-latest300ep-step30000-compiled-samplers.yaml`
+for the five tasks, each with PAINT and serial-scheduled adaptive AutoHorizon.
+The same list selects a single compiled model recipe for policy, camera and runtime;
+no experiment ID is needed. The new `paint32_compiled_sampler` and
+`autohorizon_serial_compile` recording variants preserve previous results.
+The old `-autohorizon-eager.yaml` list remains available for historical reproduction.
+`use_compile` remains part of backend identity. Restart services only after the
+operator normally ends the current experiment. Warm up each selected sampler;
+a successful ordinary warmup does not establish that PAINT/attention graphs are ready.
+
+The dated offline report is
+`data/analysis/lingbot-paint-autohorizon-compile-20261018/`; it records actual-weight
+latency, graph counters and BF16 output differences. These are model-side probes,
+not a physical task-success or bitwise-equivalence guarantee.
 
 
 ### Compile handshake and cold-start verification

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -182,10 +183,12 @@ def _camera_panel_html(
       position: static; width: auto; height: auto; margin: 8px 0; padding: 0;
       overflow: visible;
     }
-    .manimux-camera-panel, .manimux-camera-label,
+    .manimux-camera-panel, .manimux-camera-label { display: none; }
     div:has(> .manimux-camera-anchor) + div,
     div:has(> .manimux-camera-anchor) + div + div,
-    div:has(> .manimux-camera-anchor) + div + div + div { display: none; }
+    div:has(> .manimux-camera-anchor) + div + div + div {
+      position: static; width: 100%; height: auto; margin: 6px 0; aspect-ratio: 16 / 9;
+    }
   }
 </style>
 <div class="manimux-left-overlay-root"></div>
@@ -235,7 +238,7 @@ def _camera_panel_html(
             rules.append(f"{selector} {{{geometry}}}")
         if "top" not in slots:
             rules.append(".manimux-camera-label-left,.manimux-camera-label-right {top:10px;}")
-        style += "<style>" + "".join(rules) + "</style>"
+        style += "<style>@media (min-width: 901px) {" + "".join(rules) + "}</style>"
     return style + "".join(
         f'<span class="manimux-camera-label manimux-camera-label-{slot}" '
         f'title="{html.escape(name)}"><strong>{html.escape(name)}</strong></span>'
@@ -282,6 +285,9 @@ class CameraPanel:
         ]
         self._views: list[tuple[str, str] | None] = list(self._configured)
         self._received: set[int] = set()
+        self._frame_times: dict[int, float] = {}
+        self._frame_keys: dict[int, object] = {}
+        self._frozen = False
         self._sources: dict[int, str] = {}
         self._placeholder = np.zeros((90, 160, 3), dtype=np.uint8)
         self.display_container = gui.add_folder("")
@@ -318,8 +324,32 @@ class CameraPanel:
     def _clear_image(self, index: int) -> None:
         self.images[index].image = self._placeholder
         self._received.discard(index)
+        self._frame_times.pop(index, None)
+        self._frame_keys.pop(index, None)
         if self._slots and self._slots[0] == "top" and index == 0:
             self._on_main_image(None)
+
+    def freeze_images(self) -> None:
+        """Keep the last task image as evidence, never label it as live."""
+        self._frozen = True
+        self._render()
+
+    def refresh_freshness(self) -> None:
+        self._render()
+
+    def _image_status(self, index: int) -> tuple[str, str]:
+        if index not in self._received:
+            return "Waiting", "waiting"
+        if self._frozen:
+            return "Frozen · task ended", "muted"
+        age = max(0.0, time.monotonic() - self._frame_times.get(index, 0.0))
+        if age > 1.0:
+            return f"Stale · {age:.0f}s since new frame", "waiting"
+        return "Live", "live"
+
+    @property
+    def main_status(self) -> str:
+        return self._image_status(0)[0]
 
     def clear_images(self) -> None:
         for index in range(len(self.images)):
@@ -390,7 +420,8 @@ class CameraPanel:
             self._clear_image(index)
         self._render()
 
-    def update_images(self, payloads: Mapping[str, str]) -> None:
+    def update_images(self, payloads: Mapping[str, str],
+                      metadata: Mapping[str, dict] | None = None) -> None:
         # Normal state heartbeats omit images between camera updates.
         if not payloads:
             return
@@ -426,6 +457,12 @@ class CameraPanel:
             )
             self.images[index].image = image
             self._received.add(index)
+            self._frozen = False
+            info = (metadata or {}).get(selected, {})
+            key = (info.get("sequence"), info.get("timestamp_ns"))
+            if key == (None, None) or key != self._frame_keys.get(index):
+                self._frame_times[index] = time.monotonic()
+                self._frame_keys[index] = key
             if self._slots and self._slots[0] == "top" and index == 0:
                 self._on_main_image(image)
         self._render()
@@ -433,7 +470,8 @@ class CameraPanel:
     def _render(self) -> None:
         labels = {
             self._slots[index]: (
-                self._configured[index][0] if self._slots[index] != "top" else view[0],
+                (self._configured[index][0] if self._slots[index] != "top" else view[0])
+                + " · " + self._image_status(index)[0],
                 self._sources.get(index, view[1]),
             )
             for index, view in enumerate(self._views[: len(self._slots)])
@@ -459,11 +497,10 @@ class CameraPanel:
                 continue
             name, source = view
             source = self._sources.get(index, source)
-            status = "Live" if index in self._received else "Waiting for image"
+            status, kind = self._image_status(index)
             rows.append(
                 _camera_status_row(
-                    name, source, "Live" if index in self._received else "Waiting",
-                    "live" if index in self._received else "waiting", status,
+                    name, source, status, kind, status,
                 )
             )
             if len(self._slots) <= index < len(self.images):

@@ -1402,7 +1402,10 @@ restores the new task's default. Nondefault poses record under <code>&lt;variant
 with separate progress and a frozen initial target. Selecting the default again returns to the original
 variant's records. No extra experiment YAML is required.</p>
 <p>YAM startup motion requires <code>robot.options.execute: true</code> and
-<code>move_to_start_on_connect: true</code>; it retains sequential arm motion.
+<code>move_to_start_on_connect: true</code>. After all arms connect and pass health checks,
+both arms move to their selected initial targets concurrently over the configured duration,
+using the same peer-cancellation mechanism as Home. Device connection and gripper calibration
+may still happen sequentially before this motion begins.
 Do not copy these driver options to a different embodiment without a supported motion implementation.
 Return Home remains a robot-owned operation, separate from the experiment's starting pose.
 Records distinguish the configured initial target, measured state and actual Home target.</p>
@@ -1454,7 +1457,7 @@ envs/yam/.venv/bin/python -m manimux run \
 <p>The generic XPolicyLab launcher is <code>python -m manimux.servers.policy --config-list …</code>, using that model's installed Python environment. <code>--check</code> prints the resolved service recipe without loading weights. Camera <code>--check</code> resolves devices without opening them. Pi05's dedicated launcher additionally validates its artifact paths.</p>
 <p>For this station's latest multi-task OpenWAM checkpoint, use <code>manimux/configs/lists/openwam-latest300ep-step60000.yaml</code> with the camera, model and runtime entry points above; use <code>envs/openwam/.venv/bin/python</code> for the model service. This local config list binds <code>yam_latest_300ep_30k_micro4_v3/checkpoint_step_60000.safetensors</code> and its matching normalization statistics on the external drive. The transfer record identifies six-task training weights and 60000 microsteps; the active study contains the five shared evaluation tasks, with Serial, Async and RTC at 20/32 source steps. DiT cache is enabled for <code>default</code> and <code>rtc</code>, with compilation disabled. Moving-cube variants use Raised ready. Results are stored under <code>data/experiments/openwam-latest300ep-step60000/</code>; old bottle-checkpoint records are not imported. Configuration and artifact validation do not establish real-model forward or robot-task success.</p>
 <p><strong>LingBot-VLA2 RTC withdrawn (2026-10-18).</strong> RTC is removed from the model capability list and all LingBot experiment entries. Measured conditioned sampling averaged 961.32 ms, exceeding the 0.60 s remaining-action budget at H=50, K=32 and 30 Hz. Historical RTC-labelled records include unconditioned fallbacks and must not be treated as a validated RTC baseline. Normal inference, PAINT and AutoHorizon retain their separate paths. Running processes must be restarted normally to load this removal; editing files does not update an already loaded model.</p>
-<p>This station's multi-task LingBot-VLA2 checkpoint uses <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml</code>, with <code>envs/lingbot-vla2/.venv/bin/python</code> for the model service. It binds <code>yam_latest300_micro8_v5_step30000</code> on the external drive, checkpoint-matched normalization and the existing relative-joint deployment projection. The main list contains five tasks × four fixed-window methods with <code>use_compile: true</code> and 32/50 windows. Serial is the initial selection; no <code>--experiment-id</code> is needed. AutoHorizon currently requires eager attention capture and uses <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000-autohorizon-eager.yaml</code> (five tasks); start its model service and runtime with that same list after stopping the previous run normally. Compiled variants have an <code>_compile</code> recording suffix, and <code>use_compile</code> is part of the model handshake identity. Configuration and live HELLO checks passed, followed by finite real-checkpoint CUDA ordinary/PAINT outputs on synthetic observations; this is not a hardware trial or a matched speedup benchmark. Compilation happens lazily during warmup. The first ordinary call in the probe took 86.52 seconds, so <code>policy.options.warmup_request_timeout_s: 300</code> permits display-only warmup to finish while the ordinary request timeout remains 20 seconds. A started server alone does not establish a warmed sampler. Moving-cube starts at Raised ready, other tasks at Home. Records use <code>data/experiments/lingbot-vla2-latest300ep-step30000/</code>, separately from the bottle-trained checkpoint.</p>
+<p>This station's multi-task LingBot-VLA2 checkpoint uses <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml</code>, with <code>envs/lingbot-vla2/.venv/bin/python</code> for the model service. It binds <code>yam_latest300_micro8_v5_step30000</code> on the external drive, checkpoint-matched normalization and the existing relative-joint deployment projection. The main list contains five tasks × four fixed-window methods with <code>use_compile: true</code> and 32/50 windows. Serial is the initial selection; no <code>--experiment-id</code> is needed. Compiled PAINT and AutoHorizon are selected by <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000-compiled-samplers.yaml</code> (five tasks, separate recording variants). AutoHorizon receives attention as an explicit tensor from the third model evaluation; selection runs outside compilation. The old eager list is retained for historical reproduction. Start the model service and runtime with the same selected list after stopping the previous run normally. Warm each algorithm separately and check its measured latency and numerical diagnostics; a compile flag alone is not a performance guarantee. Compiled variants have an <code>_compile</code> recording suffix, and <code>use_compile</code> is part of the model handshake identity. Configuration and live HELLO checks passed, followed by finite real-checkpoint CUDA ordinary/PAINT outputs on synthetic observations; this is not a hardware trial or a matched speedup benchmark. Compilation happens lazily during warmup. The first ordinary call in the probe took 86.52 seconds, so <code>policy.options.warmup_request_timeout_s: 300</code> permits display-only warmup to finish while the ordinary request timeout remains 20 seconds. A started server alone does not establish a warmed sampler. Moving-cube starts at Raised ready, other tasks at Home. Records use <code>data/experiments/lingbot-vla2-latest300ep-step30000/</code>, separately from the bottle-trained checkpoint.</p>
 <p><strong>PAINT waiting behavior:</strong> PAINT can keep running when inference exceeds the old chunk's remaining duration. It conditions the next prediction on the available suffix followed by a repeated terminal target, including the gripper. The runtime holds the last command until a valid result arrives, then applies the usual latency trimming. It does not reduce the configured execution steps or switch algorithms. Recorded metadata includes forecast and elapsed terminal-hold policy steps. Real request failures retain the common recovery path; a delay consuming the entire new prediction horizon still fails explicitly. The terminal-hold extension is covered by offline tests, not a new hardware validation.</p>
 <p>OpenWAM cached Serial/Async uses the original compiled DiT cache recipe. The RTC-cache config list uses eager execution and the declared cache modes. Specialized sampling and compilation support remain model-specific; retain these flags and measured latency when comparing methods.</p>
 <h3 id="single-config-trial">Try one existing configuration</h3>
@@ -1612,6 +1615,13 @@ any failure reported by the new service is displayed independently.
 The operator panel uses native floating-panel resize handles. Drag a side edge to change
 its width; newer Viser versions dock it on the right automatically.</p>
 <h3 id="operate-each-trial">Operate each trial</h3>
+<p><strong>Run controls</strong> stay in the same place; diagnostic <strong>Run details</strong>
+start collapsed. Switching method or initial pose keeps your selected layout for the same
+task when it remains available. Each task remembers its own selection during this GUI session.</p>
+<p>Start/Pause show the requested state until the runtime confirms it. Prepare and Home
+show their current phase and elapsed time. A progress heartbeat means the reporter is alive,
+not that the robot has reached its target. If the heartbeat is lost, the UI marks hardware
+state unknown and keeps another Prepare blocked until the runtime reports completion or failure.</p>
 <ol>
 <li>Use <strong>Prepare Run</strong> for a free trial. For a scored trial, reset the scene, select <strong>Layout</strong>, then click <strong>Prepare Experiment</strong>; its Top reference is attached automatically.</li>
 <li>Hover over the Top layout reference and click its expand icon to fill the browser window. The image keeps its aspect ratio; press Escape or click the close button to return.</li>
@@ -1627,7 +1637,13 @@ The task supplies every single-choice label and score explicitly. Choose one out
 <p>For completion time, annotate seconds from formal Start to the success criterion, only for
 successful attempts. Do not substitute the full recording duration. Free rollouts have no
 scoring step. Optional operator notes and failure details are entered after Finish.</p>
-<p>If a finished experiment was skipped or the GUI was restarted, <strong>New rollout</strong>
+<p>After Finish, camera previews remain visible and are marked <strong>Frozen</strong>.
+During a rollout, <strong>Stale</strong> means no new preview frame has arrived recently.
+Use <strong>Review camera recordings</strong> to download an available recorded camera video.
+Saving shows a persistent receipt. <strong>Edit last evaluation</strong> reopens the saved
+rubric and result; saving again preserves the previous label in revision history.
+Skipping an edit leaves the saved result unchanged.</p>
+<p>If a finished experiment was skipped or the GUI was restarted, <strong>Trial setup</strong>
 shows <strong>Unscored experiment → Score selected experiment</strong> while the runtime is idle.
 It lists started, finalized, unlabelled experiments for the same task and method output directory.
 Select the session/rollout and score it in the existing form using its saved rubric;
@@ -2296,6 +2312,7 @@ The failed attempt is excluded from successful tick data.</p>
 </tbody></table></details>
 <details><summary>evaluation/human-label.json — optional human assessment</summary><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>label_schema</code></td><td>Human-label format version, human-label-v2 for new labels.</td></tr>
+<tr><td><code>revision / history</code></td><td>Revision starts at 1. Editing a saved label increments it and preserves earlier labels in history in the same atomic write.</td></tr>
 <tr><td><code>task_result</code></td><td>Human task outcome: success, failure or invalid. This is distinct from result.json.run_completed.</td></tr>
 <tr><td><code>stage_id</code></td><td>Selected rubric stage for stages scoring.</td></tr>
 <tr><td><code>completed_count</code></td><td>Human-reported count for count-based scoring; absent for stages/binary scoring.</td></tr>

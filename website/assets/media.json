@@ -1,5 +1,57 @@
 {
-  "hero": {
+  "wall": {
+    "tiles": 36,
+    "playback": "Single precomposed video; repeated synthetic recording."
+  },
+  "film": {
+    "source": "recordings/agent-demo-v6-hook/manimux-product-demo-hook-1440p30.mp4",
+    "duration_seconds": 92,
+    "width": 2560,
+    "height": 1440,
+    "fps": 30,
+    "evidence": "Product demonstration with synthetic RoboGUI, repeated wall footage and illustrative evaluation.",
+    "source_intervals_seconds": [
+      [
+        74,
+        85
+      ],
+      [
+        0,
+        74
+      ],
+      [
+        85,
+        92
+      ]
+    ]
+  },
+  "files": {
+    "execution.mp4": {
+      "bytes": 445293,
+      "sha256": "020ae963ab6bca76068744fce883badef55d1506072c8f947b4d3d0cd8e5fd09"
+    },
+    "hero-poster.jpg": {
+      "bytes": 77146,
+      "sha256": "487e38ac6d6aeee56c73fc2713012d416c8e68d9a286bc6f34b961b76d1d4b40"
+    },
+    "product-poster.jpg": {
+      "bytes": 102261,
+      "sha256": "92cb0ed1cadbd4426a7a020788c30501d74b014c0a065499aedb911162c7e316"
+    },
+    "execution-poster.jpg": {
+      "bytes": 66154,
+      "sha256": "9de1ca823478bdb96745af59b2c348461e3d8265064bb6a02c9a3a9bc9ffdd94"
+    },
+    "product-demo-hook.mp4": {
+      "bytes": 9645983,
+      "sha256": "e7c33be84565e7925e02b89b27c70ca771c52b464f472ad0e012d6edbd15c343"
+    },
+    "hero-robogui.mp4": {
+      "bytes": 1220661,
+      "sha256": "85a119a245f68bf4e548c6262163aa3f20141a2a36be53dc0efb50defab96ef6"
+    }
+  },
+  "archive": {
     "source": "assets/manimux_2026-09-05_23-17-35-00.00.03.144-00.00.34.914-seg1-00.00.02.596-00.00.34.966.mp4",
     "trim_start_seconds": 3,
     "duration_seconds": 12,
@@ -9,47 +61,14 @@
     "speed": 1,
     "evidence": "Repository labels the source a real-robot demo; full model/checkpoint/inference provenance is unavailable."
   },
-  "wall": {
-    "tiles": 16,
-    "moving_tiles": 1,
-    "stills": "Repeated archive frames at excerpt offsets 2, 5, 8, 10 seconds. Not distinct runs."
-  },
-  "film": {
-    "source": "recordings/agent-demo-v5-1440p/manimux-product-demo-en-1440p30.mp4",
-    "duration_seconds": 92,
-    "width": 2560,
-    "height": 1440,
+  "hero": {
+    "source": ".agents/skills/manimux-demo-video/assets/inputs/robogui-live.mp4",
+    "duration_seconds": 23.2,
+    "width": 1280,
+    "height": 720,
     "fps": 30,
-    "evidence": "Product demonstration with synthetic RoboGUI, repeated wall footage and illustrative evaluation."
-  },
-  "files": {
-    "execution.mp4": {
-      "bytes": 445293,
-      "sha256": "020ae963ab6bca76068744fce883badef55d1506072c8f947b4d3d0cd8e5fd09"
-    },
-    "wall-3.jpg": {
-      "bytes": 67561,
-      "sha256": "bf9f4a4e2c382feb1d19a2f503448cc8bfcc320b1dfa542b0c20114803901cd7"
-    },
-    "product-poster.jpg": {
-      "bytes": 73712,
-      "sha256": "44afcc994423a67006e6b8686e05381e8d4b9688a20d175e19f1f5fbfe24c011"
-    },
-    "execution-poster.jpg": {
-      "bytes": 66154,
-      "sha256": "9de1ca823478bdb96745af59b2c348461e3d8265064bb6a02c9a3a9bc9ffdd94"
-    },
-    "wall-1.jpg": {
-      "bytes": 68118,
-      "sha256": "590d13a09ee9c6514f04a6b91f33208d4bf86926013325c4f555aadc4223848f"
-    },
-    "product-demo.mp4": {
-      "bytes": 10061300,
-      "sha256": "a50f7c3208aa5b7b505006dff364cbddc82577a78772357c831addd2c563231e"
-    },
-    "wall-2.jpg": {
-      "bytes": 66152,
-      "sha256": "a24d79fc10d6db29035a8433e6a839fa1146333490e4bd7c383baf6cc001dadb"
-    }
+    "seam_dissolve_seconds": 0.8,
+    "speed": 1,
+    "evidence": "Synthetic RoboGUI preview orbit. Not physical robot execution or model inference."
   }
 }

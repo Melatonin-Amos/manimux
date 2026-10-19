@@ -28,6 +28,7 @@ YAM_FINETUNED_VARIANTS = HARDWARE_VERIFIED_VARIANTS | {
     "pi05_yam_assemble_screwdriver_step_15000",
     "pi05_yam_put_bottles_joint_step_30000",
     "pi05_yam_put_bottles_joint_ee_step_30000",
+    "pi05_yam_abc_bottles_realsim_step_20000",
 }
 GPU_FORWARD_VERIFIED_VARIANTS = HARDWARE_VERIFIED_VARIANTS | {
     "pi05_yam_put_bottles_joint_ee_step_30000_eef",
@@ -59,8 +60,9 @@ def _validate_paths(config: dict[str, Any]) -> tuple[Path, Path]:
         )
     model_root = Path(str(config["model_path"])).expanduser().resolve()
     stats_dir = Path(str(config["norm_stats_path"])).expanduser().resolve()
-    if not (model_root / "params").is_dir():
-        raise FileNotFoundError(f"Pi05 params not found under {model_root}")
+    # OpenPI loads a PyTorch checkpoint when the step directory holds model.safetensors.
+    if not (model_root / "params").is_dir() and not (model_root / "model.safetensors").is_file():
+        raise FileNotFoundError(f"Pi05 params or model.safetensors not found under {model_root}")
     if not (stats_dir / "norm_stats.json").is_file():
         raise FileNotFoundError(f"YAM norm_stats.json not found under {stats_dir}")
     return model_root, stats_dir

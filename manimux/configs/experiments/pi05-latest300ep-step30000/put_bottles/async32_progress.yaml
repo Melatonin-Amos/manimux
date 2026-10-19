@@ -12,4 +12,4 @@ inference:
   request_trigger: progress
 experiment:
   task: put_bottles
-  variant: async32_progress
+  variant: async32_progress_four_bottles_v1

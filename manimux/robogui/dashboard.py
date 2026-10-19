@@ -9,6 +9,8 @@ import threading
 import time
 import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -108,6 +110,17 @@ class PolicyRoboGUI:
         _configure_gui(self.server.gui)
         self.server.gui.set_panel_label("MANIMUX · ROBOGUI")
         self.lock = threading.RLock()
+        self._jobs = ThreadPoolExecutor(max_workers=2, thread_name_prefix="robogui-work")
+        self._history_epoch = 0
+        self._history_loading = False
+        self._layout_by_task: dict[str, str] = {}
+        self._control_revision = ""
+        self._control_status: dict[str, Any] | None = None
+        self._home_request_id = ""
+        self._finish_request_id = ""
+        self._last_operation_time = 0.0
+        self._last_evaluated_episode: Path | None = None
+        self._saving_evaluation = False
         self.running = True
         self.paused = True
         self.rollout_started = False
@@ -188,9 +201,9 @@ class PolicyRoboGUI:
         self.camera_view.add_diagnostics(expand_by_default=True)
 
         def display_message(message: dict[str, Any]) -> None:
-            # Batch link poses and overlays so clients do not see a partial update.
-            with self.server.atomic():
-                self.on_message(message)
+            # Do not hold a global Viser atomic window across image/FK work:
+            # it also delays independent button acknowledgements.
+            self.on_message(message)
 
         self.receiver = RoboGUIReceiver(bridge_endpoint, display_message, render_hz=render_hz)
         self.control_server = ControlServer(control_endpoint, self.control_state)
@@ -280,9 +293,13 @@ class PolicyRoboGUI:
         self.status = self.server.gui.add_markdown("🟠 **Waiting for policy executor**")
         self.errors = OperatorErrors(self.server.gui)
         self._build_shutdown_recovery_gui()
+        self.receipt = self.server.gui.add_markdown("", visible=False)
+        self.last_evaluation_btn = self.server.gui.add_button(
+            "Edit last evaluation", visible=False, disabled=True
+        )
         self.instruction = self.server.gui.add_markdown(_instruction_markdown(""))
         self.new_rollout_folder = self.server.gui.add_folder(
-            "① New rollout", expand_by_default=True
+            "Trial setup", expand_by_default=True
         )
         with self.new_rollout_folder:
             self.rollout_setup_status = self.server.gui.add_markdown(
@@ -303,6 +320,10 @@ class PolicyRoboGUI:
             )
             self.layout = self.server.gui.add_dropdown("Layout", ("—",), disabled=True)
             self.layout_progress = self.server.gui.add_markdown("")
+            self.history_status = self.server.gui.add_markdown("", visible=False)
+            self.retry_history_btn = self.server.gui.add_button(
+                "Retry reading experiment history", visible=False,
+            )
             self.prepare_normal_btn = self.server.gui.add_button(
                 "Prepare Run", color="blue", disabled=True
             )
@@ -316,8 +337,12 @@ class PolicyRoboGUI:
                 "Score selected experiment", disabled=True, visible=False
             )
         self.policy_control_folder = self.server.gui.add_folder(
-            "② Policy control", expand_by_default=True
+            "Run controls", expand_by_default=True
         )
+        self.policy_control_folder.order = self.new_rollout_folder.order - 0.5
+        # Keep acknowledgements below the fixed control area.
+        self.receipt.order = self.new_rollout_folder.order - 0.3
+        self.last_evaluation_btn.order = self.new_rollout_folder.order - 0.2
         with self.policy_control_folder:
             self.warmup_btn = self.server.gui.add_button(
                 "Activate Warmup", color="blue", disabled=True, visible=False
@@ -331,7 +356,7 @@ class PolicyRoboGUI:
                 "Finish & Home", color="red", disabled=True
             )
         self._build_recovery_gui()
-        self.run_folder = self.server.gui.add_folder("Run details", expand_by_default=True)
+        self.run_folder = self.server.gui.add_folder("Run details", expand_by_default=False)
         with self.run_folder:
             self.robot_name = self.server.gui.add_text("Robot", self.robot.label, disabled=True)
             self.recorded_layout = self.server.gui.add_text(
@@ -349,7 +374,7 @@ class PolicyRoboGUI:
             self.runtime_name = self.server.gui.add_text("Runtime", "waiting", disabled=True)
             self.episode_path = self.server.gui.add_text("Episode", "waiting", disabled=True)
         self.evaluation_folder = self.server.gui.add_folder(
-            "③ Post-rollout evaluation", expand_by_default=True
+            "Evaluation", expand_by_default=True
         )
         with self.evaluation_folder:
             self.evaluation_status = self.server.gui.add_markdown(
@@ -407,6 +432,14 @@ class PolicyRoboGUI:
             self.skip_evaluation_btn = self.server.gui.add_button(
                 "Skip evaluation", disabled=True
             )
+        self.save_evaluation_btn.order = self.completion_score.order + 0.1
+        self.skip_evaluation_btn.order = self.completion_score.order + 0.2
+        # Keep the active task ahead of secondary diagnostics in every stage.
+        self.evaluation_folder.order = self.run_folder.order - 0.5
+        self.recording_btn = self.server.gui.add_button(
+            "Review camera recordings", visible=False, disabled=True,
+            order=self.evaluation_folder.order + 0.1,
+        )
         self.overlay_folder = self.server.gui.add_folder(
             "Overlay controls", expand_by_default=False
         )
@@ -503,12 +536,20 @@ class PolicyRoboGUI:
             with self.lock:
                 self._open_unscored_experiment()
 
+        @self.retry_history_btn.on_click
+        def _retry_history(_event: Any) -> None:
+            with self.lock:
+                if (self.service_ready and not self.episode_active
+                        and not self.preparing_rollout and not self._history_loading):
+                    self._refresh_repeat_history()
+
         @self.pause_btn.on_click
         def _pause(_event: Any) -> None:
             with self.lock:
                 if self.pause_btn.disabled:
                     return
                 self.paused = True
+                self._control_revision = uuid.uuid4().hex
                 self._set_policy_controls_enabled(True)
                 self.status.content = self._connected_status()
 
@@ -522,6 +563,9 @@ class PolicyRoboGUI:
                     return
                 self.paused = True
                 self.home_requested = True
+                self._home_request_id = uuid.uuid4().hex
+                self._last_operation_time = time.time()
+                self._set_policy_controls_enabled(True)
                 self.status.content = "🟡 **Returning home · PAUSED**"
 
         @self.finish_btn.on_click
@@ -568,8 +612,15 @@ class PolicyRoboGUI:
 
         @self.save_evaluation_btn.on_click
         def _save_evaluation(_event: Any) -> None:
-            with self.lock:
-                self._save_manual_evaluation()
+            self._save_manual_evaluation()
+
+        @self.last_evaluation_btn.on_click
+        def _edit_evaluation(_event: Any) -> None:
+            self._open_last_evaluation()
+
+        @self.recording_btn.on_click
+        def _recordings(event: Any) -> None:
+            self._show_recordings(event)
 
         @self.skip_evaluation_btn.on_click
         def _skip_evaluation(_event: Any) -> None:
@@ -749,6 +800,8 @@ class PolicyRoboGUI:
                 return
             self.paused = True
             self.finish_requested = True
+            self._finish_request_id = uuid.uuid4().hex
+            self._last_operation_time = time.time()
             self._clear_warmup_preview()
             # Finish closes the episode's hardware ownership. Idle recovery is
             # a separate session, not a substitute for Home before this close.
@@ -790,6 +843,7 @@ class PolicyRoboGUI:
                 self._set_layout_controls_enabled(True)
                 return
         self.paused = False
+        self._control_revision = uuid.uuid4().hex
         self.rollout_started = True
         self._clear_warmup_preview()
         self._set_policy_controls_enabled(True)
@@ -800,6 +854,10 @@ class PolicyRoboGUI:
     def _connected_status(self) -> str:
         if self.observe_only:
             return "🔵 **Connected · OBSERVE ONLY**"
+        if self.finish_requested:
+            return "🟠 **Finish requested · waiting for runtime acknowledgement**"
+        if self.home_requested:
+            return "🟠 **Home requested · waiting for runtime completion**"
         phase = self._warmup.get("phase") if self._warmup is not None else None
         if phase == "idle":
             return "🟡 **Prepared · adjust layout, then Activate Warmup**"
@@ -811,10 +869,19 @@ class PolicyRoboGUI:
             return "🟠 **Starting rollout · waiting for warmup inference to finish**"
         if phase == "warming":
             return "🟡 **Warmup running · Start when ready**"
-        return (
-            "🟡 **Connected · PAUSED**"
-            if self.paused else "🟢 **Connected · RUNNING**"
-        )
+        confirmed = getattr(self, "_control_status", None)
+        revision = getattr(self, "_control_revision", "")
+        if confirmed is None and not revision:
+            return "🟡 **Connected · waiting for runtime control status**"
+        if confirmed is None or confirmed.get("revision") != revision:
+            action = "Pause" if self.paused else "Start"
+            return f"🟠 **{action} requested · waiting for runtime acknowledgement**"
+        if confirmed.get("paused"):
+            reason = confirmed.get("reason", "")
+            if reason not in {"robogui_pause", "home", "finish"}:
+                return f"🟠 **Runtime holding · {reason or 'reason unavailable'}**"
+            return "🟡 **Runtime confirmed · PAUSED**"
+        return "🟢 **Runtime confirmed · RUNNING**"
 
     def _update_warmup(self, metadata: dict[str, Any] | None) -> None:
         """Keep controls concise; chunks and latency belong to the left panel."""
@@ -1208,10 +1275,13 @@ class PolicyRoboGUI:
         """Expose only the controls that are actionable in the current stage."""
 
         self._gui_stage = stage
+        if hasattr(self, "recording_btn"):
+            self.recording_btn.visible = self.episode_finalized
+            self.recording_btn.disabled = not self.episode_finalized
         self.new_rollout_folder.visible = stage in {"waiting", "setup", "preparing"} or (
             stage == "control" and not self.rollout_started
         )
-        self.policy_control_folder.visible = stage == "control"
+        self.policy_control_folder.visible = True
         self.evaluation_folder.visible = stage == "evaluation"
         self.overlay_folder.visible = stage == "control"
         self.run_folder.visible = stage not in {"waiting"}
@@ -1323,7 +1393,10 @@ class PolicyRoboGUI:
         )
 
     def _set_setup_controls_enabled(self, enabled: bool) -> None:
-        allowed = (enabled and self.evaluation_complete and not self._recovery_pending()
+        allowed = (enabled and self.evaluation_complete
+                   and not getattr(self, "_history_loading", False)
+                   and not getattr(self, "_history_error", False)
+                   and not self._recovery_pending()
                    and not self._pending_experiment_id
                    and not getattr(self, "_pending_initial_pose_id", ""))
         can_prepare = allowed and not self.preparing_rollout and not self.episode_active
@@ -1334,6 +1407,8 @@ class PolicyRoboGUI:
         self.prepare_experiment_btn.disabled = not can_prepare or not self.experiments_available
         self.unscored_experiment.disabled = not can_prepare or not self._unscored_experiments
         self.score_previous_btn.disabled = self.unscored_experiment.disabled
+        if hasattr(self, "last_evaluation_btn"):
+            self.last_evaluation_btn.disabled = not can_prepare
         self._set_layout_controls_enabled(allowed or (
             self.episode_active and not self.rollout_started and not self.finish_btn.disabled
         ))
@@ -1346,8 +1421,14 @@ class PolicyRoboGUI:
             if enabled and changed:
                 self._refresh_layout()
 
-    def _configure_research(self, metadata: dict[str, Any], *, reset_selection: bool = True) -> None:
+    def _configure_research(
+        self, metadata: dict[str, Any], *, reset_selection: bool = False,
+    ) -> None:
         """Task and study settings come from YAML, never duplicate UI inputs."""
+        remembered = getattr(self, "_layout_by_task", {})
+        if self.task_command and self.layout.value != "—":
+            remembered[self.task_command] = self.layout.value
+        self._layout_by_task = remembered
         self.experiment_template = metadata.get("experiment_template")
         self._research_defaults = dict(metadata.get("research_defaults", {}))
         task = str(metadata.get("task", ""))
@@ -1359,7 +1440,7 @@ class PolicyRoboGUI:
         ids = template.get("layout_ids") or (
             library.slots(self._reference_task) if library and self._reference_task else ()
         )
-        selected_layout = self.layout.value
+        selected_layout = remembered.get(task, "—")
         self.layout.options = tuple(ids) or ("—",)
         self.layout.value = (
             selected_layout if not reset_selection and selected_layout in self.layout.options
@@ -1433,27 +1514,59 @@ class PolicyRoboGUI:
         )
 
     def _refresh_repeat_history(self) -> None:
-        self._repeat_history = completed_repeats(
-            self._study_root, self.task_command, self._research_defaults,
-            history_sessions=getattr(self, "_history_sessions", ()),
-        )
-        self._unscored_experiments = unscored_experiments(
-            self._study_root, self.task_command,
-            history_sessions=getattr(self, "_history_sessions", ()))
-        selected = self.unscored_experiment.value
-        self.unscored_experiment.options = tuple(self._unscored_experiments) or ("—",)
-        self.unscored_experiment.value = (
-            selected if selected in self._unscored_experiments else self.unscored_experiment.options[0]
-        )
-        self.unscored_experiment.visible = bool(self._unscored_experiments)
-        self.score_previous_btn.visible = bool(self._unscored_experiments)
+        """Scan recordings outside the control lock; discard obsolete selections."""
+        root, task = self._study_root, self.task_command
+        defaults = dict(self._research_defaults)
+        sessions = getattr(self, "_history_sessions", ())
+        self._history_epoch = getattr(self, "_history_epoch", 0) + 1
+        epoch = self._history_epoch
+        self._history_loading = True
+        self._history_error = False
+        self.history_status.content = "Reading experiment history…"
+        self.history_status.visible = True
+        self.retry_history_btn.visible = False
+
+        def read_history():
+            return (
+                completed_repeats(root, task, defaults, history_sessions=sessions),
+                unscored_experiments(root, task, history_sessions=sessions),
+            )
+
+        def apply(future):
+            with self.lock:
+                if epoch != self._history_epoch or not self.running:
+                    return
+                self._history_loading = False
+                try:
+                    self._repeat_history, self._unscored_experiments = future.result()
+                except (OSError, ValueError, TypeError) as exc:
+                    self._history_error = True
+                    self.history_status.content = "History could not be read. Retry before Prepare."
+                    self.retry_history_btn.visible = True
+                    self._report_error("Read experiment history", exc)
+                    self._update_prepare_enabled()
+                    return
+                self.history_status.visible = False
+                self._resolve_error("Read experiment history")
+                selected = self.unscored_experiment.value
+                self.unscored_experiment.options = tuple(self._unscored_experiments) or ("—",)
+                self.unscored_experiment.value = (
+                    selected if selected in self._unscored_experiments
+                    else self.unscored_experiment.options[0]
+                )
+                self.unscored_experiment.visible = bool(self._unscored_experiments)
+                self.score_previous_btn.visible = bool(self._unscored_experiments)
+                self._refresh_layout()
+                self._update_prepare_enabled()
+
+        self._update_prepare_enabled()
+        self._jobs.submit(read_history).add_done_callback(apply)
 
     def _open_unscored_experiment(self) -> None:
         if (not self.service_ready or self.episode_active or self.preparing_rollout
                 or not self.evaluation_complete or self._recovery_pending()):
             return
         selected = self.unscored_experiment.value
-        self._refresh_repeat_history()
         episode = self._unscored_experiments.get(selected)
         if episode is None:
             self.rollout_setup_status.content = "This experiment is no longer awaiting evaluation."
@@ -1491,7 +1604,7 @@ class PolicyRoboGUI:
                 if freeze:
                     selection = self.top_overlay.freeze_selection()
                 else:
-                    selection = self.top_overlay.layouts.snapshot(self._reference_task, slot)[1]
+                    selection = self.top_overlay.selection() or selection
             except (OSError, ValueError):
                 if template.get("require_reference"):
                     raise
@@ -1530,7 +1643,9 @@ class PolicyRoboGUI:
             self.rollout_setup_status.content = "Trial mode: use Prepare Run."
             return
         with self.lock:
-            if (self._recovery_pending() or not self.service_ready or not self.evaluation_complete
+            if (getattr(self, "_history_loading", False) or getattr(self, "_history_error", False)
+                    or self._recovery_pending() or not self.service_ready
+                    or not self.evaluation_complete
                     or self.preparing_rollout or self.episode_active or self._pending_experiment_id
                     or getattr(self, "_pending_initial_pose_id", "")):
                 return
@@ -1557,6 +1672,7 @@ class PolicyRoboGUI:
             self._start_identity = None
             self.new_rollout_requested = True
             self.preparing_rollout = True
+            self._last_operation_time = time.time()
             self._refresh_layout_visibility()
             self.service_ready = False
             self.paused = True
@@ -1569,7 +1685,7 @@ class PolicyRoboGUI:
             self.status.content = f"🟠 **Preparing a new {kind} rollout**"
 
     def _set_policy_controls_enabled(self, enabled: bool) -> None:
-        allowed = enabled and not self.observe_only
+        allowed = enabled and not self.observe_only and not self.home_requested
         phase = self._warmup.get("phase") if self._warmup is not None else None
         formal_started = self.rollout_started and phase in {None, "complete"}
         self.start_btn.label = "Resume rollout" if formal_started else "Start rollout"
@@ -1623,7 +1739,14 @@ class PolicyRoboGUI:
         self.last_rollout_error = ""
         self.last_rollout_failure = {}
         # A task belongs to one runtime service; reconnects must not retain it.
+        # Session identity changes on method/pose switches too. Layout memory
+        # is task-scoped, independently of hardware and recording ownership.
+        if self.task_command and self.layout.value != "—":
+            self._layout_by_task[self.task_command] = self.layout.value
         self.task_command = ""
+        self._control_status = None
+        self._control_revision = ""
+        self._home_request_id = self._finish_request_id = ""
         self.paused = True
         self.rollout_started = False
         self.home_requested = False
@@ -1683,6 +1806,20 @@ class PolicyRoboGUI:
             self.status.content = f"🔴 **Runtime heartbeat lost during {last_phase} · hardware state unknown**"
 
     def _check_runtime_timeout(self, now: float) -> None:
+        if hasattr(self.camera_view, "refresh_freshness"):
+            self.camera_view.refresh_freshness()
+            if self.top_overlay is not None:
+                self.top_overlay.set_live_status(self.camera_view.main_status)
+        if (self.preparing_rollout or self.home_requested
+                or getattr(self, "finish_requested", False)):
+            elapsed = now - getattr(self, "_last_operation_time", now)
+            if elapsed > 3:
+                self.status.content = (
+                    "🔴 **Operation heartbeat lost · hardware state unknown** · "
+                    "Keep the workspace clear; inspect the owning runtime. "
+                    "Another Prepare is blocked until it reports completion or failure."
+                )
+            return
         # Cleanup has its own heartbeat; it does not fabricate fresh robot states.
         if self.shutdown_phase:
             if now - self.last_shutdown_time > 3:
@@ -1694,7 +1831,12 @@ class PolicyRoboGUI:
             self._mark_runtime_unavailable()
 
     def _save_manual_evaluation(self) -> None:
-        if self.evaluation_complete or not self.experiment_mode:
+        with getattr(self, "lock", nullcontext()):
+            self._submit_manual_evaluation()
+
+    def _submit_manual_evaluation(self) -> None:
+        if (self.evaluation_complete or not self.experiment_mode
+                or getattr(self, "_saving_evaluation", False)):
             return
         if not self.episode_finalized or self.current_episode_dir is None:
             self.evaluation_status.content = "🔴 Episode is not finalized."
@@ -1724,8 +1866,7 @@ class PolicyRoboGUI:
                 if result is None:
                     self.evaluation_status.content = "🔴 Select Completed or Not completed."
                     return
-            target = write_manual_evaluation(
-                self.current_episode_dir,
+            payload = dict(
                 task_result=cast(Any, result),
                 completed_count=completed_count,
                 stage_id=stage_id,
@@ -1744,23 +1885,148 @@ class PolicyRoboGUI:
             self._report_error("Save evaluation", exc)
             self.evaluation_status.content = f"🔴 Evaluation was not saved: {exc}"
             return
-        self._resolve_error("Save evaluation")
-        self.evaluation_status.content = f"🟢 Saved `{target}`"
-        self.evaluation_complete = True
-        self._refresh_repeat_history()
-        self._refresh_layout()
+        episode = self.current_episode_dir
+        selected = self.recorded_layout.value if hasattr(self, "recorded_layout") else episode.name
+        result_label = self.task_result.value if stage_id else result
+        self._saving_evaluation = True
         self._set_evaluation_enabled(False)
-        self._update_prepare_enabled()
-        self._set_stage("setup" if self.service_ready else "complete")
+        self.evaluation_status.content = "🟠 Saving evaluation…"
+
+        def save():
+            return write_manual_evaluation(episode, **payload)
+
+        def saved(future):
+            with getattr(self, "lock", nullcontext()):
+                self._saving_evaluation = False
+                try:
+                    target = future.result()
+                except (OSError, TypeError, ValueError) as exc:
+                    if self.current_episode_dir == episode:
+                        self._report_error("Save evaluation", exc)
+                        self.evaluation_status.content = f"🔴 Evaluation was not saved: {exc}"
+                        self._set_evaluation_enabled(True)
+                    return
+                self._last_evaluated_episode = episode
+                if hasattr(self, "receipt"):
+                    self.receipt.content = f"🟢 **Evaluation saved** · {selected} · {result_label}"
+                    self.receipt.visible = True
+                    self.last_evaluation_btn.visible = True
+                # A late disk result must never finish a different review/service.
+                if self.current_episode_dir != episode:
+                    return
+                self._resolve_error("Save evaluation")
+                self.evaluation_status.content = f"🟢 Saved `{target}`"
+                self.evaluation_complete = True
+                self._refresh_repeat_history()
+                self._refresh_layout()
+                self._set_evaluation_enabled(False)
+                self._update_prepare_enabled()
+                self._set_stage("setup" if self.service_ready else "complete")
+                if self.service_ready:
+                    self._idle_status("")
+
+        if hasattr(self, "_jobs"):
+            self._jobs.submit(save).add_done_callback(saved)
+        else:
+            # Headless clients/tests retain the same synchronous public method.
+            from concurrent.futures import Future
+            future = Future()
+            try:
+                future.set_result(save())
+            except Exception as exc:
+                future.set_exception(exc)
+            saved(future)
+
+    def _open_last_evaluation(self) -> None:
+        with self.lock:
+            if (not self.service_ready or self.episode_active or self.preparing_rollout
+                    or not self.evaluation_complete or self.last_evaluation_btn.disabled):
+                return
+            episode = self._last_evaluated_episode
+            if episode is None:
+                return
+            try:
+                meta = json.loads((episode / "meta.json").read_text())
+                label = json.loads((episode / "evaluation/human-label.json").read_text())
+                self._configure_evaluation(meta.get("evaluation"))
+                self._set_experiment_mode(True)
+                self._reset_evaluation(str(episode))
+                self.episode_finalized = True
+                self._show_recorded_identity(meta)
+                self.invalid_trial.value = label["task_result"] == "invalid"
+                if (self.evaluation_profile["kind"] == "count"
+                        and label.get("completed_count") is not None):
+                    self.completed_count.value = str(label["completed_count"])
+                elif self.evaluation_profile["kind"] == "stages":
+                    self.task_result.value = next(
+                        (key for key, value in self._stage_ids.items()
+                         if value == label.get("stage_id")), "unlabeled")
+                elif not self.invalid_trial.value:
+                    self.task_result.value = ("Completed" if label["task_result"] == "success"
+                                              else "Not completed")
+                self.operator_note.value = label.get("operator_note", "")
+                self.reviewer_id.value = label.get("reviewer_id", "operator")
+                self.completion_time.value = str(
+                    label.get("completion_time", {}).get("seconds", "")
+                )
+                for name, handle in self.failure_tag_inputs.items():
+                    handle.value = name in label.get("failure_tags", [])
+                self._set_evaluation_enabled(True)
+                self._refresh_completion_score()
+                self._update_prepare_enabled()
+                self._set_stage("evaluation")
+                self.status.content = "🟡 **Reviewing saved evaluation · save or skip changes**"
+                self.evaluation_status.content = (
+                    "Editing saved evaluation. Save creates a revision; "
+                    "Skip keeps the previous label."
+                )
+            except (OSError, TypeError, KeyError, ValueError) as exc:
+                self._report_error("Edit evaluation", exc)
+
+    def _show_recordings(self, event: Any) -> None:
+        episode = self.current_episode_dir
+        client = event.client
+        if client is None or episode is None or not self.episode_finalized:
+            return
+        with client.gui.add_modal("Recorded camera videos") as modal:
+            files = sorted((episode / "videos").glob("*.mp4"))
+            client.gui.add_markdown(
+                "Download a camera recording to review the trial, including the task before Home."
+                if files else "No camera videos were recorded for this trial."
+            )
+            for path in files:
+                button = client.gui.add_button(f"Download {path.stem}")
+
+                @button.on_click
+                def download(_event, source=path, handle=button):
+                    handle.disabled = True
+                    handle.label = "Loading recording…"
+
+                    def send():
+                        try:
+                            client.send_file_download(source.name, source.read_bytes())
+                        except OSError as exc:
+                            client.add_notification(title="Recording unavailable", body=str(exc))
+                        finally:
+                            handle.disabled = False
+                            handle.label = f"Download {source.stem}"
+
+                    self._jobs.submit(send)
+            close = client.gui.add_button("Close")
+            close.on_click(lambda _event: modal.close())
 
     def _skip_manual_evaluation(self) -> None:
         with self.lock:
-            if self.episode_active or not self.experiment_mode or self.evaluation_complete:
+            if (self.episode_active or not self.experiment_mode
+                    or self.evaluation_complete
+                    or getattr(self, "_saving_evaluation", False)):
                 return
             self.evaluation_complete = True
             self._refresh_repeat_history()
             self._refresh_layout()
-            self.evaluation_status.content = "⚪ Evaluation skipped; no human label was saved."
+            self.evaluation_status.content = (
+                "⚪ Review closed; any previously saved label is unchanged."
+            )
             self._set_evaluation_enabled(False)
             self._update_prepare_enabled()
             self._set_stage("setup" if self.service_ready else "complete")
@@ -1779,6 +2045,9 @@ class PolicyRoboGUI:
                 "home_requested": self.home_requested,
                 "finish_requested": self.finish_requested,
                 "finish_home": getattr(self, "finish_home", None),
+                "home_request_id": getattr(self, "_home_request_id", ""),
+                "finish_request_id": getattr(self, "_finish_request_id", ""),
+                "control_revision": getattr(self, "_control_revision", ""),
                 "shutdown_recovery": deepcopy(self._shutdown_recovery_request),
                 "recovery_request": getattr(self, "recovery_request", ""),
                 "recovery_request_id": getattr(self, "recovery_request_id", ""),
@@ -1790,9 +2059,7 @@ class PolicyRoboGUI:
                 "evaluation_complete": self.evaluation_complete,
                 **deepcopy(self._rollout_request),
             }
-            self.home_requested = False
-            self.finish_requested = False
-            self.finish_home = None
+            # Requests are retained until the owning runtime acknowledges them.
             # Prepare is a retained request, not a read-once pulse: a reply can
             # be lost or read by the preceding runtime's control client.
             state["control_timing"] = {
@@ -1811,34 +2078,41 @@ class PolicyRoboGUI:
         return False
 
     def on_message(self, message: dict[str, Any]) -> None:
-        with self.lock:
-            display_started = time.monotonic_ns()
-            if not self._matches_selected_robot(message):
-                return
-            try:
-                kind = message.get("kind")
-                if kind == "plan":
+        display_started = time.monotonic_ns()
+        if not self._matches_selected_robot(message):
+            return
+        try:
+            kind = message.get("kind")
+            if kind == "state":
+                self._update_state(message)
+            elif kind == "plan":
+                # FK is pure visualization work and can be expensive for a long horizon.
+                if message.get("action_space", "joint_position") == "joint_position":
+                    groups = self.robot.validate_groups(message.get("groups"), sequence=True)
+                    message["_display_points"] = {
+                        name: self.robot.positions(name, rows) for name, rows in groups.items()
+                    }
+                with self.lock:
                     metadata = message.get("metadata") or {}
-                    if metadata.get("warmup_preview") and not self._warmup_preview_allowed(
-                        metadata
-                    ):
+                    if (metadata.get("warmup_preview")
+                            and not self._warmup_preview_allowed(metadata)):
                         return
                     self._update_plan(message)
-                elif kind == "state":
-                    self._update_state(message)
-                elif kind == "event":
+            elif kind == "event":
+                with self.lock:
                     self._update_event(message)
-                timeline = getattr(self, "chunk_timeline", None)
-                if timeline is not None:
-                    timeline.update(message)
-                    self._refresh_chunk_timeline(force=kind != "state")
-                timing = getattr(self, "display_timing", None)
-                received = message.get("_robogui_received_ns")
-                if kind == "state" and timing is not None and received is not None:
-                    queue_ms = max(0, display_started - received) / 1e6
-                    draw_ms = (time.monotonic_ns() - display_started) / 1e6
-                    timing.value = f"{queue_ms:.1f} / {draw_ms:.1f} ms"
-            except (KeyError, TypeError, ValueError) as exc:
+            timeline = getattr(self, "chunk_timeline", None)
+            if timeline is not None:
+                timeline.update(message)
+                self._refresh_chunk_timeline(force=kind != "state")
+            timing = getattr(self, "display_timing", None)
+            received = message.get("_robogui_received_ns")
+            if kind == "state" and timing is not None and received is not None:
+                queue_ms = max(0, display_started - received) / 1e6
+                draw_ms = (time.monotonic_ns() - display_started) / 1e6
+                timing.value = f"{queue_ms:.1f} / {draw_ms:.1f} ms"
+        except (KeyError, TypeError, ValueError) as exc:
+            with self.lock:
                 self._report_error("Read runtime message", f"{message.get('kind')}: {exc}")
                 self.status.content = (
                     f"🔴 **Rejected malformed {message.get('kind')} message: {exc}**"
@@ -1892,7 +2166,9 @@ class PolicyRoboGUI:
             for group_name, group_actions in grouped_actions.items()
         }
         self._plan_points = {
-            name: (actions[:, :3].copy() if pose_plan else self.robot.positions(name, actions))
+            name: (actions[:, :3].copy() if pose_plan else
+                   message["_display_points"][name] if "_display_points" in message else
+                   self.robot.positions(name, actions))
             for name, actions in self.plan_actions.items()
         }
         self._plan_cursor = start_index
@@ -2067,26 +2343,35 @@ class PolicyRoboGUI:
             self._draw_tail(group, np.empty((0, 3)))
 
     def _update_state(self, message: dict[str, Any]) -> None:
-        if self.shutdown_phase:
-            return  # Queued execution snapshots must not overwrite cleanup status.
-        metadata = message.get("metadata") or {}
-        if "camera_map" in metadata:
-            self.camera_view.set_policy_map(metadata["camera_map"])
-        if not self.episode_active and bool(metadata.get("episode_active", False)):
-            self._update_event({"event": "episode_started", "metadata": metadata})
-        if "warmup" in metadata:
-            self._update_warmup(metadata["warmup"])
-        grouped_positions = self.robot.validate_groups(message.get("groups"))
-        self.last_joint_positions = {
-            group_name: np.asarray(configuration, dtype=np.float64).copy()
-            for group_name, configuration in grouped_positions.items()
-        }
-        self.last_state_time = time.time()
-        self.progress.value = int(message.get("step", 0))
-        if not message.get("connected", True):
-            self.status.content = "🟠 **Executor disconnected**"
-        else:
-            self.status.content = self._connected_status()
+        with self.lock:
+            if self.shutdown_phase:
+                return
+            metadata = message.get("metadata") or {}
+            incoming = metadata.get("run_dir")
+            if incoming and self.service_id and incoming != self.service_id:
+                return
+            if "camera_map" in metadata:
+                self.camera_view.set_policy_map(metadata["camera_map"])
+            if not self.episode_active and bool(metadata.get("episode_active", False)):
+                self._update_event({"event": "episode_started", "metadata": metadata})
+            if "control_status" in metadata:
+                self._control_status = dict(metadata["control_status"])
+            if (self.home_requested and metadata.get("home_ack") and metadata["home_ack"]
+                    == getattr(self, "_home_request_id", "")):
+                self.home_requested = False
+                self._set_policy_controls_enabled(True)
+            if "warmup" in metadata:
+                self._update_warmup(metadata["warmup"])
+            grouped_positions = self.robot.validate_groups(message.get("groups"))
+            self.last_joint_positions = {
+                name: np.asarray(q, dtype=np.float64).copy()
+                for name, q in grouped_positions.items()
+            }
+            self.last_state_time = time.time()
+            self.progress.value = int(message.get("step", 0))
+            self.status.content = (self._connected_status() if message.get("connected", True)
+                                   else "🟠 **Executor disconnected**")
+        # Scene transforms, JPEG decode/encode and blending never own the control lock.
         active_chunk_id = message.get("active_chunk_id")
         action_index = int(message.get("chunk_index", 0))
         if (
@@ -2106,11 +2391,30 @@ class PolicyRoboGUI:
             self._plan_cursor = action_index
         for group_name, configuration in grouped_positions.items():
             self._update_group(self.robot.group(group_name), configuration)
-        self.camera_view.update_images(message.get("cameras_jpeg", {}))
+        self.camera_view.update_images(message.get("cameras_jpeg", {}),
+                                       message.get("camera_metadata", {}))
 
     def _update_event(self, message: dict[str, Any]) -> None:
         event = str(message.get("event", "unknown"))
         metadata = message.get("metadata") or {}
+        if event in {"runtime_preparing", "runtime_home"}:
+            if metadata.get("run_dir") != self.service_id:
+                return
+            if event == "runtime_preparing":
+                if not self.preparing_rollout:
+                    return
+                request_id = metadata.get("prepare_request_id")
+                if request_id and request_id != self._rollout_request.get("prepare_request_id"):
+                    return
+            elif (not self.home_requested or metadata.get("episode_id") != self._episode_id
+                  or metadata.get("home_request_id") != self._home_request_id):
+                return
+            self._last_operation_time = time.time()
+            self.status.content = (
+                f"🟠 **{metadata.get('phase', 'Working')} · "
+                f"{float(metadata.get('elapsed_s', 0)):.0f}s** · runtime heartbeat active"
+            )
+            return
         if event == "runtime_shutdown":
             if metadata.get("run_dir") != self.service_id:
                 return
@@ -2130,6 +2434,7 @@ class PolicyRoboGUI:
             if phase not in labels:
                 return
             self.shutdown_phase = phase
+            self.camera_view.freeze_images()
             self.last_shutdown_time = time.time()
             self.service_ready = self.episode_active = self.preparing_rollout = False
             self.paused = True
@@ -2239,6 +2544,8 @@ class PolicyRoboGUI:
             self.recovery_available = bool(metadata.get("recovery_available", False))
             self._set_experiment_mode(bool(metadata.get("experiment_mode", False)))
             self._refresh_layout_visibility()
+            self._control_status = None
+            self._control_revision = ""
             self._configure_evaluation(metadata.get("evaluation"))
             self.rollout_setup_status.content = (
                 "🟢 **Study rollout ready** · adjust layout before Start; "
@@ -2271,7 +2578,7 @@ class PolicyRoboGUI:
             self.executor_info.value = f"chunk #{message.get('chunk_id')} pending{suffix}"
         elif event == "episode_finished":
             self._clear_warmup_preview()
-            self.camera_view.clear_images()
+            self.camera_view.freeze_images()
             self.episode_active = False
             self.service_ready = False
             self.launch_mode = str(metadata.get("launch_mode", self.launch_mode))
@@ -2440,6 +2747,7 @@ class PolicyRoboGUI:
         self.running = False
         self.receiver.close()
         self.control_server.close()
+        self._jobs.shutdown(wait=True, cancel_futures=True)
         self.server.stop()
 
 

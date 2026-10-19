@@ -2,14 +2,12 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const hero = $('#hero-video');
-const story = $('#execution-story');
-const stage = $('#stage');
+const stage = $('#hero-stage');
 const motionToggle = $('#motion-toggle');
 const dialog = $('#film-dialog');
 const film = $('#film-video');
 let paused = reducedMotion.matches || Boolean(navigator.connection?.saveData);
 let heroVisible = false;
-let scrollQueued = false;
 let typingTimer;
 
 function syncPlayback() {
@@ -24,24 +22,7 @@ function syncPlayback() {
 motionToggle.addEventListener('click', () => { paused = !paused; syncPlayback(); });
 new IntersectionObserver(([entry]) => { heroVisible = entry.isIntersecting; syncPlayback(); }, {threshold: .1}).observe(stage);
 document.addEventListener('visibilitychange', () => { if (document.hidden) film.pause(); syncPlayback(); });
-reducedMotion.addEventListener('change', () => { paused = reducedMotion.matches; syncPlayback(); updateStory(); });
-
-function updateStory() {
-  scrollQueued = false;
-  const rect = story.getBoundingClientRect();
-  const travel = Math.max(1, story.offsetHeight - $('.story-sticky').offsetHeight);
-  const progress = reducedMotion.matches ? 0 : Math.max(0, Math.min(1, (26 - rect.top) / travel));
-  stage.style.setProperty('--progress', progress.toFixed(4));
-  story.classList.toggle('wall-mode', progress > .45);
-  const message = $('.wall-message');
-  message.classList.toggle('visible', progress > .82);
-  message.inert = progress <= .82;
-  message.setAttribute('aria-hidden', String(progress <= .82));
-}
-function queueScroll() { if (!scrollQueued) { scrollQueued = true; requestAnimationFrame(updateStory); } }
-addEventListener('scroll', queueScroll, {passive:true});
-addEventListener('resize', queueScroll);
-updateStory();
+reducedMotion.addEventListener('change', () => { paused = reducedMotion.matches; syncPlayback(); });
 
 const descriptions = {
   embodiment: {
@@ -96,7 +77,7 @@ function selectStep(name, animate = true) {
     const message = 'Deploy my policy on this station\nand open RoboGUI.';
     const target = $('#typed-prompt');
     let position = 0;
-    function type() { target.textContent = message.slice(0, ++position); if (position < message.length) typingTimer = setTimeout(type, 34); }
+    function type() { target.textContent = message.slice(0, ++position); if (position < message.length) typingTimer = setTimeout(type, 20); }
     if (reducedMotion.matches || paused || !animate) target.textContent = message;
     else type();
   }
@@ -134,7 +115,7 @@ const workflowObserver = new IntersectionObserver(([entry]) => {
 workflowObserver.observe($('#workflow-panel'));
 
 const films = {
-  product: {src:'assets/product-demo.mp4',title:'ManiMux — The product film',caption:'92 seconds · 2560 × 1440 · 30 fps. Includes synthetic RoboGUI footage, repeated wall tiles, and an illustrative human-evaluation workflow. Not a recording of a complete physical experiment.'},
+  product: {src:'assets/product-demo-hook.mp4',title:'ManiMux — The product film',caption:'92 seconds · 2560 × 1440 · 30 fps. Includes synthetic RoboGUI footage, repeated wall tiles, and an illustrative human-evaluation workflow. Not a recording of a complete physical experiment.'},
   archive: {src:'assets/execution.mp4',title:'RoboGUI — Archived real-robot demo',caption:'12-second excerpt at original speed from the repository’s real-robot demo. The archive does not include a verified model/checkpoint and inference manifest.'}
 };
 $$('[data-film]').forEach(button => button.addEventListener('click', () => {

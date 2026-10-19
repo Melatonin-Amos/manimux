@@ -9,4 +9,4 @@ inference:
   algorithm: autohorizon
 experiment:
   task: put_bottles
-  variant: autohorizon_refill
+  variant: autohorizon_refill_four_bottles_v1

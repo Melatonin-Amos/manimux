@@ -117,43 +117,31 @@ experiments:
 - id: put_bottles_serial
   label: SERIAL - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/serial32.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/put_bottles/serial
   trials:
     repeats: 3
 - id: put_bottles_bid
   label: BID - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/bid32.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/put_bottles/bid
   trials:
     repeats: 3
 - id: put_bottles_autohorizon
   label: AutoHorizon - adaptive · serial
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/autohorizon_refill.yaml
-  history:
-  - pi05-latest300ep-step30000/adaptive/put_bottles/autohorizon_refill
   trials:
     repeats: 3
 - id: put_bottles_async
   label: ASYNC - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/async32_progress.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/put_bottles/async_progress
   trials:
     repeats: 3
 - id: put_bottles_rtc
   label: RTC - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/rtc32_beta10.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/put_bottles/rtc_beta10
   trials:
     repeats: 3
 - id: put_bottles_paint
   label: PAINT - 32 source steps
   config: ../experiments/pi05-latest300ep-step30000/put_bottles/paint32.yaml
-  history:
-  - pi05-latest300ep-step30000/step32/put_bottles/paint
   trials:
     repeats: 3
 - id: stack_blocks_medium_serial

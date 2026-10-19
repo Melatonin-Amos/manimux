@@ -42,6 +42,30 @@ acknowledgment, episode start, failure or a new service boundary. The session ig
 repeated admission of the same ID; a lost reply must neither strand Preparing nor
 create another rollout. Resource cleanup finishes before the session advertises idle.
 
+Finish and active-rollout Home also carry retained request IDs. Reading GUI controls
+does not consume them. The runtime control mailbox deduplicates Home by run directory,
+episode and request ID; Home completion repeats `home_ack` in state metadata. Shutdown
+progress acknowledges Finish. New ID-bearing commands must match the current episode.
+`control_revision` travels with Start/Pause and returns in `control_status`: GUI intent
+is not runtime confirmation. A transport timeout must not silently discard a requested
+Home/Finish. The idle service polls controls every 20 ms by default.
+
+`OperationStatus` reports `runtime_preparing` and `runtime_home` from its own publisher
+thread during blocking setup/Home. It reports phase elapsed time and process liveness,
+never hardware health. Missing progress heartbeats keep Prepare blocked and show
+unknown hardware state; they do not authorize another attempt or release resources.
+
+RoboGUI keeps layout selection per task across algorithm/initial-pose session changes,
+falling back only when that layout is unavailable. Rendering and history scans run
+outside the control-state lock; asynchronous history results carry a selection epoch.
+Reference previews cache decoded pixels by file identity; Start rereads and hashes the
+selected image before freezing experiment identity. Camera labels distinguish advancing
+frame metadata, stale previews and frozen end-of-trial evidence. Ended-trial images stay
+visible until a new trial begins, and recorded camera videos can be downloaded for review.
+Evaluation saves run asynchronously with a persistent receipt. Editing the last label
+atomically writes `revision` and embeds previous labels in `history`; Skip preserves an
+existing label. Run controls retain their position and diagnostic details start collapsed.
+
 `manimux/failures.py` attaches diagnostic source/stage/target at operation boundaries
 without changing exception types or recovery decisions. The session retains structured
 `failure` metadata and the complete exception chain in both failure events and idle

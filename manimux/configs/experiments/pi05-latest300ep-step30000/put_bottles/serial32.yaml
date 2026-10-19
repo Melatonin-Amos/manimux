@@ -11,4 +11,4 @@ inference:
   algorithm: serial
 experiment:
   task: put_bottles
-  variant: serial32
+  variant: serial32_four_bottles_v1
