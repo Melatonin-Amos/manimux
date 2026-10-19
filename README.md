@@ -1,6 +1,8 @@
 <div align="center">
 
-<p><img src="assets/manimux-logo.png" alt="ManiMux" width="560"></p>
+<p><a href="https://sii-liulab.github.io/manimux/"><img src="assets/manimux-logo.png" alt="ManiMux — visit the website" width="560"></a></p>
+
+### [Visit the website ↗](https://sii-liulab.github.io/manimux/) · [Read the guide](https://sii-liulab.github.io/manimux/guideline.html)
 
 **Real robot experiments. One inference harness.**
 
