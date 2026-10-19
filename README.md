@@ -16,32 +16,11 @@ the checkpoint, backend, adapter, and local station.
 
 **Policy × Runtime × Embodiment**
 
-[![Website](https://img.shields.io/badge/Website-ManiMux-28513A?style=flat-square)](https://sii-liulab.github.io/manimux/)
-[![Documentation](https://img.shields.io/badge/Documentation-Guide-2563EB?style=flat-square)](https://sii-liulab.github.io/manimux/guideline.html)
 [![Demo video](https://img.shields.io/badge/Demo-Watch%20video-EF4444?style=flat-square)](https://sii-liulab.github.io/manimux/#recordings)
 [![Agent skills](https://img.shields.io/badge/Develop-Agent%20skills-8B5CF6?style=flat-square)](.agents/skills/manimux-development/SKILL.md)
-
 [![Actively maintained](https://img.shields.io/badge/Status-Actively%20maintained-14B8A6?style=flat-square)](https://github.com/SII-LiuLab/manimux/commits/main/)
 
-[Website](https://sii-liulab.github.io/manimux/) · [Quick start](#quick-start) · [Architecture](#architecture) · [Integrate](#integrate) · [Documentation](https://sii-liulab.github.io/manimux/guideline.html) · [Citation](#citation)
-
 </div>
-
-> **[Read the ManiMux Guide →](https://sii-liulab.github.io/manimux/guideline.html) · [HTML source](guideline.html)**
-> Installation, station setup, deployment recipes, RoboGUI workflows and integration protocols.
-> For agent-led development, start with the [development skill](.agents/skills/manimux-development/SKILL.md).
-
-## Explore ManiMux
-
-| Start here | What you’ll find |
-| --- | --- |
-| [Website](https://sii-liulab.github.io/manimux/) | RoboGUI preview, architecture, and the experiment workflow |
-| [Product film and recordings](https://sii-liulab.github.io/manimux/#recordings) | Product walkthrough and an archived real-robot demo |
-| [Guide](https://sii-liulab.github.io/manimux/guideline.html) | Station setup, supported deployments, inference strategies, and evaluation |
-| [Quick start](#quick-start) | Installation and a hardware-free RoboGUI preview |
-
-The product film includes synthetic RoboGUI footage and an illustrative evaluation
-sequence. The archived real-robot recording is presented separately on the website.
 
 ## News
 
