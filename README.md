@@ -2,22 +2,23 @@
 
 <p><img src="assets/manimux-logo.png" alt="ManiMux" width="560"></p>
 
-**Any embodiment. Any policy. Any inference strategy.**
+**Real robot experiments. One inference harness.**
 
-ManiMux is an **extensible real-world manipulation harness** that **standardizes**
-deployment and experiment workflows across embodiments, policies, and inference strategies.
-Built around **RoboGUI**, it brings together **live digital twin visualization**
-and a runtime designed for **100–200 Hz command execution**.
+ManiMux is an **open-source harness for real-world manipulation inference and
+experiment management**. Deploy policies, explore supported inference strategies,
+and turn real-world runs into reproducible experiments.
+
+**RoboGUI** brings camera views, robot visualization, execution controls, and
+recorded trajectories into one workflow. Model and algorithm support depends on
+the checkpoint, backend, adapter, and local station.
 
 **Policy × Runtime × Embodiment**
 
+[![Website](https://img.shields.io/badge/Website-ManiMux-28513A?style=flat-square)](https://sii-liulab.github.io/manimux/)
 [![Documentation](https://img.shields.io/badge/Documentation-Guide-2563EB?style=flat-square)](https://sii-liulab.github.io/manimux/guideline.html)
 [![Demo video](https://img.shields.io/badge/Demo-Watch%20video-EF4444?style=flat-square)](https://sii-liulab.github.io/manimux/#recordings)
 [![Agent skills](https://img.shields.io/badge/Develop-Agent%20skills-8B5CF6?style=flat-square)](.agents/skills/manimux-development/SKILL.md)
 
-[![Policy recipes: 14](https://img.shields.io/badge/Policy%20recipes-14-F59E0B?style=flat-square)](#included-integrations)
-[![Inference modes: 8](https://img.shields.io/badge/Inference%20modes-8-EC4899?style=flat-square)](#included-integrations)
-[![Embodiments: 4](https://img.shields.io/badge/Embodiments-4-06B6D4?style=flat-square)](#included-integrations)
 [![Actively maintained](https://img.shields.io/badge/Status-Actively%20maintained-14B8A6?style=flat-square)](https://github.com/SII-LiuLab/manimux/commits/main/)
 
 [Website](https://sii-liulab.github.io/manimux/) · [Quick start](#quick-start) · [Architecture](#architecture) · [Integrate](#integrate) · [Documentation](https://sii-liulab.github.io/manimux/guideline.html) · [Citation](#citation)
@@ -28,14 +29,28 @@ and a runtime designed for **100–200 Hz command execution**.
 > Installation, station setup, deployment recipes, RoboGUI workflows and integration protocols.
 > For agent-led development, start with the [development skill](.agents/skills/manimux-development/SKILL.md).
 
+## Explore ManiMux
+
+| Start here | What you’ll find |
+| --- | --- |
+| [Website](https://sii-liulab.github.io/manimux/) | RoboGUI preview, architecture, and the experiment workflow |
+| [Product film and recordings](https://sii-liulab.github.io/manimux/#recordings) | Product walkthrough and an archived real-robot demo |
+| [Guide](https://sii-liulab.github.io/manimux/guideline.html) | Station setup, supported deployments, inference strategies, and evaluation |
+| [Quick start](#quick-start) | Installation and a hardware-free RoboGUI preview |
+
+The product film includes synthetic RoboGUI footage and an illustrative evaluation
+sequence. The archived real-robot recording is presented separately on the website.
+
 ## News
 
-- **2026-10-13** — Added [execution-qualified evaluation](guideline.html#report-metric-definitions): chunk handoff jumps, 10/20/30-step overlap and segmented reference smoothness, with versioned offline HTML reports.
-- **2026-10-12** — Added [task and method switching](guideline.html#experiment-lists) from a config list, template-driven partial scores and explicit warmup controls.
+- **2026-10-18** — Launched the [ManiMux website](https://sii-liulab.github.io/manimux/), with the [guide](https://sii-liulab.github.io/manimux/guideline.html) available as a dedicated subpage.
+
+- **2026-10-13** — Added [execution-qualified evaluation](https://sii-liulab.github.io/manimux/guideline.html#report-metric-definitions): chunk handoff jumps, 10/20/30-step overlap and segmented reference smoothness, with versioned offline HTML reports.
+- **2026-10-12** — Added [task and method switching](https://sii-liulab.github.io/manimux/guideline.html#experiment-lists) from a config list, template-driven partial scores and explicit warmup controls.
 
 - **2026-10-02** — Added [ALOHA-AgileX](.agents/skills/manimux-station-setup/references/aloha.md) and [PiPER](.agents/skills/manimux-station-setup/references/piper.md) RoboGUI demos, plus experimental [ARX X5 / PiPER controllers](.agents/skills/manimux-station-setup/references/can-arms.md). Hardware validation is pending.
 - **2026-10-01** — The [ManiMux Guide](https://sii-liulab.github.io/manimux/guideline.html) is live, covering setup, deployment, RoboGUI and integration protocols.
-- **2026-10-01** — Updated [research workflows](guideline.html#experiments) and [agent integration guides](.agents/skills/manimux-development/references/README.md) for free exploration, study templates and component development.
+- **2026-10-01** — Updated [research workflows](https://sii-liulab.github.io/manimux/guideline.html#experiments) and [agent integration guides](.agents/skills/manimux-development/references/README.md) for free exploration, study templates and component development.
 
 ## RoboGUI
 
@@ -46,7 +61,7 @@ and a runtime designed for **100–200 Hz command execution**.
 **Prepare Run / Prepare Experiment → Activate Warmup → Start → Finish → Score.**
 Warmup is shown when configured. Free runs need no scoring; experiments read their
 score options from the task YAML’s inline `evaluation` rules. Recorded trajectories replay
-in a separate, hardware-free view. [Research workflow →](guideline.html#experiments)
+in a separate, hardware-free view. [Research workflow →](https://sii-liulab.github.io/manimux/guideline.html#experiments)
 
 ## Included integrations
 
@@ -63,14 +78,14 @@ The [SDK installation guide](.agents/skills/manimux-station-setup/references/rob
 
 Policy serving uses **XPolicyLab** or **StarVLA**. Counts describe included integrations,
 not all model × method × robot combinations or completed hardware validation.
-See the [support catalog](guideline.html#support) for scope and recipes.
+See the [support catalog](https://sii-liulab.github.io/manimux/guideline.html#support) for scope and recipes.
 Evaluation is optional; choose your own research protocol and metrics.
 
 ## Inference strategies and combinations
 
-Choose a base algorithm, a request schedule, and optional ACT fusion. The eight base
-modes remain available; combinations reuse their existing samplers and do not require
-changes to XPolicyLab or model weights.
+Choose a supported base algorithm, request schedule, and optional ACT fusion.
+Available combinations reuse the configured backend’s sampling hooks; specialized
+methods require compatible model-side implementations.
 
 | Purpose | Modes | Behavior |
 | --- | --- | --- |
@@ -78,7 +93,10 @@ changes to XPolicyLab or model weights.
 | Consistency between chunks | RTC, PAINT, ACT temporal ensembling, BID backward-only | Guide sampling, adjust initial noise, average aligned predictions, or select a coherent candidate |
 | Adaptive execution length | AAC, AutoHorizon | Select a source prefix using candidate uncertainty/motion or action attention |
 
-The current compatibility matrix is:
+The table below describes runtime scheduling combinations. Model-side support still
+depends on the policy backend and required sampling hooks; check the
+[model support matrix](.agents/skills/manimux-inference/references/inference-matrix.md)
+before selecting a combination:
 
 | Base algorithm | Serial | Async `single_inflight` | Async `multi_inflight` | Optional ACT fusion |
 | --- | --- | --- | --- | --- |
@@ -91,8 +109,8 @@ The current compatibility matrix is:
 | AutoHorizon | Yes | **New** | **New** | **New** |
 
 BID also supports AAC adaptive horizons, with optional ACT fusion. For deadline
-aliases, decoding requirements and YAML examples, use the [inference guide](guideline.html#algorithms)
-and [supported combinations](guideline.html#optional-algorithm-composition).
+aliases, decoding requirements and YAML examples, use the [inference guide](https://sii-liulab.github.io/manimux/guideline.html#algorithms)
+and [supported combinations](https://sii-liulab.github.io/manimux/guideline.html#optional-algorithm-composition).
 
 ## Architecture
 
@@ -157,16 +175,16 @@ Both presets animate arms and grippers with synthetic data; no device SDK is nee
 ARX X5 currently has a kinematic model and experimental controller, without a
 bundled RoboGUI mesh preset.
 
-Upgrading an existing checkout? See the [RoboGUI interface migration](guideline.html#launch).
+Upgrading an existing checkout? See the [RoboGUI interface migration](https://sii-liulab.github.io/manimux/guideline.html#launch).
 
 ### Run on your robot
 
-1. Select a [model/robot runbook](guideline.html#support)
+1. Select a [model/robot runbook](https://sii-liulab.github.io/manimux/guideline.html#support)
    and prepare its hardware and model environments.
 2. Bind devices, service addresses and checkpoint paths in your private
    [station file](.agents/skills/manimux-station-setup/references/station.md).
 3. Start the camera, RoboGUI, model server and runtime using the
-   [complete Pi05/YAM example](guideline.html#launch)
+   [complete Pi05/YAM example](https://sii-liulab.github.io/manimux/guideline.html#launch)
    or the selected model's runbook.
 4. Continue in RoboGUI: select the configured task/method, prepare and run trials,
    then review records. For your own task/study, start with the
@@ -176,7 +194,7 @@ Upgrading an existing checkout? See the [RoboGUI interface migration](guideline.
 `manimux run` executes one rollout. Preparation can connect and move the selected robot
 as configured; use the runbook matching your actual setup.
 
-[Configuration explained](manimux/configs/README.md) · [Current study and launch commands](guideline.html#latest300ep-launch)
+[Configuration explained](manimux/configs/README.md) · [Current study and launch commands](https://sii-liulab.github.io/manimux/guideline.html#latest300ep-launch)
 
 ## Run an experiment campaign
 
@@ -191,10 +209,10 @@ Use it as a concrete example; choose task rules, checkpoints and comparison sett
 for your own study. Offline reports combine human scores, motion metrics and optional
 PRM assessments. Runtime completion and task success are distinct.
 
-[Experiment workflow](guideline.html#experiments) ·
-[Launch commands](guideline.html#latest300ep-launch) ·
-[Recording protocol](guideline.html#study-storage-protocol) ·
-[Evaluation and reports](guideline.html#reports)
+[Experiment workflow](https://sii-liulab.github.io/manimux/guideline.html#experiments) ·
+[Launch commands](https://sii-liulab.github.io/manimux/guideline.html#latest300ep-launch) ·
+[Recording protocol](https://sii-liulab.github.io/manimux/guideline.html#study-storage-protocol) ·
+[Evaluation and reports](https://sii-liulab.github.io/manimux/guideline.html#reports)
 
 ## Documentation map
 
@@ -202,7 +220,7 @@ PRM assessments. Runtime completion and task success are distinct.
 | --- | --- |
 | This README | Project scope, architecture, supported integrations and getting started |
 | Directory READMEs, such as [configs](manimux/configs/README.md) | Local file organization, module responsibilities and links to detailed guidance |
-| [User guide](guideline.html) | Setup, parameter explanations, commands and complete experiment workflows |
+| [User guide](https://sii-liulab.github.io/manimux/guideline.html) | Setup, parameter explanations, commands and complete experiment workflows |
 | [Agent skills](.agents/skills/manimux-development/SKILL.md) | What an agent should inspect, ask, implement and verify for a specific task |
 
 ## Integrate
@@ -230,20 +248,21 @@ inference strategies to documentation and bug fixes. Start with the
 
 ## Support and evidence
 
-See the [support catalog](guideline.html#support) for model, hardware and method
+See the [support catalog](https://sii-liulab.github.io/manimux/guideline.html#support) for model, hardware and method
 runbooks. Capabilities vary by checkpoint and backend; an integration does not imply
 that every model × robot × algorithm combination has been tested on hardware.
 ManiMux is under active development. Each deployment guide states its validation scope.
 
 ## Citation
 
-If ManiMux supports your research, please cite:
+If ManiMux supports your research, please cite the repository below. A paper link
+will be added when available:
 
-**ManiMux: An Extensible Real-World Manipulation Harness**
+**ManiMux: An open-source harness for real-world manipulation inference and experiment management**
 
 ```bibtex
 @misc{manimux2026,
-  title = {{ManiMux}: An Extensible Real-World Manipulation Harness},
+  title = {{ManiMux}: An Open-Source Harness for Real-World Manipulation Inference and Experiment Management},
   year = {2026},
   howpublished = {GitHub repository},
   url = {https://github.com/SII-LiuLab/manimux}
