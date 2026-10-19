@@ -9,13 +9,14 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/Manrope.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="styles.css">
+  <script src="guide-redirect.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <header class="nav">
     <a class="wordmark" href="#" aria-label="ManiMux home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 25V7l13 12L29 7v18M3 7l13 12L29 7"/></svg>ManiMux<span class="wordmark-dot">.</span></a>
-    <nav aria-label="Main navigation"><a href="#architecture">Architecture</a><a href="#workflow">Workflow</a><a href="#recordings">Recordings</a></nav>
+    <nav aria-label="Main navigation"><a href="#architecture">Architecture</a><a href="#workflow">Workflow</a><a href="#recordings">Recordings</a><a href="guideline.html">Guide</a></nav>
     <a class="nav-code" href="https://github.com/SII-LiuLab/manimux" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
   </header>
   <main id="main">
@@ -40,7 +41,7 @@
           <article class="axis" style="--axis-index:2"><div class="axis-top"><span class="axis-number">03</span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 36h8l6-24 9 28 7-20h8M5 8h6M38 40h5"/></svg></div><h3>Inference</h3><p>The rhythm of execution.</p><div class="chips" aria-label="Explore inference strategies"><button data-axis="inference" data-value="async" aria-pressed="true">Async</button><button data-axis="inference" data-value="rtc" aria-pressed="false">RTC</button><button data-axis="inference" data-value="paint" aria-pressed="false">PAINT</button><button data-axis="inference" data-value="aac" aria-pressed="false">AAC</button><button data-axis="inference" data-value="autohorizon" aria-pressed="false">AutoHorizon</button><button data-axis="inference" data-value="bid" aria-pressed="false">BID</button></div><p class="axis-detail" id="inference-detail" aria-live="polite">Overlap inference and execution with asynchronous action chunking.</p></article>
         </div>
         <div class="harness-line" aria-hidden="true"><span></span><b>ManiMux runtime</b><span></span></div>
-        <div class="architecture-foot"><p>Explore each integration above. Availability depends on the model, adapter, and local station; selections do not certify a compatible combination. Experimental hardware awaits physical validation.</p><a class="text-link" href="https://sii-liulab.github.io/manimux/#support" target="_blank" rel="noreferrer">View support catalog ↗</a></div>
+        <div class="architecture-foot"><p>Explore each integration above. Availability depends on the model, adapter, and local station; selections do not certify a compatible combination. Experimental hardware awaits physical validation.</p><a class="text-link" href="guideline.html#support">View support catalog ↗</a></div>
       </div>
     </section>
 
@@ -57,7 +58,7 @@
           <div class="workflow-panel" id="workflow-panel" role="tabpanel" aria-labelledby="tab-deploy" tabindex="0">
             <div class="panel-top"><span id="panel-label">AGENT-ASSISTED DEPLOYMENT</span><span class="panel-dots" aria-hidden="true">● ● ●</span></div>
             <div id="step-content"></div>
-            <div class="panel-footer"><span>Illustrative workflow</span><a href="https://sii-liulab.github.io/manimux/#experiments" target="_blank" rel="noreferrer">Read the workflow ↗</a></div>
+            <div class="panel-footer"><span>Illustrative workflow</span><a href="guideline.html#experiments">Read the workflow ↗</a></div>
           </div>
         </div>
       </div>
@@ -73,7 +74,7 @@
       <div class="contribute"><div><span class="status-dot"></span><strong>Different stations. Shared evidence.</strong><p>We’re collecting continuous recordings with the physical robot, model identity, and live inference visible together.</p></div><a class="button outline" href="https://github.com/SII-LiuLab/manimux" target="_blank" rel="noreferrer">Explore the project ↗</a></div>
     </div></section>
 
-    <section class="research" id="research" aria-labelledby="research-title"><div class="wrap"><p class="eyebrow">Open source. Open possibilities.</p><h2 id="research-title">Let’s make<br><span>the next move.</span></h2><div class="research-bottom"><div><h3>ManiMux</h3><p>An open-source harness for real-world<br>manipulation inference and experiment management</p><span class="paper-status">Paper link forthcoming</span></div><div class="actions"><a class="button dark" href="https://github.com/SII-LiuLab/manimux" target="_blank" rel="noreferrer">Explore GitHub ↗</a><a class="button outline" href="https://sii-liulab.github.io/manimux/" target="_blank" rel="noreferrer">Documentation ↗</a></div></div></div></section>
+    <section class="research" id="research" aria-labelledby="research-title"><div class="wrap"><p class="eyebrow">Open source. Open possibilities.</p><h2 id="research-title">Let’s make<br><span>the next move.</span></h2><div class="research-bottom"><div><h3>ManiMux</h3><p>An open-source harness for real-world<br>manipulation inference and experiment management</p><span class="paper-status">Paper link forthcoming</span></div><div class="actions"><a class="button dark" href="https://github.com/SII-LiuLab/manimux" target="_blank" rel="noreferrer">Explore GitHub ↗</a><a class="button outline" href="guideline.html">Documentation ↗</a></div></div></div></section>
   </main>
   <footer class="wrap"><a class="wordmark" href="#">ManiMux<span class="wordmark-dot">.</span></a><span>Built for real-world manipulation.</span><a href="https://github.com/SII-LiuLab/manimux/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT licensed ↗</a></footer>
   <dialog id="film-dialog" aria-labelledby="film-title"><div class="dialog-top"><h2 id="film-title">ManiMux product film</h2><button id="close-film" aria-label="Close video">✕</button></div><video id="film-video" controls playsinline preload="none"></video><p id="film-caption"></p></dialog>

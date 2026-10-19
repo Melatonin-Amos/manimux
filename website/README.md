@@ -1,92 +1,62 @@
-# ManiMux landing page
+# ManiMux website
 
-English, buildless HTML/CSS/JavaScript. No application dependencies, external fonts,
-analytics, runtime services, GPU rendering, or robot connection.
+English, buildless HTML/CSS/JavaScript with local fonts and pre-rendered video.
+No application dependencies, robot connection, analytics, or live GPU rendering.
 
-## Preview
+## Build and preview
 
 From the repository root:
 
 ```bash
-python3 -m http.server 18087 --bind 127.0.0.1 --directory website
-```
-
-Open http://127.0.0.1:18087/. The existing documentation and GitHub Pages workflow
-are not modified by this landing page.
-
-## Static hosting
-
-```bash
 node --check website/app.js
 python3 website/build.py
+python3 -m http.server 18087 --bind 127.0.0.1 --directory website/dist
 ```
 
-Deploy `website/dist/` to any static host. `.openai/hosting.json` identifies the
-private Sites preview. The publication helper operates on an isolated source copy
-at `.local/sites/manimux-landing/`, not on the parent repository's dirty checkout.
-Copy the latest website sources there before a later Sites publication; preserve
-that copy's `.git` and use its existing project identity. Never create a second Site
-for the same page.
+Open http://127.0.0.1:18087/. Serve the generated `website/dist/` directory,
+which contains both the homepage and guide. The build validates local links,
+HTML IDs, guide anchors, and repository references, and removes stale build output.
 
-The source build is dependency-free. A host with HTTP range support is recommended
-for native video seeking. Python's simple server is sufficient for local preview.
+## Publication
 
-## Page sequence
+`.github/workflows/docs.yml` builds and deploys GitHub Pages on relevant pushes to
+`main`, or on manual dispatch. The public routes are:
 
-1. Immediate RoboGUI background with a persistent “Real robot experiments. One inference harness.” headline.
-2. A 23.2-second synthetic UI orbit loops with a 0.8-second seam dissolve. No wall
-   pullback, title takeover, or timed headline fade in the hero; those remain in the film.
-3. Embodiment / policy / inference chips with an entrance animation and factual
-   per-integration descriptions. These are independent selectors, not a combination
-   compatibility checker. Current compatibility is linked to the support catalog.
-4. Deploy / Run / Review / Score & save tabs. Deployment text types on first view.
-   Example scoring is held in page memory until reload; it never writes an experiment.
-5. Recording gallery, full film player, research title, code and documentation links.
+- Homepage: https://sii-liulab.github.io/manimux/
+- Guide: https://sii-liulab.github.io/manimux/guideline.html
 
-## Media truth and replacement
+The repository-root `guideline.html` remains the canonical documentation source.
+Do not maintain a second copy inside `website/`. The build copies the guide and its
+media, and converts links to repository files into GitHub links. Old homepage
+anchors such as `#support` and `#install` redirect to the guide. Hashes used by the
+new homepage retain their homepage meaning; `#manimux` redirects to guide overview.
 
-`assets/media.json` records source paths, trims and provenance boundaries.
+The earlier private Sites preview is a separate publication. GitHub Pages is the
+public deployment maintained by this workflow; no Sites credentials or identity
+are needed to build it.
 
-- `execution.mp4` is a 12-second, original-speed excerpt of the repository's archived
-  real-robot demo, transcoded from 1080p to 720p / 30 fps. It is **not** verified as
-  a new capture satisfying the contributor skill's full inference/provenance contract.
-- `hero-robogui.mp4` is a 720p / 30 fps background loop from the bundled synthetic
-  RoboGUI recording. It shows preview motion, not physical execution or model inference.
-- `product-demo-hook.mp4` is the reordered 92-second, 1440p / 30 fps product film.
-  Its synthetic GUI and illustrative evaluation sequence remain disclosed. Original
-  source intervals are [74,85), [0,74), [85,92); the white closing card stays last.
-  The original film is preserved in recordings/agent-demo-v5-1440p/.
-- Paper authors, paper URL, benchmark results and unverified real deployments are
-  deliberately not invented. Add verified publication information when available.
+## Media and interaction
 
-For final recordings, use `.agents/skills/manimux-wall-capture/SKILL.md`. Require
-continuous footage showing the physical robot, actual model identity and inference
-activity, with model-generated trajectories; retain capture manifests. Replace the
-hero loop, gallery metadata and wall composition together. Remove the repeated-frame
-caption only when it is no longer true. Keep recorded footage labeled as recorded.
+`assets/media.json` records source paths, hashes, trims, and provenance boundaries.
 
-## Performance and motion
+- The hero is a single 23.2-second, 720p30 synthetic RoboGUI orbit with a 0.8-second
+  seam dissolve. It does not show physical execution or real model inference.
+- The full film is 92 seconds at 2560 × 1440 / 30 fps. It includes repeated
+  synthetic wall tiles and illustrative evaluation, and retains its earlier slogan.
+- The archived real-robot excerpt is 12 seconds at original speed. Its source
+  lacks a verified model/checkpoint/inference manifest.
+- Human score/save interactions are illustrative and stay in page memory until reload.
+- Integration selectors describe individual components, not compatible combinations.
 
-- The homepage decodes a single 720p / 30 fps clip. The full 2K film has no source
-  until clicked. The separate archived real-robot excerpt remains in the gallery.
-- At most one video plays at a time. Hero pauses off-screen, on page hide, and while
-  the dialog is open. Dialog media unloads on close. No 36-stream video decoding.
-- The headline stays visible throughout playback; no per-frame JavaScript runs.
-  Chip animations run once. Deployment text types at 20 ms per character.
-- Reduced-motion preferences disable smooth scrolling, typing and chip animation,
-  and prevent initial autoplay. Data Saver prevents autoplay.
-- The explicit pause control stops video playback; static content remains usable.
-- Fonts are local Manrope / JetBrains Mono; OFL notices are included.
+Only one video plays at a time. Hero playback pauses off-screen, on page hide,
+and while the full-film dialog is open. The dialog unloads on close. Reduced
+motion and Data Saver prevent initial autoplay. Deployment text types at 20 ms
+per character. Fonts are Manrope and JetBrains Mono with included OFL notices.
 
-## Browser checks performed
-
-Desktop at the default browser viewport and mobile at 390 × 844 were visually
-checked. Verified architecture selection, off-screen video pause, score selection
-and session-only saving, state retention between workflow tabs, arrow-key tab
-navigation, film playback, Escape dismissal, source release on close, and no
-horizontal overflow on mobile. Browser console reported no errors in these checks.
-Reduced-motion behavior is implemented with a media query; OS preference switching
-was not exercised in this session.
+New contributed footage must show the physical robot, model identity, and actual
+inference activity together, with traceable model-generated trajectories. Retain
+capture manifests, validate submitted media, and update provenance when replacing
+illustrative footage. Do not interpret animation or a connection badge as execution.
 
 ## Recutting the opening
 

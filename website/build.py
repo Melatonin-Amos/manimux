@@ -1,9 +1,15 @@
-"""Build the dependency-free ManiMux landing page for static hosting."""
+"""Build the landing page and canonical root guideline.html for GitHub Pages."""
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+import json
+import re
 import shutil
 
 ROOT = Path(__file__).resolve().parent
+REPO = ROOT.parent
+DEST = ROOT / 'dist'
+GITHUB = 'https://github.com/SII-LiuLab/manimux/blob/main/'
 
 
 class PageLinks(HTMLParser):
@@ -23,19 +29,65 @@ class PageLinks(HTMLParser):
                 self.links.append(attrs[key])
 
 
-if __name__ == '__main__':
+def parse(text):
     page = PageLinks()
-    page.feed((ROOT / 'index.html').read_text())
-    for link in page.links:
-        if link.startswith('#'):
-            if link[1:] and link[1:] not in page.ids:
-                raise ValueError(f'Missing section: {link}')
-        elif not link.startswith(('https:', 'http:', 'mailto:')):
-            if not (ROOT / link).is_file():
-                raise ValueError(f'Missing asset: {link}')
-    destination = ROOT / 'dist'
-    destination.mkdir(exist_ok=True)
+    page.feed(text)
+    return page
+
+
+def repo_link(match):
+    target = match.group(1)
+    path = urlsplit(target).path
+    if path.startswith(('.agents/', 'manimux/')):
+        if not (REPO / path).is_file():
+            raise ValueError(f'Missing guide repository reference: {path}')
+        return f'href="{GITHUB}{target}"'
+    return match.group(0)
+
+
+if __name__ == '__main__':
+    # Clean only this generated directory to avoid publishing obsolete media.
+    if DEST.exists():
+        shutil.rmtree(DEST)
+    DEST.mkdir()
     for name in ('index.html', 'styles.css', 'app.js'):
-        shutil.copy2(ROOT / name, destination / name)
-    shutil.copytree(ROOT / 'assets', destination / 'assets', dirs_exist_ok=True)
-    print(f'Validated {len(page.links)} asset/anchor references. Built {destination}')
+        shutil.copy2(ROOT / name, DEST / name)
+    shutil.copytree(ROOT / 'assets', DEST / 'assets')
+
+    guide = re.sub(r'href="([^"]+)"', repo_link,
+                   (REPO / 'guideline.html').read_text())
+    (DEST / 'guideline.html').write_text(guide)
+    guide_page = parse(guide)
+    for link in guide_page.links:
+        if link.startswith('assets/'):
+            source = REPO / urlsplit(link).path
+            target = DEST / urlsplit(link).path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+    home = parse((DEST / 'index.html').read_text())
+    # Preserve old documentation deep links except hashes now owned by the home.
+    anchors = sorted(guide_page.ids - home.ids)
+    redirect = ('const guideAnchors = new Set(' + json.dumps(anchors) + ');\n'
+                'function redirectGuide() {\n'
+                '  const id = location.hash.slice(1);\n'
+                '  if (guideAnchors.has(id) || id === "manimux")\n'
+                '    location.replace("guideline.html#" + (id === "manimux" ? "overview" : id));\n'
+                '}\nredirectGuide();\naddEventListener("hashchange", redirectGuide);\n')
+    (DEST / 'guide-redirect.js').write_text(redirect)
+    (DEST / '.nojekyll').touch()
+
+    pages = {'index.html': home, 'guideline.html': guide_page}
+    for name, page in pages.items():
+        for link in page.links:
+            url = urlsplit(link)
+            if url.scheme or url.netloc:
+                continue
+            path = unquote(url.path)
+            target = DEST / path if path else DEST / name
+            if not target.exists():
+                raise ValueError(f'{name}: missing asset {link}')
+            other = pages.get(path or name)
+            if url.fragment and other and unquote(url.fragment) not in other.ids:
+                raise ValueError(f'{name}: missing anchor {link}')
+    print(f'Validated {sum(len(p.links) for p in pages.values())} references; built {DEST}')
