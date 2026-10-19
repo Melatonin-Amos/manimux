@@ -47,13 +47,6 @@ sequence. The archived real-robot recording is presented separately on the websi
 
 - **2026-10-18** — Launched the [ManiMux website](https://sii-liulab.github.io/manimux/), with the [guide](https://sii-liulab.github.io/manimux/guideline.html) available as a dedicated subpage.
 
-- **2026-10-13** — Added [execution-qualified evaluation](https://sii-liulab.github.io/manimux/guideline.html#report-metric-definitions): chunk handoff jumps, 10/20/30-step overlap and segmented reference smoothness, with versioned offline HTML reports.
-- **2026-10-12** — Added [task and method switching](https://sii-liulab.github.io/manimux/guideline.html#experiment-lists) from a config list, template-driven partial scores and explicit warmup controls.
-
-- **2026-10-02** — Added [ALOHA-AgileX](.agents/skills/manimux-station-setup/references/aloha.md) and [PiPER](.agents/skills/manimux-station-setup/references/piper.md) RoboGUI demos, plus experimental [ARX X5 / PiPER controllers](.agents/skills/manimux-station-setup/references/can-arms.md). Hardware validation is pending.
-- **2026-10-01** — The [ManiMux Guide](https://sii-liulab.github.io/manimux/guideline.html) is live, covering setup, deployment, RoboGUI and integration protocols.
-- **2026-10-01** — Updated [research workflows](https://sii-liulab.github.io/manimux/guideline.html#experiments) and [agent integration guides](.agents/skills/manimux-development/references/README.md) for free exploration, study templates and component development.
-
 ## RoboGUI
 
 ![RoboGUI: live cameras, robot state, trajectories and action chunks](assets/manimux-robogui-demo.webp)
