@@ -31,7 +31,10 @@ class AsyncSimClient:
             from websockets.sync.client import connect
         except ImportError as exc:
             raise RuntimeError("AsyncSim requires the xpolicylab WebSocket extra") from exc
-        context = connect(self.endpoint, open_timeout=self.timeout_s, max_size=64 * 1024 * 1024)
+        context = connect(
+            self.endpoint, open_timeout=self.timeout_s, max_size=64 * 1024 * 1024,
+            ping_timeout=max(20.0, self.timeout_s),
+        )
         self._connection = context.__enter__()
         self._connection_context = context
 
