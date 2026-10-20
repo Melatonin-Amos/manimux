@@ -100,8 +100,9 @@ server or GPU is required. Other API providers need their own explicit
 JSON-to-robot passthrough.
 
 Dream-1 beta supports YAM native joint output and one current RGB frame from each
-of three cameras. Station-specific trial configurations are not distributed; supply
-an explicitly validated local configuration and executor. Keys are read from
+of three cameras. The public baseline is
+`manimux/configs/examples/dream1-yam/serial30-example.yaml` (30 Hz serial, full 48
+rows, Direct). Tuned station-specific trial configurations are not distributed. Keys are read from
 `DREAM_API_KEY`, never YAML. SDK episode recording is disabled. Endpoint selection
 follows the SDK's `DREAM_GATEWAY_URL` / `DREAM_API_URL` settings. Inference sends
 camera images, task text and robot state to the provider. Compare policies with the

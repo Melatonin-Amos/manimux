@@ -407,8 +407,7 @@ responses are not robot commands.</p>
 Set <code>DREAM_API_KEY</code> in the runtime environment, never in configuration
 files. Dream-1 beta uses one current frame per camera (overhead and both wrists).
 Inference sends these images, state and task text to Dream Labs; the SDK's additional
-episode recording is disabled. Station-specific Dream trial configurations are not
-included in this release. Supply your own validated configuration with
+episode recording is disabled. A public <a href="https://github.com/SII-LiuLab/manimux/blob/main/manimux/configs/examples/dream1-yam/serial30-example.yaml">30 Hz serial example</a> is included; see the README for startup commands. Tuned station-specific trial configurations are not distributed. Custom configurations use
 <code>policy.worker: dream_api</code>, the Dream YAM adapter and explicit playback,
 scheduling and execution parameters.</p>
 <pre><code>python -m manimux inspect --config /path/to/your/dream.yaml
