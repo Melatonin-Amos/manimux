@@ -41,6 +41,11 @@ Matching method names alone is insufficient. Fail explicitly for unsupported mod
 - XPolicyLab deployment recipes own `robot_action_dim_info` and `num_envs`; use its
   shared helpers and contribution rules. Preserve sampling flags through adapters and
   transport. Configuration cannot create a model-side sampler hook.
+- Warmup must exercise the current resolved rollout configuration through shared
+  planning/execution components, with only predicted hardware dispatch suppressed.
+  Do not introduce model-specific warmup shortcuts or synthetic condition branches.
+  Test dry-run isolation, real scheduling/IK, failures and the Start reset fence;
+  see [the inference contract](../manimux-inference/SKILL.md#warmup-must-use-the-selected-configuration).
 - Keep deployment constants in YAML. New capability needs an explicit protocol when
   it cannot fit the existing one; do not hide extra tool coordinates or weaken IK to
   imitate a supported interface.
@@ -85,6 +90,31 @@ Read the [hardware exit contract](references/components.md#hardware-exit-safety)
 and the embodiment's implementation before declaring a lifecycle change complete.
 
 ## Complete and verify
+
+### Deployment handoff requires a complete run without hardware commands
+
+Before handing a new or changed policy integration to an operator, the agent must
+exercise observation acquisition/encoding, the real provider, response validation,
+the configured adapter, asynchronous admission and executor through the final
+would-be robot command. Keep hardware dispatch suppressed throughout, including
+connect/Prepare, warmup, Home and cleanup. Use a demonstrably disconnected command
+sink; do not construct a motor driver whose connection sends commands. Record which
+observations are live, recorded or synthetic. A synthetic smoke test alone is not a
+real-station qualification. If representative observations or provider access are
+unavailable, state the missing verification rather than claim readiness.
+
+The agent owns the diagnose/fix/retest loop before asking the operator to Start.
+Persist raw provider responses **before** decoding or rejection, linked to session,
+request sequence, input identity, prompt/model and timing. Preserve malformed output
+as well as successful output; redact credentials and avoid dumping images into
+console logs. Errors must identify field, expected/actual shape or range, invalid
+indices/count and the saved artifact path. Do not silently clip or substitute invalid
+actions just to pass. Use the provider's documented action semantics for any conversion.
+Verify rejected-response persistence, timeout/error handling, request association and
+no hardware sends. Run multiple consecutive representative requests, inspect admission
+and command output, and report rejections/limitations rather than merely process exit.
+Once this chain passes, the operator explicitly starts physical execution through
+RoboGUI; software qualification is not a claim of physical task success.
 
 Deliver the implementation, selecting YAML, a usable config/launch example and checks
 through the real loader or public interface. Use fake hardware for lifecycle tests

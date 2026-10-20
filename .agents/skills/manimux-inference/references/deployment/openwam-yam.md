@@ -31,8 +31,12 @@ state extension. No ARX-X5 simulation calibration is applied. Grippers are
 absolute `0=closed, 1=open` values. The policy converts poses to EEF20 using
 the upstream math, and returns absolute pose dictionaries with explicit
 `absolute_per_arm_base_xyz_wxyz` action semantics. ManiMux runs YAM IK;
-malformed poses, invalid grippers, wrong horizons and IK failures reject the
-whole chunk. The default action rate is 30 Hz and horizon is 32.
+malformed poses, invalid grippers and wrong horizons reject the whole chunk.
+Chunk IK defaults to `policy.adapter.ik_failure_policy: reject`. The explicit
+`hold_last_valid` policy holds the arm and gripper at the last accepted target on
+unconverged rows and continues with the clean seed. Invalid solutions or an arm
+with no converged rows still reject the chunk. Metadata records per-arm failed
+counts and indices. Step IK retains its separate atomic-hold contract. The default action rate is 30 Hz and horizon is 32.
 
 ARX-X5 simulation remains supported through `arx_x5_sim`; its calibration and
 standard XPolicy batch evaluation are separate from the YAM profile.

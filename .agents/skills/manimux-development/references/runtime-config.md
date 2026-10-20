@@ -36,6 +36,14 @@ require an explicit ID when their recipes differ. No automatic service restart o
 model reload. Starting-pose-only changes are compatible and take effect at Prepare.
 
 Prepare uses a retained `prepare_request_id`: reading controls does not consume it.
+In plain `run --config` demo/trial sessions, RoboGUI exposes an editable **Task prompt**
+before Prepare. Prepare freezes the trimmed text in `task_command`; the session copies
+it into that rollout's `run.task_prompt` before constructing the runtime, so warmup,
+inference and episode metadata agree. Idle heartbeats preserve the local draft, while
+a new service seeds it from YAML. Finish before changing instructions. Formal
+`--config-list` studies retain configured prompts and evaluation controls; demo sessions
+hide layout/scoring controls, including **Edit last evaluation**.
+
 The idle session acknowledges admission with `rollout_prepare_accepted` and repeats
 `prepare_ack` in idle heartbeats. The GUI clears transmission only on matching
 acknowledgment, episode start, failure or a new service boundary. The session ignores
@@ -142,7 +150,11 @@ updates its source offset only on accepted plans and adds `timeline.cursor(now)`
 to count latency-trimmed rows like RTC/PAINT. Reset clears accepted progress;
 warmup and rejected responses do not advance it. The scheduler still owns capacity,
 and this mode does not consult `refill_threshold_s`. Validate K < H, no source cap,
-`drop_infer_latency`, and no waypoint or skipped-row handoff.
+`drop_infer_latency` or `first_step_when_ready`, and no waypoint or skipped-row handoff.
+With `first_step_when_ready` and an uncropped adapter output, progress starts at
+zero on activation, so K policy intervals pass before the next submission.
+This is distinct from `min_plan_hold_policy_steps`, which gates replacement,
+not submission. Warmup uses the same progress trigger through its private planner.
 
 On each eligible control tick, the scheduler calls the optional
 `observe_snapshot(snapshot)` hook **before** admission checks. DP/UMI history plugins
@@ -263,6 +275,16 @@ For scheduling changes use a deterministic clock and synthetic chunks to check
 timestamps, overlap, delayed/rejected responses and reset as relevant. For executor
 changes check actual arm/tool limits and output groups. Preserve capability checks;
 an algorithm setting alone does not implement the model's sampling hooks.
+
+### Signed Async handoff adjustment
+
+For standalone single-inflight Async using `drop_infer_latency` and blend handoff,
+`handoff_skip_steps` may be negative: retain that many latency-trimmed rows at the
+same handoff clock, extending the remaining trajectory. Total crop is clamped at
+zero and the first chunk is not adjusted. Source-progress triggers count the actual
+crop plus the active cursor. This changes timing alignment, not physical speed
+limits, and does not guarantee continuous commands. Other algorithms retain their
+existing nonnegative restrictions.
 
 ### RTC waypoint handoff skip
 
@@ -515,15 +537,44 @@ waits for the in-flight request, then acknowledged backend reset; only a fresh s
 observation enters formal execution. Warmup timings remain separate from formal metrics.
 The control mailbox suppresses activation/selection on stale transport snapshots.
 
-PAINT implements `build_warmup_submission()` for ordinary and anchored-prefix requests.
-Its `warmup_required_calls` requests two successful calls per branch: the first compiles
-that branch, the second supplies a steady end-to-end sample. An early Start remains in
-the draining phase while these calls finish, then waits for reset acknowledgement.
-Failed required calls cannot release formal execution. Metadata reports required and
-completed branch counts and `branches_ready`; warmup plans never enter the Timeline.
-The delay buffer uses the selected algorithm's window. PAINT's `seed_warmup()` preserves
-ceil-rounded steady samples across reset, with its explicit initial delay as a floor;
-first calls of both branches remain visible but are excluded from calibration.
+Warmup never submits another request in the tick that decodes a response: inline
+IK can block, so the next request must use state/cameras acquired on the next tick.
+Otherwise the previous decode becomes observation age in the next E2E sample and
+inflates delay calibration. Completed events include `observation_age_ms`,
+`request_to_decode_ms`, `decode_ms`, and `post_decode_ms`; these sum to `e2e_ms`.
+`inference_ms` is the worker model-call duration (including its client/transport),
+a subset of request-to-decode time, not a separate additive term or GPU-only time.
+RoboGUI labels E2E explicitly and displays model-call and decode/IK durations.
+
+`PolicyWarmup` uses `PreviewPlanner` and the same `PlanningContext` as rollout.
+The resolved config supplies the scheduler, strategy requests, decode seed/time,
+source cap, trimming/blending, candidate selection, adaptive prefix, IK and executor.
+Each preview owns its timeline, strategy/adapter, executor and command-safety history;
+no robot or command sink is passed to it. The process decoder, when configured, is
+borrowed exclusively and drained before backend reset. The physical runtime continues
+to send its existing measured-position hold command, never preview commands.
+
+Serial waits for its configured prefix to finish. Async progress/refill triggers and
+RTC/PAINT condition generation use actual preview progress. AutoHorizon and candidate
+samplers retain their specialized requests. There is no alternating synthetic branch
+loop or ordinary-sampler fallback. Preview state uses measured feedback and real camera
+frames; it does not simulate the robot achieving predicted positions. Consequently
+warmup is a compute-path check, not a physical feasibility or task-success claim.
+
+RTC/PAINT require one accepted ordinary plan and two accepted conditioned plans before
+an early Start can complete draining. This follows their natural branch sequence, rather
+than resetting history to manufacture another ordinary call. First calls remain visible
+but are excluded from latency calibration; accepted responses update the preview
+strategy's own estimator exactly as in rollout. Formal strategy history is reset and
+only steady latency samples are transferred after backend reset acknowledgement.
+Cold compilation may exceed the executable plan deadline: the warmed response is
+reported as rejected and never bypasses configured age/deadline checks.
+
+E2E ends at preview plan acceptance, matching formal plan timing. Step IK and executor
+work occur on control ticks and are reported separately as `execution_ms`/`ik_status`;
+they must not be mislabeled as GPU inference or whole-chunk decode. GUI preview cursors,
+trimming and condition spans come from the runtime preview, not a free-running client
+animation. Preview commands/plans are excluded from formal recordings and step counts.
 
 ## Opt-in inference composition
 
@@ -696,3 +747,19 @@ publishes that field in HELLO_ACK. Prefer the loaded model's effective setting o
 copying an expected value into the response. Exercise matching, mismatching and
 missing fields through the HELLO builder and runtime comparator before providing
 launch commands. Do not remove identity checks to make a missing-field error pass.
+
+## Recording management
+
+RoboGUI's `RecordingsPanel` browses the current method output directory using
+`recording.management`. Operators select complete rollouts and confirm paths and a
+reason. Deletion is reversible: whole episodes move to `_archive/deleted`, outside
+inventory and repeat scans. `.deleted` files reserve the original rollout IDs;
+the runtime allocator must not reuse them. Restore refuses to overwrite any newer
+finalized or partial recording. Saved manifests and other layouts remain unchanged.
+
+Serialize recording changes with Prepare and evaluation. Block mutations during an
+active episode, startup, recovery, pending selection, evaluation/save, or a missing
+service heartbeat. Recheck the metadata/result/label revision at confirmation.
+Refresh repeat history and existing derived indexes after deletion/restoration.
+Imported history is read-only in this panel. Test path boundaries, partial records,
+changed labels, rollback, ID allocation, progress and GUI lifecycle interlocks.
