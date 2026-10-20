@@ -1,0 +1,62 @@
+run:
+  task: insert_tubes
+  instruction_stream: language.instruction
+  observation_streams: [proprio.joint_state]
+  output_dir: ./data/asyncsim-xr1-insert-tubes-default-multi-inflight
+  max_control_steps: 500
+  max_command_submissions: 1000
+  skip_unplanned_commands: true
+  simulation_time_timeline: true
+
+robot:
+  type: asyncsim
+  config: ../../embodiment/robot/robodojo_x5_dual.yaml
+  control_hz: 25
+  group_dims: {left_arm: 7, right_arm: 7}
+  options:
+    endpoint: ws://127.0.0.1:18765
+    state_stream: proprio.canonical_joint_state
+    state_keys: {left_arm: left_arm, right_arm: right_arm}
+    command_ttl_s: 35.0
+
+sensors:
+- name: robodojo_cameras
+  driver: asyncsim
+  options:
+    streams:
+      head: camera.cam_head.rgb
+      left_wrist: camera.cam_left_wrist.rgb
+      right_wrist: camera.cam_right_wrist.rgb
+
+policy:
+  worker: xpolicylab_ws
+  options:
+    server: ws://127.0.0.1:18766
+    action_format: native
+    request_timeout_s: 120.0
+  adapter:
+    type: manimux.policy_adapter.xr1.arx_x5:XR1ArxX5Adapter
+    gripper_state_stream: proprio.joint_state
+    camera_map: {cam_head: head, cam_left_wrist: left_wrist, cam_right_wrist: right_wrist}
+  action_dt_s: 0.04
+  horizon_policy_steps: 30
+  timeout_s: 120.0
+  startup_timeout_s: 1200.0
+  inference_delay_s: 0.0
+
+inference:
+  algorithm: async
+  inference_schedule: multi_inflight
+  request_trigger: continuous
+  observation_hz: 25
+  chunk_policy_steps: 30
+  action_start_mode: drop_infer_latency
+  max_plan_age_s: 120.0
+  blend_policy_steps: 0
+
+executor:
+  type: direct
+
+policy_server:
+  config: ../../policy/xiaomi-xr1/robodojo/sim_arx_x5_ee.yaml
+  task_name: insert_tubes

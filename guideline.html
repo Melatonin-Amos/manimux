@@ -220,7 +220,29 @@ before enabling a combination. See <a href="#configuration">configuration</a> an
 <a href="#support">deployment recipes</a> for the rest of the experiment and launch procedure.</p>
 <h3 id="asyncsim-deployments">AsyncSim deployments</h3>
 <p>Simulation experiments live under <code>manimux/configs/experiments/asyncsim/</code> and use AsyncSimRuntime, the shared policy worker, request scheduler and action timeline. Ordinary chunking selects <code>async</code> or <code>serial</code>; latency trimming uses <code>drop_infer_latency</code>. Use <code>robodojo_x5_dual.yaml</code> for RoboDojo geometry, separately from the physical X5 model.</p>
-<p>Run the controller in <code>envs/arx_x5/.venv</code>, inference in the model's own environment, and simulation in the RoboDojo environment. The <a href=".agents/skills/manimux-inference/references/deployment/vpp2-arx-x5.md">VPP2 deployment reference</a> covers visible observation history and launch prerequisites. VPP2 uses default sampling, serial 25 Hz execution and a 24-action prefix. History does not receive simulator poses or execution metrics. Multiple in-flight requests are not supported by AsyncSimRuntime.</p>
+<p>Run the controller in <code>envs/arx_x5/.venv</code>, inference in the model's own environment, and simulation in the RoboDojo environment. The <a href=".agents/skills/manimux-inference/references/deployment/vpp2-arx-x5.md">VPP2 deployment reference</a> covers visible observation history and launch prerequisites. VPP2 uses default sampling, serial 25 Hz execution and a 24-action prefix. History does not receive simulator poses or execution metrics.</p>
+<p>AsyncSimRuntime supports <code>multi_inflight</code> with a streaming-capable backend. Each result keeps its request's observation anchor and deadline; results newer than the accepted plan can be used even after another observation was uploaded. XR1 and OpenWAM X5 decoding preserve request context beyond their eight-entry fallback caches. Serial retains one outstanding request and waits for the execution prefix to finish. Inline IK still uses the controller thread.</p>
+<p>Select <code>robodojo_xr1_insert_tubes_default_multi_inflight.yaml</code> for default XR1 sampling with continuous observation uploads capped at 25 Hz, 30 action rows at 40 ms each, and <code>drop_infer_latency</code> on the simulation clock. The existing <code>robodojo_xr1_insert_tubes_default_serial.yaml</code> keeps serial execution from row zero. With the model and simulator already running, launch from the AsyncSim workspace root:</p>
+<pre><code class="language-bash">PYTHONPATH=.:manimux manimux/envs/arx_x5/.venv/bin/python scripts/run_async_benchmark.py \
+  --experiment manimux/manimux/configs/experiments/asyncsim/robodojo_xr1_insert_tubes_default_multi_inflight.yaml \
+  --local manimux/manimux/configs/local/asyncsim_xr1.example.yaml \
+  --task insert_tubes --policy Xiaomi_Robotics_1 \
+  --checkpoint HF-RoboDojo-sim-arx_x5-ee-0-35efbc7 \
+  --profile async_config/profiles/manimux_xr1_zero_delay.yml --seeds 1 \
+  --timeout 900 --output async_eval_result/xr1_insert_tubes_default_multi_inflight</code></pre>
+<p>For one Isaac Sim instance with N environments and N independent policy services, run the simulator with <code>--num-envs N</code> and the benchmark with <code>--policy-urls URL_0 ... URL_N-1</code>. The URL order maps to <code>robot.options.env_index</code> (default 0). Each slot owns a separate AsyncSimRuntime session, worker, timeline and executor; each external service loads its own model and keeps the policy recipe's <code>num_envs: 1</code>. This is independent of <code>multi_inflight</code> and does not share weights or batch inference.</p>
+<p>Start the N policy processes externally on distinct ports, using their existing launcher and separate private station files. The benchmark requires the <code>xpolicylab_ws</code> worker, a matching simulator environment count and distinct <code>server_instance_id</code> values. HELLO preflight does not reset models; normal workers still check backend identity and sampling capabilities. GPU placement remains external, and independent services still compete for memory and compute on shared hardware.</p>
+<p>Reset uses full batches: all slots must reset before physics starts, and every slot must finish before the next batch. Seed count must be divisible by N; partial reset and dynamic slot replacement are not supported. Terminal task results and episode clocks stop changing while the shared scene continues. With the two services and a two-environment simulator already running, launch from the AsyncSim workspace root:</p>
+<pre><code class="language-bash">"$RUNNER_PYTHON" scripts/run_async_benchmark.py \
+  --experiment manimux/manimux/configs/experiments/asyncsim/robodojo_pi05_insert_tubes_rtc.yaml \
+  --local manimux/manimux/configs/local/asyncsim_pi05.example.yaml \
+  --asyncsim-url ws://127.0.0.1:18765 \
+  --policy-urls ws://127.0.0.1:18766 ws://127.0.0.1:18776 \
+  --task insert_tubes --policy Pi_05 \
+  --checkpoint RoboDojo-sim-arx_x5-joint-0/59999 \
+  --profile async_config/profiles/manimux_pi05_zero_delay.yml \
+  --seeds 0 1 2 3 --output async_eval_result/pi05_parallel</code></pre>
+<p>The AsyncSim repository's <code>docs/PARALLEL_SIMULATION.md</code> covers policy station files, simulator startup, reset timeout and failure handling. Validation covers two mock services over real WebSockets with ManiMux workers, including a fast environment finishing while a slow inference is pending. This change has not been validated with a real multi-environment Isaac/GPU/model rollout.</p>
 <h3 id="request-schedules-and-triggers">Request schedules and triggers</h3>
 <table>
 <thead>

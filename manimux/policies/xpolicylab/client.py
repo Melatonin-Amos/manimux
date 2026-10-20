@@ -42,12 +42,8 @@ from manimux.policies.xpolicylab.codec import (
     encode_observation,
 )
 from manimux.policies.xpolicylab.ws_client import XPolicyLabWsClient
-from manimux.runtime.train_time_rtc import TrainTimeRtcRequest
 from manimux.runtime.aac import AacInferenceRequest
-from manimux.runtime.autohorizon import AutoHorizonInferenceRequest
-from manimux.runtime.bid import BidInferenceRequest
-from manimux.runtime.paint import PaintInferenceRequest
-from manimux.runtime.rtc.request import RtcInferenceRequest
+from manimux.runtime.train_time_rtc import TrainTimeRtcRequest
 from manimux.types import InferenceRequest, InferenceResponse
 
 
@@ -334,10 +330,7 @@ class XPolicyLabWsPolicyModel:
         }
 
     def submit(self, request: InferenceRequest) -> bool:
-        if type(request) not in (
-            InferenceRequest, RtcInferenceRequest, BidInferenceRequest, AacInferenceRequest,
-            AutoHorizonInferenceRequest, PaintInferenceRequest,
-        ):
+        if not isinstance(request, InferenceRequest) or isinstance(request, TrainTimeRtcRequest):
             raise ValueError("unsupported multi_inflight request type")
         # Bound transport buffering too, even when a server or network stalls.
         # Superseded acknowledgements release credits without producing actions.

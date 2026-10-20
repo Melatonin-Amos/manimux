@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from copy import deepcopy
+import math
 import sys
 import time
+import uuid
+from collections.abc import Iterable
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
-import uuid
 
 from manimux.clock import Clock, SystemClock
 from manimux.embodiments.asyncsim import AsyncSimClient, AsyncSimRobot, AsyncSimSensor
@@ -18,13 +19,21 @@ from manimux.policies.worker import PolicyWorkerClient
 from manimux.policy_adapter import build_policy_adapter
 from manimux.runtime.executors import DirectExecutor, SmoothExecutor
 from manimux.runtime.inference import (
-    CommitSettings, RequestState, build_inference_strategy, prepare_strategy_chunk,
+    CommitSettings,
+    RequestState,
+    build_inference_strategy,
+    prepare_strategy_chunk,
 )
 from manimux.runtime.safety import RuntimeState, SafetyGuard
 from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
 from manimux.types import (
-    ActionChunk, ActionContext, InferenceResponse, ObservationSnapshot, RobotCommand, RobotState,
+    ActionChunk,
+    ActionContext,
+    InferenceResponse,
+    ObservationSnapshot,
+    RobotCommand,
+    RobotState,
     copy_group_vector,
 )
 
@@ -41,8 +50,6 @@ class AsyncSimRuntime:
             "async", "serial", "act_temporal_ensemble", "rtc", "paint",
         }:
             raise ValueError("AsyncSim inference strategy is not supported")
-        if config["inference"]["inference_schedule"] == "multi_inflight":
-            raise ValueError("AsyncSim does not yet support multiple in-flight requests")
         if config["policy"]["action_decoding"] != "inline" or config["inference"]["independent_group_decoding"]:
             raise ValueError("AsyncSim requires inline, non-independent action decoding")
         self.config = config
@@ -51,6 +58,7 @@ class AsyncSimRuntime:
         self.worker = worker
         self.strategy = build_inference_strategy(config)
         self.scheduler = RequestScheduler(config["inference"])
+        self._multi_inflight = self.scheduler.mode == "multi_inflight"
         self.adapter = build_policy_adapter(
             config["robot"], config["policy"], motion_limits=config["executor"]["motion_limits"],
         )
@@ -291,6 +299,8 @@ class AsyncSimRuntime:
         missing = self.strategy.required_sampling_modes.difference(capabilities.sampling_modes)
         if missing:
             raise RuntimeError(f"policy backend does not support sampling modes {sorted(missing)}")
+        if self._multi_inflight and not capabilities.multi_inflight:
+            raise RuntimeError("policy backend does not support multi_inflight")
         expected = self.config["policy"]["expected_backend"]
         if expected is not None:
             def compare(required: dict, actual: dict, path: str) -> None:
@@ -310,7 +320,9 @@ class AsyncSimRuntime:
         timeout_s: float | None = None, recording_directory: str | Path | None = None,
     ) -> dict[str, Any]:
         """Execute ManiMux's worker, adapter, strategy, timeline and executor."""
-        worker = self.worker or PolicyWorkerClient(self.config["policy"], self.session_id)
+        worker = self.worker or PolicyWorkerClient(
+            self.config["policy"], self.session_id, multi_inflight=self._multi_inflight,
+        )
         max_steps = max_steps or self.config["run"]["max_control_steps"]
         if max_steps <= 0:
             raise ValueError("max_steps must be positive")
@@ -327,8 +339,12 @@ class AsyncSimRuntime:
         last_submitted = -1
         last_deadline = 0
         in_flight = False
-        pending_observation_ns: dict[int, int] = {}
-        pending_observation_states: dict[int, RobotState] = {}
+        pending_requests: dict[int, tuple[int, int, RobotState]] = {}
+        max_pending_requests = (
+            max(2, math.ceil(
+                self.config["policy"]["timeout_s"] * self.config["inference"]["observation_hz"]
+            ) + 2) if self._multi_inflight else 1
+        )
         try:
             worker.start()
             self._check_capabilities(worker)
@@ -361,12 +377,36 @@ class AsyncSimRuntime:
                 self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
-                nonlocal request_seq, last_submitted, last_deadline, pending_observation_ns, in_flight
+                nonlocal request_seq, last_submitted, last_deadline, in_flight
+                if self._multi_inflight:
+                    # Coalesced IPC uploads and server acknowledgements may never
+                    # reach this loop. Retire their contexts without losing a live anchor.
+                    wall_ns = self.clock.now_ns()
+                    for seq, (observation_ns, deadline_ns, _) in list(pending_requests.items()):
+                        reason = (
+                            "superseded" if seq <= self.timeline.accepted_request_seq
+                            else "deadline_exceeded" if wall_ns > deadline_ns else None
+                        )
+                        if reason is not None:
+                            pending_requests.pop(seq)
+                            self.strategy.on_response_rejected(InferenceResponse(
+                                session_id=self.session_id, request_seq=seq,
+                                observation_time_ns=observation_ns, deadline_ns=deadline_ns,
+                                finished_time_ns=wall_ns, inference_ms=0.0,
+                                raw_action=None, error=reason,
+                            ))
+                            events.append({"kind": "inference_retired", "request_seq": seq,
+                                           "reason": reason})
+                    in_flight = bool(pending_requests)
+                    if len(pending_requests) >= max_pending_requests:
+                        return False
                 submission = self.scheduler.build_submission(
                     self.strategy,
                     session_id=self.session_id, request_seq=request_seq + 1, now_ns=now_ns,
                     snapshot=observation, adapter=self.adapter, timeline=self.timeline,
-                    request_state=RequestState(in_flight, last_submitted, last_deadline),
+                    request_state=RequestState(
+                        in_flight, last_submitted, last_deadline, multi_flight=self._multi_inflight,
+                    ),
                     runtime_state=RuntimeState.RUNNING,
                 )
                 if submission is None:
@@ -385,11 +425,15 @@ class AsyncSimRuntime:
                 request_seq = prepared.request_seq
                 last_submitted = request_seq
                 last_deadline = prepared.deadline_ns
-                pending_observation_ns = {request_seq: prepared.observation_time_ns}
-                pending_observation_states.clear()
+                if not self._multi_inflight:
+                    pending_requests.clear()
                 request_state = prepared.observation.state
-                pending_observation_states[request_seq] = RobotState(
-                    copy_group_vector(request_state.groups), request_state.monotonic_ns, request_state.sequence,
+                pending_requests[request_seq] = (
+                    prepared.observation_time_ns, prepared.deadline_ns,
+                    RobotState(
+                        copy_group_vector(request_state.groups),
+                        request_state.monotonic_ns, request_state.sequence,
+                    ),
                 )
                 in_flight = True
                 events.append({"kind": "inference_submitted", "request_seq": request_seq,
@@ -445,20 +489,33 @@ class AsyncSimRuntime:
                         "finished_time_ns": response.finished_time_ns,
                         "inference_ms": response.inference_ms,
                     })
-                    if response.request_seq == last_submitted:
+                    same_session = response.session_id == self.session_id
+                    if same_session and response.request_seq == last_submitted:
                         in_flight = False
-                    observation_ns = pending_observation_ns.pop(response.request_seq, None)
-                    observation_state = pending_observation_states.pop(response.request_seq, None)
+                    pending = (
+                        pending_requests.pop(response.request_seq, None) if same_session else None
+                    )
+                    observation_ns, deadline_ns, observation_state = (
+                        pending if pending is not None else (None, 0, None)
+                    )
+                    stale_request = pending is None or (
+                        response.request_seq <= self.timeline.accepted_request_seq
+                        if self._multi_inflight else response.request_seq != last_submitted
+                    )
                     invalid_reason = (
-                        response.error
-                        or ("stale_session" if response.session_id != self.session_id else None)
-                        or ("stale_request" if response.request_seq != last_submitted else None)
+                        ("stale_session" if not same_session else None)
+                        or ("stale_request" if stale_request else None)
+                        or response.error
                         or ("observation_mismatch" if response.observation_time_ns != observation_ns else None)
-                        or ("deadline_exceeded" if response.finished_time_ns > last_deadline or self.clock.now_ns() > last_deadline else None)
+                        or ("deadline_exceeded" if (
+                            response.finished_time_ns > deadline_ns
+                            or self.clock.now_ns() > deadline_ns
+                        ) else None)
                         or ("empty_action" if response.raw_action is None else None)
                     )
                     if invalid_reason is not None:
-                        self.strategy.on_response_rejected(response)
+                        if same_session:
+                            self.strategy.on_response_rejected(response)
                         rejected += 1
                         rejection_reasons.append(invalid_reason)
                         events.append({"kind": "inference_rejected", "request_seq": response.request_seq,

@@ -111,14 +111,64 @@ latency is not yet observable when a hard prefix must be submitted.
 snapshots and sends canonical joint targets. Its structural robot proxy does not
 construct physical controllers. It composes the shared worker, adapter, strategy,
 request scheduler, timeline and direct/smooth executor. Supported strategies are
-Async, Serial, ACT, RTC and PAINT; multiple in-flight requests and process or
-independent decoding are not supported. Do not route `asyncsim` experiments
+Async, Serial, ACT, RTC and PAINT, including their supported multi-inflight
+schedules. Process and independent decoding are not supported. Do not route `asyncsim` experiments
 through EdgeRuntime or the physical robot factory.
+
+Serial keeps one outstanding inference request and waits for the execution prefix
+to finish before the next submission. Its schedule remains `serial`; changing it
+to `single_inflight` would allow ordinary asynchronous refill during execution.
+
+Multi-inflight uses the existing streaming worker and requires backend capability
+negotiation plus an explicit `observation_hz`. Runtime retains each request's
+observation state, timestamp and wall-clock deadline. A response may precede the
+latest upload, but must match a retained request and be newer than the accepted
+plan. RTC/PAINT also enforce their existing accepted-reference checks. Previous
+sessions cannot consume current request contexts.
+
+Unreturned contexts are retired after their own deadline or when a newer plan is
+accepted, including uploads coalesced by IPC or the server. Their retirement uses
+the strategy's existing rejection callback and is recorded as `inference_retired`,
+separately from returned-response rejection counts. Retention is bounded to
+`ceil(policy.timeout_s * observation_hz) + 2` contexts (at least two); submission
+pauses at this bound without evicting a live anchor when simulation outpaces wall
+time. This does not cancel remote inference. Inline IK still occupies the controller
+thread. Verified adapter paths are JointAdapter, XR1ArxX5Adapter and OpenWAMArxX5Adapter;
+this does not expand EdgeRuntime's adapter support.
+
+Select `manimux/configs/experiments/asyncsim/robodojo_xr1_insert_tubes_default_multi_inflight.yaml`
+for default XR1 sampling with continuous uploads capped at 25 Hz and simulation-time
+latency trimming. The serial recipe retains its original execution behavior,
+checkpoint, 30-row horizon and 40 ms action interval.
 
 With `run.simulation_time_timeline: true`, command periods use simulator time.
 Wall time paces polling and enforces timeouts. Missed command periods are skipped
 and recorded, never replayed in bursts; task evaluation continues during inference.
 Worker startup precedes episode reset.
+
+For one Isaac Sim process with N environments and N independent policy services,
+each AsyncSimRuntime still owns exactly one session, worker, timeline and executor.
+`robot.options.env_index` (default 0) selects the simulator slot in the client,
+robot and sensor bundle. Reset binds the session to that slot; later requests use
+the binding. Do not pass the simulator's N-environment batch into model history or
+change a single-slot policy recipe to `num_envs: N`.
+
+From the AsyncSim workspace, `scripts/run_async_benchmark.py --policy-urls URL_0
+... URL_N-1` creates one independent controller per slot. It requires the
+`xpolicylab_ws` worker, matching simulator `num_envs` and distinct service instance
+IDs obtained through HELLO without a model reset. Normal worker startup retains
+backend identity and sampling capability validation. Policy processes are started
+externally and load independent model copies; no shared-weight or batched service
+is added. Parallelism is separate from a controller's `multi_inflight` schedule.
+
+The server collects all slot resets before resetting the shared scene and starting
+physics. Initial-stream polling already waits for this barrier. Runs use fixed
+full batches with the same task/profile/experiment/checkpoint; seed count must be
+divisible by N. No per-slot reset during an active batch or dynamic replacement is
+supported. A slow policy does not stop physics or peer controllers, but shared GPU
+and CPU contention still affects latency. See `guideline.html#asyncsim-deployments`
+for the command and the AsyncSim repository's `docs/PARALLEL_SIMULATION.md` for
+resource placement, timeout, failure and validation limits.
 
 `run.observation_streams` optionally preserves additional visible packets and
 source timestamps in `ObservationSnapshot.stream_packets`. Models must use

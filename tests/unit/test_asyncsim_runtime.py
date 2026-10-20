@@ -1,22 +1,35 @@
 from __future__ import annotations
 
-import unittest
-from pathlib import Path
-from unittest.mock import patch
 import time
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
+from manimux.cli import load_config
 from manimux.embodiments.asyncsim import AsyncSimRobot, AsyncSimSensor
 from manimux.embodiments.asyncsim.client import AsyncSimRemoteError
-from manimux.cli import load_config
 from manimux.policies import build_policy_model
 from manimux.policies.capabilities import PolicyCapabilities
 from manimux.policies.xpolicylab.client import XPolicyLabWsPolicyModel
+from manimux.policy_adapter import build_policy_adapter
+from manimux.policy_adapter.openwam.arx_x5 import OpenWAMX5Request
 from manimux.runtime.asyncsim import AsyncSimRuntime
 from manimux.runtime.paint import PaintInferenceRequest
 from manimux.runtime.rtc.request import RtcInferenceRequest
-from manimux.types import ActionChunk, InferenceResponse, RobotCommand
+from manimux.runtime.train_time_rtc import TrainTimeRtcRequest
+from manimux.types import (
+    ActionChunk,
+    ActionContext,
+    InferenceRequest,
+    InferenceResponse,
+    ObservationSnapshot,
+    RobotCommand,
+    RobotState,
+)
 
 
 class FakeAsyncSim:
@@ -154,6 +167,43 @@ class SamplingWorker(FakeWorker):
         super().__init__(clock, PolicyCapabilities(sampling_modes=frozenset({mode})))
         self.mode = mode
 
+
+class StreamingWorker(FakeWorker):
+    def __init__(self, clock, replies=None, modes=frozenset({"default"})):
+        super().__init__(clock, PolicyCapabilities(sampling_modes=modes, multi_inflight=True))
+        self.replies = replies or {}
+        self.poll_ticks = 0
+
+    def submit_latest(self, request):
+        self.submitted.append(request)
+
+    def poll(self):
+        self.poll_ticks += 1
+        reply = self.replies.get(self.poll_ticks)
+        if reply is None:
+            return None
+        seq, overrides = reply
+        request = next(item for item in self.submitted if item.request_seq == seq)
+        actions = {name: np.ones((4, len(values)))
+                   for name, values in request.observation.state.groups.items()}
+        return replace(InferenceResponse(
+            request.session_id, seq, self.clock.now_ns(), 1.0,
+            {"format": "joint", "actions": actions,
+             "action_semantics": "absolute_joint_position"},
+            observation_time_ns=request.observation_time_ns,
+            deadline_ns=request.deadline_ns,
+        ), **overrides)
+
+
+def streaming_config():
+    configured = config()
+    configured["policy"]["adapter"]["type"] = "manimux.policy_adapter.joint:JointAdapter"
+    configured["inference"].update(
+        inference_schedule="multi_inflight", request_trigger="continuous", observation_hz=50,
+    )
+    return configured
+
+
 def config():
     source = Path(__file__).resolve().parents[2] / "manimux/configs/experiments/asyncsim/fake_joint.yaml"
     return load_config(source)
@@ -170,7 +220,6 @@ class AsyncSimRuntimeTests(unittest.TestCase):
                 self.assertEqual(runtime.robot.env_index, index)
                 self.assertEqual(runtime.sensor.env_index, index)
 
-
     def test_client_routes_reset_and_health_without_changing_default_wire_shape(self):
         from manimux.embodiments.asyncsim.client import AsyncSimClient
 
@@ -183,6 +232,300 @@ class AsyncSimRuntimeTests(unittest.TestCase):
                     client.health()
                     request.assert_called_with("health", {"env_index": index} if index else None)
 
+    def test_multi_inflight_accepts_valid_earlier_response_and_rejects_older_plan(self):
+        clock = FixedClock()
+        worker = StreamingWorker(clock, {4: (1, {}), 6: (4, {}), 7: (2, {})})
+        run = AsyncSimRuntime(
+            streaming_config(), client=FakeAsyncSim(), clock=clock, worker=worker,
+        ).run_policy(max_steps=8)
+        events = run["audit"]["manimux_events"]
+        self.assertEqual([event["request_seq"] for event in events
+                          if event["kind"] == "plan_committed"], [1, 4])
+        self.assertIn("stale_request", run["rejection_reasons"])
+        self.assertTrue(any(event["kind"] == "inference_retired"
+                            and event["request_seq"] == 2 and event["reason"] == "superseded"
+                            for event in events))
+        self.assertEqual(len(worker.submitted), 8)
+
+    def test_multi_inflight_checks_each_requests_deadline(self):
+        clock = FixedClock()
+        configured = streaming_config()
+        configured["policy"]["timeout_s"] = .05
+        worker = StreamingWorker(clock, {4: (1, {})})
+        run = AsyncSimRuntime(
+            configured, client=FakeAsyncSim(), clock=clock, worker=worker,
+        ).run_policy(max_steps=5)
+        self.assertEqual(run["accepted_plans"], 0)
+        self.assertIn("deadline_exceeded", run["rejection_reasons"])
+        self.assertGreater(worker.submitted[2].deadline_ns, clock.time_ns - 40_000_000)
+
+    def test_old_session_cannot_consume_current_requests_context(self):
+        clock = FixedClock()
+        worker = StreamingWorker(clock, {3: (1, {"session_id": "old-episode"}), 4: (1, {})})
+        run = AsyncSimRuntime(
+            streaming_config(), client=FakeAsyncSim(), clock=clock, worker=worker,
+        ).run_policy(max_steps=5)
+        self.assertIn("stale_session", run["rejection_reasons"])
+        self.assertEqual(run["accepted_plans"], 1)
+
+    def test_multi_inflight_preserves_request_observation_during_overlapping_uploads(self):
+        clock = FixedClock()
+        worker = StreamingWorker(clock, {12: (1, {})})
+        runtime = AsyncSimRuntime(
+            streaming_config(), client=FakeAsyncSim(), clock=clock, worker=worker,
+        )
+        with patch.object(runtime.adapter, "decode_action", wraps=runtime.adapter.decode_action) as decode:
+            run = runtime.run_policy(max_steps=13)
+        self.assertEqual(run["accepted_plans"], 1)
+        context = decode.call_args.args[1]
+        self.assertEqual(context.observation_state.monotonic_ns,
+                         worker.submitted[0].observation_time_ns)
+        self.assertIsNot(context.observation_state, worker.submitted[0].observation.state)
+
+    def test_multi_inflight_bounds_contexts_when_simulation_outpaces_wall_time(self):
+        class FastSimClock(FixedClock):
+            def sleep_until_ns(self, target_ns):
+                self.time_ns += 1_000_000
+
+        class FastAsyncSim(FakeAsyncSim):
+            def read_snapshot(self, streams):
+                self.sim_ts += .02
+                return super().read_snapshot(streams)
+
+        configured = streaming_config()
+        configured["run"]["simulation_time_timeline"] = True
+        configured["policy"]["timeout_s"] = .1
+        clock = FastSimClock()
+        worker = StreamingWorker(clock)
+        run = AsyncSimRuntime(
+            configured, client=FastAsyncSim(clock.now_ns), clock=clock, worker=worker,
+        ).run_policy(max_steps=20)
+        self.assertEqual(run["steps"], 20)
+        self.assertEqual(len(worker.submitted), 7)
+
+    def test_multi_inflight_retires_unreturned_uploads_after_timeout(self):
+        clock = FixedClock()
+        configured = streaming_config()
+        configured["policy"]["timeout_s"] = .05
+        worker = StreamingWorker(clock)
+        run = AsyncSimRuntime(
+            configured, client=FakeAsyncSim(), clock=clock, worker=worker,
+        ).run_policy(max_steps=10)
+        retired = [event for event in run["audit"]["manimux_events"]
+                   if event["kind"] == "inference_retired"]
+        self.assertTrue(retired)
+        self.assertTrue(all(event["reason"] == "deadline_exceeded" for event in retired))
+        self.assertEqual(len(worker.submitted), 10)
+
+    def test_multi_inflight_requires_backend_capability_before_reset(self):
+        clock = FixedClock()
+        backend = FakeAsyncSim()
+        worker = FakeWorker(clock)
+        with self.assertRaisesRegex(RuntimeError, "multi_inflight"):
+            AsyncSimRuntime(
+                streaming_config(), client=backend, clock=clock, worker=worker,
+            ).run_policy(max_steps=2)
+        self.assertIsNone(backend.episode_id)
+        self.assertFalse(worker.submitted)
+
+    def test_transport_selection_keeps_serial_single_inflight(self):
+        for mode, multi in (("serial", False), ("multi_inflight", True)):
+            with self.subTest(schedule=mode):
+                clock = FixedClock()
+                configured = streaming_config()
+                configured["inference"]["inference_schedule"] = mode
+                worker = StreamingWorker(clock, {2: (1, {})})
+                with patch("manimux.runtime.asyncsim.PolicyWorkerClient", return_value=worker) as factory:
+                    runtime = AsyncSimRuntime(configured, client=FakeAsyncSim(), clock=clock)
+                    runtime.run_policy(max_steps=2)
+                self.assertEqual(factory.call_args.kwargs["multi_inflight"], multi)
+
+    def test_rtc_multi_inflight_preserves_condition_reference_checks(self):
+        clock = FixedClock()
+        configured = streaming_config()
+        configured["inference"].update(algorithm="rtc", request_trigger="algorithm")
+        configured["inference"]["rtc"].update(
+            initial_delay_policy_steps=1, min_execute_policy_steps=1,
+        )
+        worker = StreamingWorker(clock, {4: (1, {}), 5: (2, {})}, frozenset({"rtc"}))
+        runtime = AsyncSimRuntime(configured, client=FakeAsyncSim(), clock=clock, worker=worker)
+        run = runtime.run_policy(max_steps=6)
+        self.assertEqual(run["accepted_plans"], 1)
+        self.assertTrue(any("rtc_condition_plan_replaced" in reason
+                            for reason in run["rejection_reasons"]))
+
+    def test_x5_request_context_survives_eight_entry_adapter_cache(self):
+        class PoseModel:
+            base_frame = "base_link"
+            tcp_frame = "link6"
+
+            def fk(self, q):
+                pose = np.eye(4)
+                pose[:3, 3] = q[:3]
+                return pose
+
+            def ik(self, target, seed, *, fixed_coordinates):
+                joints = seed.copy()
+                joints[:3] = target[:3, 3]
+                joints[-1] = fixed_coordinates["gripper"]
+                return SimpleNamespace(converged=True, joints=joints)
+
+        base = Path(__file__).resolve().parents[2] / "manimux/configs/experiments/asyncsim"
+        for model, filename in (
+            ("xr1", "robodojo_xr1_insert_tubes_default_serial.yaml"),
+            ("openwam", "robodojo_openwam_insert_key.yaml"),
+        ):
+            with self.subTest(model=model):
+                configured = load_config(base / filename)
+                models = {name: PoseModel() for name in configured["robot"]["group_dims"]}
+                adapter = build_policy_adapter(
+                    configured["robot"], configured["policy"],
+                    kinematics=SimpleNamespace(models=models),
+                )
+                original = RobotState({name: np.r_[[.1, .2, .3], [0., 0., 0.], .2]
+                                       for name in models}, 100, 1)
+                poses = {"left_ee_pose": [.1, .2, .3, 1., 0., 0., 0.],
+                         "right_ee_pose": [.1, .2, .3, 1., 0., 0., 0.]}
+                snapshot = ObservationSnapshot(original, stream_packets={
+                    "proprio.ee_pose": {"payload": {0: poses}},
+                })
+                request = InferenceRequest("test", 1, 100, 10**10, snapshot)
+                adapter.prepare_request(request)
+                for seq in range(2, 20):
+                    newer = replace(snapshot, state=RobotState(
+                        {name: np.r_[[.8, .7, .6], [0., 0., 0.], .9] for name in models},
+                        seq * 100, seq,
+                    ))
+                    adapter.prepare_request(replace(
+                        request, request_seq=seq, observation_time_ns=seq * 100, observation=newer,
+                    ))
+                self.assertNotIn(1, adapter._anchors)
+                context = ActionContext(1, 100, 200, observation_state=original)
+                if model == "xr1":
+                    raw = np.zeros((1, 60))
+                    raw[:, 6] = .1
+                    raw[:, 14] = .2
+                    chunk = adapter.decode_action(raw, context)
+                    np.testing.assert_allclose(chunk.groups["left_arm"][0],
+                                               np.r_[original.groups["left_arm"][:6], .3])
+                    np.testing.assert_allclose(chunk.groups["right_arm"][0, -1], .4)
+                else:
+                    raw = {"format": "pose", "actions": {
+                        name: np.tile(np.r_[poses[f"{name.removesuffix('_arm')}_ee_pose"], .25],
+                                      (configured["policy"]["horizon_policy_steps"], 1))
+                        for name in models
+                    }}
+                    chunk = adapter.decode_action(raw, context)
+                    self.assertEqual(chunk.horizon_steps, 32)
+                    np.testing.assert_allclose(chunk.groups["left_arm"][:, -1], .25)
+                with self.assertRaisesRegex(ValueError, "anchor"):
+                    adapter.decode_action(raw, replace(context, observation_time_ns=101))
+
+    def test_openwam_request_subclass_preserves_model_state_in_streaming_wire_path(self):
+        class WireClient:
+            def __init__(self):
+                self.uploads = []
+
+            def submit_infer(self, observation, *, sampling):
+                self.uploads.append((observation, sampling))
+                return "request-1"
+
+        configured = streaming_config()
+        model = XPolicyLabWsPolicyModel(configured["policy"])
+        wire = WireClient()
+        model._client = wire
+        model._session_id = "test"
+        snapshot = ObservationSnapshot(RobotState({"left_arm": np.zeros(2),
+                                                   "right_arm": np.zeros(2)}, 100, 1))
+        model._camera_map = {}
+        state = {"left_ee_pose": np.array([0., 0., 0., 1., 0., 0., 0.])}
+        request = OpenWAMX5Request("test", 1, 100, 10**10, snapshot, model_state=state)
+        self.assertTrue(model.submit(request))
+        np.testing.assert_array_equal(wire.uploads[0][0]["state"]["left_ee_pose"],
+                                      state["left_ee_pose"])
+        self.assertEqual(wire.uploads[0][1], {"mode": "default"})
+        train_time = TrainTimeRtcRequest("test", 2, 100, 10**10, snapshot)
+        with self.assertRaisesRegex(ValueError, "unsupported multi_inflight"):
+            model.submit(train_time)
+        self.assertEqual(len(wire.uploads), 1)
+
+    def test_xr1_multi_inflight_config_keeps_checkpoint_and_control_contract(self):
+        base = Path(__file__).resolve().parents[2] / "manimux/configs/experiments/asyncsim"
+        serial = load_config(base / "robodojo_xr1_insert_tubes_default_serial.yaml")
+        multi = load_config(base / "robodojo_xr1_insert_tubes_default_multi_inflight.yaml")
+        self.assertEqual(serial["inference"]["algorithm"], "serial")
+        self.assertEqual(serial["inference"]["inference_schedule"], "serial")
+        self.assertEqual(multi["inference"]["algorithm"], "async")
+        self.assertEqual(multi["inference"]["inference_schedule"], "multi_inflight")
+        self.assertEqual(multi["inference"]["request_trigger"], "continuous")
+        self.assertEqual(multi["inference"]["observation_hz"], 25)
+        self.assertEqual(multi["policy"], serial["policy"])
+        self.assertEqual(multi["policy_server"], serial["policy_server"])
+        self.assertEqual(multi["robot"], serial["robot"])
+
+    def test_real_streaming_worker_and_websocket_client(self):
+        from threading import Thread
+
+        from websockets.exceptions import ConnectionClosed
+        from websockets.sync.server import serve
+
+        from manimux.policies.xpolicylab.ws_client import pack_frame, unpack_frame
+
+        uploads = []
+
+        def handle(connection):
+            try:
+                for raw in connection:
+                    frame = unpack_frame(raw)
+                    kind = frame["message_type"]
+                    if kind == "hello":
+                        reply_type = "hello_ack"
+                        payload = {"capabilities": {"sampling_modes": ["default"],
+                                                    "multi_inflight": True}}
+                    elif kind == "reset":
+                        reply_type, payload = "reset_result", {}
+                    else:
+                        self.assertEqual(kind, "infer")
+                        uploads.append(frame)
+                        time.sleep(.05)
+                        reply_type = "infer_result"
+                        payload = {"actions": [
+                            frame["payload"]["observation"]["state"]
+                            for _ in range(4)
+                        ]}
+                    connection.send(pack_frame({**frame, "message_type": reply_type,
+                                                "payload": payload}))
+            except ConnectionClosed:
+                pass
+
+        configured = streaming_config()
+        configured["policy"].update(worker="xpolicylab_ws", timeout_s=3)
+        configured["policy"]["options"].update(action_format="joint", request_timeout_s=3)
+        configured["inference"]["max_plan_age_s"] = 3
+        with serve(handle, "127.0.0.1", 0, max_size=None) as server:
+            configured["policy"]["options"]["server"] = (
+                f"ws://127.0.0.1:{server.socket.getsockname()[1]}"
+            )
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                run = AsyncSimRuntime(configured, client=FakeAsyncSim(time.monotonic_ns)).run_policy(
+                    max_steps=12, timeout_s=5,
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+        self.assertGreater(run["accepted_plans"], 0, run["rejection_reasons"])
+        self.assertGreater(len(uploads), 1)
+        self.assertTrue(all(frame["payload"]["latest_only"] for frame in uploads))
+        submitted_seq = -1
+        overlapping_result = False
+        for event in run["audit"]["manimux_events"]:
+            if event["kind"] == "inference_submitted":
+                submitted_seq = event["request_seq"]
+            elif event["kind"] == "plan_committed":
+                overlapping_result |= event["request_seq"] < submitted_seq
+        self.assertTrue(overlapping_result)
 
     def test_reset_error_survives_cleanup_failure(self):
         class FailedReset(FakeAsyncSim):

@@ -129,6 +129,15 @@ side effect of a different model's integration.
 state. Adapters must use the former for observation-relative pose anchors and the
 latter for IK. The old overloaded `measured_state` field is removed.
 
+AsyncSim retains the policy-facing state for each pending request. XR1 and OpenWAM
+X5 adapters use `ActionContext.observation_state` when supplied, checking its timestamp
+against the request. This survives their bounded eight-entry fallback caches during
+multi-inflight uploads. XR1 reconstructs its relative poses and gripper deltas from
+that original anchor; OpenWAM decodes absolute poses with the separately supplied IK
+seed. No response-time measurement replaces XR1's delta anchor. The XPolicyLab
+streaming client accepts observation-carrying `InferenceRequest` subclasses such as
+`OpenWAMX5Request`; train-time RTC remains explicitly unsupported on this transport.
+
 The runtime selects the seed once using `adapter.decode_seed_source`:
 `observation_state` selects the request measurement; `execution_reference` prefers
 the outgoing trajectory. `decode_seed_time_ns(context)` optionally specifies the
