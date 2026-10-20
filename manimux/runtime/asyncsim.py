@@ -57,7 +57,7 @@ class AsyncSimRuntime:
         self.adapter.validate(config["robot"], config["policy"])
         robot = config["robot"]
         options = robot["options"]
-        self.client = client or AsyncSimClient(options["endpoint"])
+        self.client = client or AsyncSimClient(options["endpoint"], env_index=options.get("env_index", 0))
         self.robot = AsyncSimRobot(
             self.client, robot["group_dims"], options["state_keys"],
             state_stream=options.get("state_stream", "proprio.joint_state"),

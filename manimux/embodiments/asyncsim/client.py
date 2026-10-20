@@ -14,11 +14,14 @@ class AsyncSimRemoteError(RuntimeError):
 
 
 class AsyncSimClient:
-    def __init__(self, endpoint: str, *, timeout_s: float = 10.0) -> None:
+    def __init__(self, endpoint: str, *, timeout_s: float = 10.0, env_index: int = 0) -> None:
         if not endpoint.startswith(("ws://", "wss://")) or timeout_s <= 0:
             raise ValueError("AsyncSim requires a WebSocket endpoint and positive timeout")
         self.endpoint = endpoint
         self.timeout_s = timeout_s
+        if isinstance(env_index, bool) or not isinstance(env_index, int) or env_index < 0:
+            raise ValueError("env_index must be a non-negative integer")
+        self.env_index = env_index
         self.episode_id: str | None = None
         self._connection: Any = None
         self._connection_context: Any = None
@@ -62,6 +65,8 @@ class AsyncSimClient:
         self, *, seed: int | None = None, recording_directory: str | Path | None = None,
     ) -> dict[str, Any]:
         payload = {} if seed is None else {"seed": seed}
+        if self.env_index:
+            payload["env_index"] = self.env_index
         if recording_directory is not None:
             payload["recording_directory"] = str(Path(recording_directory).resolve())
         result = self.request("reset", payload)
@@ -81,7 +86,7 @@ class AsyncSimClient:
         return self.request("submit_command", {"command": command})
 
     def health(self) -> dict[str, Any]:
-        return self.request("health")
+        return self.request("health", {"env_index": self.env_index} if self.env_index else None)
 
     def result(self) -> dict[str, Any]:
         return self.request("get_result")
