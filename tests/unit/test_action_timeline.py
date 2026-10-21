@@ -65,6 +65,25 @@ def test_commit_replaces_active_plan_immediately() -> None:
     np.testing.assert_array_equal(horizon.groups["arm"], [[10], [15], [20]])
 
 
+def test_motion_target_survives_missed_final_tick_but_does_not_extend_next_policy():
+    timeline = ActionTimeline(
+        {"arm": 1}, action_start_mode="first_step_when_ready", hold_last_step=True
+    )
+    assert timeline.commit(
+        _chunk([0, 1, 2]), now_ns=0, max_plan_age_ns=1000,
+        current_command={"arm": np.array([0.0])}, blend_steps=0,
+        retain_terminal_target=True,
+    ).accepted
+    # A delayed control cycle misses both the final source row and its interval.
+    reference = timeline.reference_horizon(now_ns=35, dt_ns=5, horizon_steps=3)
+    assert reference is not None
+    np.testing.assert_array_equal(reference.groups["arm"], [[2], [2], [2]])
+    # A subsequent policy owns its normal finite horizon; the motion must not revive.
+    assert _commit(timeline, _chunk([2, 3], request_seq=1), now_ns=40).accepted
+    np.testing.assert_array_equal(timeline.sample_runtime(40)["arm"], [2])
+    assert timeline.reference_horizon(now_ns=61, dt_ns=5, horizon_steps=3) is None
+
+
 @pytest.mark.parametrize("source_offset_steps", [0, 2])
 def test_drop_infer_latency_trims_only_elapsed_source_rows(source_offset_steps: int) -> None:
     timeline = ActionTimeline({"arm": 1}, action_start_mode="drop_infer_latency")

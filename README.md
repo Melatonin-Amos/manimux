@@ -29,6 +29,11 @@ into one workspace.
 - **Keep experiments traceable.** Save run configurations, trajectories, recordings,
   and task-defined human evaluations for review and comparison.
 
+Franka FR3 with an optional Robotiq gripper uses the standard component and runtime interfaces.
+RPent / HarnessVLA supplies planning and one Toolkit for motion and VLA calls.
+Both use the same ManiMux runtime, model configuration and execution lifecycle. See [Agent integrations](guideline.html#agent-integrations)
+and the [Franka component](manimux/embodiments/arm/franka/README.md) for configuration and validation scope.
+
 ## Quick start
 
 Try RoboGUI without hardware. Requires **Python 3.11 or 3.12** and [uv](https://docs.astral.sh/uv/).
