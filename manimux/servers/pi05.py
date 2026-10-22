@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-XPOLICY_ROOT = REPO_ROOT / "XPolicyLab"
+XPOLICY_ROOT = REPO_ROOT / "third_party" / "XPolicyLab"
 OPENPI_SRC = XPOLICY_ROOT / "policy/Pi_05/openpi/src"
 DEFAULT_CONFIG = REPO_ROOT / "manimux/configs/policy/pi05/yam/finetune.yaml"
 MODEL_PYTHON = XPOLICY_ROOT / "policy/Pi_05/openpi/.venv/bin/python"
@@ -40,7 +40,7 @@ TASK_QUALITY_LIMITED_VARIANTS = {
 
 
 def _prepare_imports() -> None:
-    for path in (REPO_ROOT, XPOLICY_ROOT, OPENPI_SRC):
+    for path in (REPO_ROOT, XPOLICY_ROOT.parent, XPOLICY_ROOT, OPENPI_SRC):
         value = str(path)
         if value not in sys.path:
             sys.path.insert(0, value)
@@ -64,7 +64,7 @@ def _validate_paths(config: dict[str, Any]) -> tuple[Path, Path]:
     if not (model_root / "params").is_dir() and not (model_root / "model.safetensors").is_file():
         raise FileNotFoundError(f"Pi05 params or model.safetensors not found under {model_root}")
     if not (stats_dir / "norm_stats.json").is_file():
-        raise FileNotFoundError(f"YAM norm_stats.json not found under {stats_dir}")
+        raise FileNotFoundError(f"Pi05 norm_stats.json not found under {stats_dir}")
     return model_root, stats_dir
 
 
@@ -128,7 +128,7 @@ def _resolved_contract(config_path: Path, config: dict[str, Any]) -> dict[str, A
             if checkpoint_variant in TASK_QUALITY_LIMITED_VARIANTS
             else "yam_finetune_not_evaluated"
             if checkpoint_variant in YAM_FINETUNED_VARIANTS
-            else "base_checkpoint_not_yam_finetune"
+            else "task_quality_not_evaluated"
         ),
         "model_python": str(MODEL_PYTHON),
         "server_config": str(config_path),
@@ -143,7 +143,9 @@ def _resolved_contract(config_path: Path, config: dict[str, Any]) -> dict[str, A
         "action_horizon": horizon,
         "num_steps": num_steps,
         "inference_seed": config.get("inference_seed", 0),
-        "rtc": "unsupported" if config.get("action_type") == "ee" else "pi_guided_v1",
+        # The loaded model reports sampling modes through the shared HELLO.
+        # Artifact inspection cannot establish sampler hooks or backend support.
+        "rtc": "not_verified_before_model_load",
     }
 
 

@@ -17,8 +17,12 @@ An open-source harness for real-world manipulation inference and experiment mana
 
 [![Dream-1 demo · lossless autoplay · 1440p, 30 fps](assets/dream1-task-1440p30-lossless.webp)](https://sii-liulab.github.io/manimux/assets/dream1-task-1440p30.mp4)
 
-**RoboGUI** brings camera views, robot state, action chunks, and recorded trajectories
-into one workspace.
+**Dream-1 on YAM, through RoboGUI.** Watch a real-robot run with live camera views,
+robot state and predicted action chunks in one workspace.
+
+## News
+
+- **2026-10-22** — Support for [Franka FR3 with Robotiq gripper](https://sii-liulab.github.io/manimux/guideline.html#franka-deployment) and the [RPent agent](https://sii-liulab.github.io/manimux/guideline.html#agent-integrations).
 
 <a id="what-you-can-do"></a>
 
@@ -46,7 +50,7 @@ RoboGUI provides the operator workspace.
 
 </details>
 
-[Architecture and extension protocols](.agents/skills/manimux-development/references/README.md) · [Inference guide](https://sii-liulab.github.io/manimux/guideline.html#algorithms)
+[Architecture and extension protocols](skills/manimux-development/references/README.md) · [Inference guide](https://sii-liulab.github.io/manimux/guideline.html#algorithms)
 
 <a id="integrate"></a>
 <a id="included-integrations"></a>
@@ -70,13 +74,13 @@ RoboGUI provides the operator workspace.
         <ul>
           <li><a href="manimux/embodiments/arm/yam/README.md">YAM</a> ✅</li>
           <li><a href="https://sii-liulab.github.io/manimux/guideline.html#configuration">Tianji</a> ✅</li>
-          <li><a href="https://github.com/SII-LiuLab/manimux/blob/ziyang/manimux/embodiments/arm/franka/README.md">Franka FR3</a> <sup><a href="https://github.com/SII-LiuLab/manimux/pull/15">PR #15</a></sup></li>
+          <li><a href="manimux/embodiments/arm/franka/README.md">Franka FR3</a> ✅</li>
           <li><a href="manimux/embodiments/arm/arx_x5/README.md">ARX X5</a></li>
           <li><a href="manimux/embodiments/arm/piper/README.md">PiPER</a></li>
         </ul>
         <strong>Gripper</strong>
         <ul>
-          <li><a href="https://github.com/SII-LiuLab/manimux/blob/ziyang/manimux/embodiments/end_effector/robotiq/README.md">Robotiq</a> <sup><a href="https://github.com/SII-LiuLab/manimux/pull/15">PR #15</a></sup></li>
+          <li><a href="manimux/embodiments/end_effector/robotiq/README.md">Robotiq</a> ✅</li>
           <li><a href="manimux/embodiments/end_effector/taccap/README.md">TacCap</a> ✅</li>
         </ul>
         <strong>Sensor</strong>
@@ -105,11 +109,11 @@ RoboGUI provides the operator workspace.
         </ul>
         <strong>Harness</strong>
         <ul>
-          <li><a href="https://github.com/SII-LiuLab/manimux/blob/ziyang/.agents/skills/manimux-development/references/rpent.md">RPent</a> <sup><a href="https://github.com/SII-LiuLab/manimux/pull/15">PR #15</a></sup></li>
+          <li><a href="https://sii-liulab.github.io/manimux/guideline.html#agent-integrations">RPent</a> ✅</li>
         </ul>
         <strong>API</strong>
         <ul>
-          <li><a href="manimux/configs/examples/dream1-yam/README.md">Dream-1</a> ✅</li>
+          <li><a href="manimux/configs/experiments/example-yam-dream1/README.md">Dream-1</a> ✅</li>
         </ul>
       </td>
       <td>
@@ -129,8 +133,8 @@ RoboGUI provides the operator workspace.
   </tbody>
 </table>
 
-✅ Integrated on `main`. PR #15 entries are available on the development branch.
-Models are listed under their serving framework; station support varies. Unmarked hardware entries are experimental. See the [support catalog](https://sii-liulab.github.io/manimux/guideline.html#support)
+✅ Integrated. Models are listed under their serving framework; station support varies.
+Unmarked hardware entries are experimental. See the [support catalog](https://sii-liulab.github.io/manimux/guideline.html#support)
 and [supported combinations](https://sii-liulab.github.io/manimux/guideline.html#optional-algorithm-composition) for compatibility and validation scope.
 
 ## Quick start
@@ -147,6 +151,55 @@ uv run manimux-robogui --robot yam --demo --host 127.0.0.1 --port 8086
 Open **http://127.0.0.1:8086**. The preview uses synthetic data and does not connect
 to a robot. Model environments and checkpoints are needed only for real deployment.
 
+### Run on a robot: one command for all services
+
+A deployment is four services: the **camera server**, the **model server** (none for hosted
+APIs such as Dream-1), **RoboGUI** and the **runtime** that drives the robot. `manimux up`
+starts all of them at once, each in its own tmux session, and holds the terminal.
+**Ctrl-C stops all of them at once**, runtime first, so the robot is cleaned up before the
+cameras and model go away.
+
+```bash
+uv run manimux doctor --config <experiment.yaml> \
+  --runtime-python envs/yam/.venv/bin/python --policy-python <model-env>/bin/python  # read-only
+uv run manimux up --config <experiment.yaml> \
+  --runtime-python envs/yam/.venv/bin/python --policy-python <model-env>/bin/python --open
+# ... operate in RoboGUI (Prepare, Start, Finish) ...
+# Ctrl-C  -> stops runtime, model, cameras and RoboGUI
+```
+
+- Hosted model APIs such as Dream-1 have no model server: omit `--policy-python` and export
+  their API key in this terminal first.
+- If runtime cleanup blocks (for example while waiting for hardware recovery), the terminal
+  says so and keeps everything alive. Use RoboGUI recovery, or support all arms and payloads
+  and press Ctrl-C again to force-kill every service.
+- Lost the `up` terminal? Rerun the same `up` command; it attaches to the running services,
+  and Ctrl-C stops them.
+- From another terminal: `uv run manimux status` (service health) and
+  `uv run manimux attach --service runtime` (runtime terminal; detach with Ctrl-B, then D).
+
+### Start the services by hand
+
+The same four services, one terminal each, started in this order. Stop them with Ctrl-C in
+each terminal, runtime first.
+
+```bash
+# 1. Camera server
+envs/yam/.venv/bin/python -m manimux.servers.camera.server \
+  --config <experiment.yaml> --local manimux/configs/local/station.yaml
+# 2. Model server (XPolicyLab recipes; skip for hosted APIs such as Dream-1)
+<model-env>/bin/python -m manimux.servers.policy \
+  --config <experiment.yaml> --local manimux/configs/local/station.yaml
+# 3. RoboGUI
+envs/yam/.venv/bin/python -m manimux.robogui.dashboard --robot yam --host 127.0.0.1 --port 8086
+# 4. Runtime: connects robot, cameras and model, then waits for Prepare in RoboGUI
+envs/yam/.venv/bin/python -m manimux run \
+  --config <experiment.yaml> --local manimux/configs/local/station.yaml
+```
+
+See [managed deployment](https://sii-liulab.github.io/manimux/guideline.html#managed-deployment)
+for external model/camera services, separate trial roots and Franka.
+
 <a id="dream-1-hosted-inference"></a>
 
 **Next, choose your workflow:**
@@ -154,7 +207,9 @@ to a robot. Model environments and checkpoints are needed only for real deployme
 | I want to… | Start here |
 | --- | --- |
 | Deploy a model on a real robot | [Station setup](https://sii-liulab.github.io/manimux/guideline.html#configuration) → [Deployment recipes](https://sii-liulab.github.io/manimux/guideline.html#support) |
-| Run Dream-1 through its cloud API | [Dream-1 on YAM](manimux/configs/examples/dream1-yam/README.md) |
+| Run Dream-1 through its cloud API | [Dream-1 on YAM](manimux/configs/experiments/example-yam-dream1/README.md) |
+| Run Pi05 through XPolicyLab | [Pi05 on YAM](manimux/configs/experiments/example-yam-pi05/README.md) |
+| Let an agent plan with a VLA (RPent) | RPent variant of either example: [Dream-1](manimux/configs/experiments/example-yam-dream1/put_bottles/rpent.yaml) · [Pi05](manimux/configs/experiments/example-yam-pi05/put_bottles/rpent.yaml) |
 | Compare methods and evaluate runs | [Experiment workflow](https://sii-liulab.github.io/manimux/guideline.html#experiments) · [Records & replay](https://sii-liulab.github.io/manimux/guideline.html#records) |
 
 <a id="contributing"></a>
@@ -162,8 +217,8 @@ to a robot. Model environments and checkpoints are needed only for real deployme
 ## Contributing & community
 
 Contributions to robot and policy integrations, inference strategies, RoboGUI,
-and documentation are welcome. Start with the [contribution guide](.agents/skills/manimux-development/references/README.md#contributing).
-For agent-assisted development, use the [development skill](.agents/skills/manimux-development/SKILL.md).
+and documentation are welcome. Start with the [contribution guide](skills/manimux-development/references/README.md#contributing).
+For agent-assisted development, use the [development skill](skills/manimux-development/SKILL.md).
 
 **Latest update · 2026-10-18:** The [ManiMux website](https://sii-liulab.github.io/manimux/) and dedicated [user guide](https://sii-liulab.github.io/manimux/guideline.html) are live.
 

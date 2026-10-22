@@ -15,14 +15,13 @@ def positive_seconds(value):
 
 
 def add_commands(subparsers):
-    for name in ("doctor", "up", "status", "down", "attach"):
+    for name in ("doctor", "up", "status", "attach"):
         parser = subparsers.add_parser(
             name,
             help={
                 "doctor": "Check a local deployment without opening devices",
-                "up": "Start managed services and wait for manual Prepare",
+                "up": "Start managed services and hold the terminal; Ctrl-C stops them",
                 "status": "Inspect managed processes and service health",
-                "down": "Gracefully stop owned services, runtime first",
                 "attach": "Attach to an owned service's operator terminal",
             }[name],
         )
@@ -44,7 +43,19 @@ def add_commands(subparsers):
             parser.add_argument(
                 "--camera-python", type=Path, help="Defaults to runtime interpreter"
             )
-            parser.add_argument("--policy-python", type=Path, help="Required for real deployments")
+            parser.add_argument(
+                "--policy-python", type=Path, help="Required for an owned model service"
+            )
+            parser.add_argument(
+                "--external-policy",
+                action="store_true",
+                help="Connect to the configured policy service; never start or stop its process",
+            )
+            parser.add_argument(
+                "--external-camera",
+                action="store_true",
+                help="Use configured network camera sensors; never start or stop their servers",
+            )
             parser.add_argument("--robot", help="RoboGUI preset for --demo (default: yam)")
             parser.add_argument("--gui-port", type=int, default=8086)
             parser.add_argument("--output-dir", type=Path, help="Separate trial recordings")
@@ -57,13 +68,6 @@ def add_commands(subparsers):
             )
             parser.add_argument(
                 "--open", action="store_true", help="Open RoboGUI in the default browser"
-            )
-        if name == "down":
-            parser.add_argument(
-                "--timeout",
-                type=positive_seconds,
-                default=30.0,
-                help="Wait per service; never force-kill on timeout",
             )
         if name == "attach":
             parser.add_argument(
@@ -81,10 +85,12 @@ def main(args):
             result = doctor(build_plan(args), directory)
         elif args.command == "up":
             result = processes.up(build_plan(args), directory, args.timeout, open_browser=args.open)
+            # Any live owned service stays attached to this terminal, so Ctrl-C can stop it.
+            if processes.services_alive(directory):
+                _report(result, args)
+                result = processes.hold(directory, timeout=30.0)
         elif args.command == "status":
             result = processes.status(directory)
-        elif args.command == "down":
-            result = processes.down(directory, args.timeout)
         else:
             return processes.attach(directory, args.service)
     except (Exception, KeyboardInterrupt) as exc:
@@ -94,15 +100,20 @@ def main(args):
             "error": str(exc) or "Interrupted",
             "deployment_dir": str(directory),
         }
-    if getattr(args, "json", False):
-        print(json.dumps(result, indent=2, default=str))
-    else:
-        print(f"ManiMux · {result.get('state', 'checked')}")
-        for check in result.get("checks", []):
-            print(f"  {'OK' if check['ok'] else 'BLOCKED'} {check['name']}: {check['detail']}")
-        for name, service in result.get("services", {}).items():
-            print(f"  {name}: {service.get('state', 'unknown')} — {service.get('detail', '')}")
-        for key in ("error", "gui_url", "next_action", "attach_command", "deployment_dir"):
-            if result.get(key):
-                print(f"{key}: {result[key]}")
+    _report(result, args)
     return 0 if result.get("ok") else 2
+
+
+def _report(result, args):
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2, default=str), flush=True)
+        return
+    print(f"ManiMux · {result.get('state', 'checked')}")
+    for check in result.get("checks", []):
+        print(f"  {'OK' if check['ok'] else 'BLOCKED'} {check['name']}: {check['detail']}")
+    for name, service in result.get("services", {}).items():
+        print(f"  {name}: {service.get('state', 'unknown')} — {service.get('detail', '')}")
+    for key in ("error", "gui_url", "next_action", "attach_command", "deployment_dir"):
+        if result.get(key):
+            print(f"{key}: {result[key]}")
+    sys.stdout.flush()

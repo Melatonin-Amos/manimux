@@ -31,6 +31,21 @@ def _has_rollout_records(session: Path) -> bool:
     return any(path.is_dir() for path in session.glob("rollout-*"))
 
 
+def _real_paths(value):
+    """Identify installed files by their real path, not by how a path is spelled.
+
+    A repository move (e.g. XPolicyLab -> third_party/XPolicyLab, kept reachable by a
+    symlink) or a checkpoint symlink does not change scientific conditions.
+    """
+    if isinstance(value, dict):
+        return {key: _real_paths(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_real_paths(item) for item in value]
+    if isinstance(value, str) and value.startswith("/") and os.path.exists(value):
+        return os.path.realpath(value)
+    return value
+
+
 def fingerprint(config: dict) -> str:
     """Effective scientific conditions; exclude storage, provenance and UI cosmetics."""
     from manimux.evaluation.rubric import explicit_evaluation
@@ -74,7 +89,14 @@ def fingerprint(config: dict) -> str:
     }
     # Keep the scientific identity stable across the prompt field rename.
     fields["run"]["task"] = prompt
+    debug_age = (config.get("agent") or {}).get("debug_max_plan_age_s")
+    if debug_age is not None:
+        # Preserve every historical fingerprint when this opt-in is absent.
+        fields["agent"] = {"debug_max_plan_age_s": float(debug_age)}
+    if (config.get("agent") or {}).get("policy_enabled") is False:
+        fields.setdefault("agent", {})["policy_enabled"] = False
     # Normalization of legacy, pre-defaulted manifests is done by their loader.
+    fields = _real_paths(json.loads(json.dumps(fields, default=str)))
     return hashlib.sha256(json.dumps(fields, sort_keys=True, default=str).encode()).hexdigest()
 
 

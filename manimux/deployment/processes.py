@@ -70,13 +70,13 @@ def alive(service):
     return identity is not None and process_identity(identity["pid"]) == identity
 
 
-def signal_owned(service):
+def signal_owned(service, signum=signal.SIGTERM):
     """Signal the same kernel process we inspected, even if its PID is recycled."""
     with suppress(ProcessLookupError):
         fd = open_pidfd(service["identity"]["pid"])
         try:
             if alive(service):
-                send_pidfd(fd, signal.SIGTERM)
+                send_pidfd(fd, signum)
         finally:
             os.close(fd)
 
@@ -222,10 +222,11 @@ def _spawn(name, plan, state, directory):
 
 def _probe(name, plan, state):
     service = state["services"][name]
-    if not alive(service):
+    external = service.get("ownership") == "external"
+    if not external and not alive(service):
         return {"ok": False, "state": "exited", "detail": f"Process exited; see {service['log']}"}
     try:
-        if not owns_ports(service, plan["services"][name]["ports"]):
+        if not external and not owns_ports(service, plan["services"][name]["ports"]):
             return {
                 "ok": False,
                 "state": "starting",
@@ -280,7 +281,11 @@ def _snapshot(directory, state, plan):
         services[name] = {
             **service,
             **_probe(name, plan, state),
-            "attach_command": attach_command(service),
+            **(
+                {}
+                if service.get("ownership") == "external"
+                else {"attach_command": attach_command(service)}
+            ),
         }
     ok = (
         state["phase"] == "ready"
@@ -301,7 +306,8 @@ def _snapshot(directory, state, plan):
     if phase == "stopped" and not any(alive(s) for s in services.values()):
         ok = True
         for service in services.values():
-            service.update(state="stopped", detail="Owned process has exited")
+            if service.get("ownership") != "external":
+                service.update(state="stopped", detail="Owned process has exited")
     result = {
         "ok": ok,
         "state": phase,
@@ -341,13 +347,18 @@ def up(plan, directory, timeout, *, open_browser=False):
         previous = read_json(directory / "state.json")
         if previous and any(alive(s) for s in previous["services"].values()):
             if previous["fingerprint"] != plan["fingerprint"]:
+                config = (read_json(Path(previous["run_dir"]) / "plan.json") or {}).get(
+                    "config_path"
+                )
                 raise RuntimeError(
-                    "This directory owns a different deployment. Inspect status and down first."
+                    "This directory owns a different deployment that is still running"
+                    f"{f' ({config})' if config else ''}. Press Ctrl-C in its terminal, or "
+                    "rerun up with that config and press Ctrl-C to stop it."
                 )
             result = _snapshot(directory, previous, plan)
             if not result["ok"]:
                 result["error"] = (
-                    "Existing deployment is incomplete or unhealthy; inspect logs before down/up"
+                    "Existing deployment is incomplete or unhealthy; inspect logs, then Ctrl-C"
                 )
             elif open_browser:
                 result["browser_opened"] = webbrowser.open(plan["gui_url"])
@@ -370,8 +381,18 @@ def up(plan, directory, timeout, *, open_browser=False):
         try:
             for name in plan["services"]:
                 verify_sources(plan)
-                print(f"Starting {name}…", file=sys.stderr, flush=True)
-                service = _spawn(name, plan, state, directory)
+                external = plan["services"][name].get("ownership") == "external"
+                print(
+                    f"{'Checking external' if external else 'Starting'} {name}…",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if external:
+                    service = {"ownership": "external"}
+                    state["services"][name] = service
+                    atomic_json(directory / "state.json", state)
+                else:
+                    service = _spawn(name, plan, state, directory)
                 deadline = time.monotonic() + timeout
                 while True:
                     health = _probe(name, plan, state)
@@ -380,9 +401,10 @@ def up(plan, directory, timeout, *, open_browser=False):
                     if health["ok"]:
                         print(f"{name}: {health['state']}", file=sys.stderr, flush=True)
                         break
-                    if not alive(service) or time.monotonic() >= deadline:
+                    if (not external and not alive(service)) or time.monotonic() >= deadline:
                         raise RuntimeError(
-                            f"{name} failed: {health['detail']}; log: {service['log']}"
+                            f"{name} failed: {health['detail']}; "
+                            f"log: {service.get('log', 'external service owner')}"
                         )
                     time.sleep(0.3)
             state["phase"] = "ready"
@@ -409,6 +431,8 @@ def _stop(state, directory, timeout):
     order = [n for n in ("runtime", "policy", "camera", "robogui") if n in state["services"]]
     for name in order:
         service = state["services"][name]
+        if service.get("ownership") == "external":
+            continue
         if alive(service):
             if not service.get("stop_requested"):
                 signal_owned(service)
@@ -433,7 +457,7 @@ def _stop(state, directory, timeout):
     return True
 
 
-def down(directory, timeout):
+def stop_services(directory, timeout):
     with locked(directory):
         state = read_json(directory / "state.json")
         if not state:
@@ -442,14 +466,89 @@ def down(directory, timeout):
         result = _snapshot(directory, state, read_json(Path(state["run_dir"]) / "plan.json"))
         result.update(
             ok=ok,
-            next_action="Services stopped" if ok else "Attach to the blocked service terminal",
+            next_action="Owned services stopped; external dependencies retained"
+            if ok
+            else "Attach to the blocked service terminal",
         )
         return result
+
+
+def force_down(directory):
+    """Operator-requested SIGKILL of every owned process still alive, runtime first.
+
+    Killing the runtime drops actuator control without Home or a release gate.
+    """
+    with locked(directory):
+        state = read_json(directory / "state.json")
+        if not state:
+            return {"ok": True, "state": "not_started", "deployment_dir": str(directory)}
+        for name in [n for n in ("runtime", "policy", "camera", "robogui")
+                     if n in state["services"]]:
+            service = state["services"][name]
+            if service.get("ownership") != "external" and alive(service):
+                signal_owned(service, signal.SIGKILL)
+                deadline = time.monotonic() + 3.0
+                while alive(service) and time.monotonic() < deadline:
+                    time.sleep(0.1)
+            service["state"] = "stopped"
+        state["phase"] = "stopped"
+        state.pop("error", None)
+        atomic_json(directory / "state.json", state)
+        result = _snapshot(directory, state, read_json(Path(state["run_dir"]) / "plan.json"))
+        result["next_action"] = "Owned services force-killed"
+        return result
+
+
+def services_alive(directory):
+    state = read_json(directory / "state.json") or {}
+    return any(s.get("ownership") != "external" and alive(s)
+               for s in state.get("services", {}).values())
+
+
+def hold(directory, timeout):
+    """Keep `up` in the foreground until Ctrl-C, then stop services runtime first.
+
+    A runtime blocked in hardware cleanup keeps everything alive; a second Ctrl-C
+    force-kills, after the operator supports all arms and payloads.
+    """
+    print("Services are running. Ctrl-C stops them (runtime first).", file=sys.stderr, flush=True)
+    try:
+        reported = set()
+        while True:
+            time.sleep(2.0)
+            state = read_json(directory / "state.json") or {}
+            if state.get("phase") in {"stopped", "failed"}:
+                return status(directory)
+            for name, service in state.get("services", {}).items():
+                if (service.get("ownership") != "external" and name not in reported
+                        and not alive(service)):
+                    reported.add(name)
+                    print(f"{name} exited; log: {service.get('log')}", file=sys.stderr, flush=True)
+    except KeyboardInterrupt:
+        pass
+    try:
+        print("\nStopping services (runtime first)…", file=sys.stderr, flush=True)
+        result = stop_services(directory, timeout)
+        while not result["ok"]:
+            print(
+                "Runtime cleanup is blocked (e.g. waiting for hardware recovery). Use RoboGUI "
+                "recovery, or support ALL arms and payloads and press Ctrl-C again to "
+                "force-kill every service.",
+                file=sys.stderr, flush=True,
+            )
+            time.sleep(5.0)
+            result = stop_services(directory, timeout)
+        return result
+    except KeyboardInterrupt:
+        print("\nForce-killing services…", file=sys.stderr, flush=True)
+        return force_down(directory)
 
 
 def attach(directory, name):
     state = read_json(directory / "state.json") or {}
     service = state.get("services", {}).get(name)
+    if service and service.get("ownership") == "external":
+        raise RuntimeError(f"{name} is external; attach through its existing service owner")
     if not service or not alive(service):
         raise RuntimeError(f"No live owned {name} terminal")
     return subprocess.call(

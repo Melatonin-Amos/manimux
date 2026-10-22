@@ -18,16 +18,19 @@ from typing import Any, Literal, cast
 import numpy as np
 import viser
 
+from manimux.agents.execution import execution_condition
 from manimux.evaluation import write_manual_evaluation
 from manimux.evaluation.identity import rollout_identity, start_identity
 from manimux.evaluation.rubric import count_result, evaluation_parameters, stage_option
 from manimux.types import FloatArray, UInt8Array
 
+from .agent_feed import AgentFeed
 from .camera_panel import CameraPanel
 from .camera_panel import _camera_panel_html as _camera_panel_html
 from .chunk_timeline import ChunkTimelineView
 from .communication import ControlServer, PolicyPlan, RoboGUIReceiver, RobotSnapshot
 from .errors import OperatorErrors
+from .recordings_panel import RecordingsPanel
 from .reference_layouts import DEFAULT_LAYOUT_ROOT
 from .recordings_panel import RecordingsPanel
 from .robot_view import RobotGroup, RobotView, load_robogui_config, load_robot_view
@@ -161,6 +164,7 @@ class PolicyRoboGUI:
         self.service_id = ""
         self.last_service_time = 0.0
         self.last_state_time = 0.0
+        self._episode_started_time = 0.0
         self.shutdown_phase = ""
         self.last_shutdown_time = 0.0
         self._shutdown_detail = ""
@@ -199,7 +203,7 @@ class PolicyRoboGUI:
         self.episode_finalized = False
         self._build_scene()
         self._build_gui()
-        self.camera_view.add_diagnostics(expand_by_default=True)
+        self.camera_view.add_diagnostics(expand_by_default=False)
         self.recordings_panel = RecordingsPanel(self)
 
         def display_message(message: dict[str, Any]) -> None:
@@ -318,6 +322,8 @@ class PolicyRoboGUI:
             self.experiment_config = self.server.gui.add_dropdown(
                 "Method / Config", ("—",), disabled=True, visible=False,
             )
+            # An agent profile makes the experiment RPent; otherwise it runs the VLA.
+            self._execution_mode = "vla"
             self.initial_pose = self.server.gui.add_dropdown(
                 "Initial pose", ("Default pose",), disabled=True, visible=False,
             )
@@ -350,6 +356,9 @@ class PolicyRoboGUI:
         self.receipt.order = self.new_rollout_folder.order - 0.3
         self.last_evaluation_btn.order = self.new_rollout_folder.order - 0.2
         with self.policy_control_folder:
+            self.agent_action = self.server.gui.add_text(
+                "Agent action", "waiting", disabled=True, visible=False
+            )
             self.warmup_btn = self.server.gui.add_button(
                 "Activate Warmup", color="blue", disabled=True, visible=False
             )
@@ -361,7 +370,13 @@ class PolicyRoboGUI:
             self.finish_btn = self.server.gui.add_button(
                 "Finish & Home", color="red", disabled=True
             )
+            self.back_to_setup_btn = self.server.gui.add_button(
+                "Back to setup", disabled=True, visible=False,
+                hint="Cancel preparation and return after runtime cleanup.",
+            )
         self._build_recovery_gui()
+        # RPent's planner transcript, status and tool lines live in the bottom bar.
+        self.agent_feed = AgentFeed(self.server.gui)
         self.run_folder = self.server.gui.add_folder("Run details", expand_by_default=False)
         with self.run_folder:
             self.robot_name = self.server.gui.add_text("Robot", self.robot.label, disabled=True)
@@ -478,6 +493,14 @@ class PolicyRoboGUI:
         def _start(_event: Any) -> None:
             with self.lock:
                 self._start_rollout()
+
+        @self.back_to_setup_btn.on_click
+        def _back_to_setup(_event: Any) -> None:
+            with self.lock:
+                if self.back_to_setup_btn.disabled or self.rollout_started:
+                    return
+                self._finish_rollout()
+                self.status.content = "🟠 **Cancelling preparation · waiting for runtime cleanup**"
 
         @self.experiment_task.on_update
         def _select_task(event: Any) -> None:
@@ -796,6 +819,7 @@ class PolicyRoboGUI:
         with self.lock:
             if not self.episode_active or self.finish_btn.disabled:
                 return
+            home = home and getattr(self, "active_home_available", True)
             self.paused = True
             self.finish_requested = True
             self._finish_request_id = uuid.uuid4().hex
@@ -803,14 +827,14 @@ class PolicyRoboGUI:
             self._clear_warmup_preview()
             # Finish closes the episode's hardware ownership. Idle recovery is
             # a separate session, not a substitute for Home before this close.
-            # Only an explicit hand-guiding transition may request home=False.
+            # Assemblies without Home and hand-guiding transitions finish without it.
             self.finish_home = home
             self.service_ready = False
             self._set_policy_controls_enabled(False)
             self._update_recovery_controls()
             self.status.content = (
                 "🟠 **Finishing rollout · returning Home before release**"
-                if home else "🟠 **Finishing rollout for hand-guiding**"
+                if home else "🟠 **Finishing rollout**"
             )
 
     def _activate_warmup(self) -> None:
@@ -1048,7 +1072,10 @@ class PolicyRoboGUI:
         self.stop_drag_btn.visible = has_hand_guiding
         self.recovery_status.visible = declared
         if hasattr(self, "finish_btn"):
-            self.finish_btn.label = "Finish & Home"
+            self.finish_btn.label = (
+                "Finish & Home" if getattr(self, "active_home_available", True)
+                else "Finish rollout"
+            )
         if has_hand_guiding and tuple(self.drag_arm.options) != self.recovery_selections:
             selected = self.drag_arm.value
             self.drag_arm.options = self.recovery_selections
@@ -1377,7 +1404,8 @@ class PolicyRoboGUI:
         self.completed_count.disabled = not score_enabled or not counted
         self.save_evaluation_btn.disabled = not enabled
         self.skip_evaluation_btn.disabled = (
-            self.episode_active or not self.experiment_mode or self.evaluation_complete
+            not enabled or not self.episode_finalized or self.episode_active
+            or not self.experiment_mode or self.evaluation_complete
         )
 
     def _set_experiment_mode(self, enabled: bool) -> None:
@@ -1447,6 +1475,10 @@ class PolicyRoboGUI:
         self._layout_by_task = remembered
         self.experiment_template = metadata.get("experiment_template")
         self._research_defaults = dict(metadata.get("research_defaults", {}))
+        self._base_research_defaults = dict(self._research_defaults)
+        self._research_defaults["condition"] = execution_condition(
+            self._research_defaults.get("condition", ""), self._execution_mode
+        )
         task = str(metadata.get("task", ""))
         self.task_command = task
         self.task_prompt.value = task
@@ -1472,6 +1504,10 @@ class PolicyRoboGUI:
         self._refresh_layout()
 
     def _configure_experiment_choices(self, metadata: dict[str, Any]) -> None:
+        mode = list(metadata.get("execution_choices", ["vla"]))[0]
+        if self.launch_mode == "unknown":
+            mode = str(metadata.get("execution_mode", mode))
+        self._set_execution_mode(mode)
         self._experiment_choices = list(metadata.get("experiment_choices", []))
         self._experiment_id = str(metadata.get("experiment_id", ""))
         visible = bool(self._experiment_choices)
@@ -1697,6 +1733,7 @@ class PolicyRoboGUI:
                 self._update_prepare_enabled()
                 return
             self._rollout_request = {"task_command": task_command,
+                                     "execution_mode": self._execution_mode,
                                      "prepare_request_id": uuid.uuid4().hex,
                                      "experiment_id": self._experiment_id, **identity}
             self._set_instruction(task_command)
@@ -1735,12 +1772,11 @@ class PolicyRoboGUI:
         self.home_btn.disabled = (
             not allowed
             or not self.paused
-            or (
-                "home" in self.recovery_actions
-                and not getattr(self, "active_home_available", False)
-            )
+            or not getattr(self, "active_home_available", True)
         )
         self.finish_btn.disabled = not allowed
+        self.back_to_setup_btn.visible = self.episode_active and not self.rollout_started
+        self.back_to_setup_btn.disabled = not allowed or self.rollout_started
         self._update_recovery_controls()
 
     def _update_prepare_enabled(self) -> None:
@@ -1771,6 +1807,8 @@ class PolicyRoboGUI:
         self.last_failure_id = ""
         self.last_rollout_error = ""
         self.last_rollout_failure = {}
+        self.agent_feed.reset()
+        self.agent_action.visible = False
         # A task belongs to one runtime service; reconnects must not retain it.
         # Session identity changes on method/pose switches too. Layout memory
         # is task-scoped, independently of hardware and recording ownership.
@@ -1857,8 +1895,8 @@ class PolicyRoboGUI:
         if self.shutdown_phase:
             if now - self.last_shutdown_time > 3:
                 self._mark_runtime_unavailable()
-        elif ((self.episode_active and self.last_state_time
-               and now - self.last_state_time > 2)
+        elif ((self.episode_active
+               and now - (self.last_state_time or self._episode_started_time) > 2)
               or (self.service_ready and self.last_service_time
                   and now - self.last_service_time > 3)):
             self._mark_runtime_unavailable()
@@ -2020,7 +2058,8 @@ class PolicyRoboGUI:
 
     def _skip_manual_evaluation(self) -> None:
         with self.lock:
-            if (self.episode_active or not self.experiment_mode
+            if (self.skip_evaluation_btn.disabled or not self.episode_finalized
+                    or self.episode_active or not self.experiment_mode
                     or self.evaluation_complete
                     or getattr(self, "_saving_evaluation", False)):
                 return
@@ -2180,7 +2219,16 @@ class PolicyRoboGUI:
         self.policy_name.value = str(message.get("policy", "unknown"))
         self._set_instruction(str(message.get("instruction", "")))
         self.action_space.value = action_space
-        self.latency.value = f"{float(message.get('inference_ms', 0.0)):.0f} ms"
+        self.latency.value = (
+            "— (primitive)" if metadata.get("runtime") == "agent_motion"
+            else f"{float(message.get('inference_ms', 0.0)):.0f} ms"
+        )
+        if self._execution_mode == "rpent" and metadata.get("runtime") == "agent_motion":
+            self.agent_action.visible = True
+            self.agent_action.value = f"{metadata.get('tool', 'primitive')} · executing"
+        elif self._execution_mode == "rpent" and metadata.get("dispatch_request_id"):
+            self.agent_action.visible = True
+            self.agent_action.value = "execute_policy (VLA) · executing"
         self.chunk_info.value = (
             f"#{message.get('chunk_id', 0)} · {horizon} actions · "
             f"{float(message.get('action_dt', 0.0)):.3f}s"
@@ -2359,6 +2407,12 @@ class PolicyRoboGUI:
                 self._update_event({"event": "episode_started", "metadata": metadata})
             if "control_status" in metadata:
                 self._control_status = dict(metadata["control_status"])
+            if (metadata.get("episode_id") == self._episode_id
+                    and "agent_messages" in metadata):
+                self._update_agent_status(metadata.get("agent_status", {}))
+                if self._execution_mode == "rpent":
+                    self.agent_feed.update(metadata.get("agent_messages", []),
+                                           metadata.get("agent_status", {}))
             if (self.home_requested and metadata.get("home_ack") and metadata["home_ack"]
                     == getattr(self, "_home_request_id", "")):
                 self.home_requested = False
@@ -2397,9 +2451,55 @@ class PolicyRoboGUI:
         self.camera_view.update_images(message.get("cameras_jpeg", {}),
                                        message.get("camera_metadata", {}))
 
+    def _set_execution_mode(self, mode: str) -> None:
+        changed = mode != self._execution_mode
+        self._execution_mode = mode
+        if changed:
+            self.agent_feed.reset()
+            self.agent_action.visible = False
+        self.agent_feed.set_visible(mode == "rpent")
+        if hasattr(self, "_base_research_defaults"):
+            self._research_defaults = dict(self._base_research_defaults)
+            self._research_defaults["condition"] = execution_condition(
+                self._research_defaults.get("condition", ""), mode
+            )
+
+    def _update_agent_status(self, status: dict[str, Any]) -> None:
+        if self._execution_mode != "rpent" or not status:
+            return
+        if status.get("phase") == "failed" and status.get("detail"):
+            self.errors.sync("RPent", str(status["detail"]))
+
     def _update_event(self, message: dict[str, Any]) -> None:
         event = str(message.get("event", "unknown"))
         metadata = message.get("metadata") or {}
+        if event == "agent_status":
+            if (metadata.get("run_dir") == self.service_id
+                    and metadata.get("episode_id") == self._episode_id):
+                self._update_agent_status(metadata)
+            return
+        if event == "agent_decision":
+            return
+        if event in {"motion_call_submitted", "motion_call_finished",
+                     "policy_call_submitted", "policy_call_finished"}:
+            if (self._execution_mode != "rpent" or metadata.get("run_dir") != self.service_id
+                    or metadata.get("episode_id") != self._episode_id):
+                return
+            tool = str(metadata.get("call_type", "primitive"))
+            label = "execute_policy (VLA)" if tool == "policy" else tool
+            state = str(metadata.get("state", "queued"))
+            reason = str(metadata.get("reason") or "")
+            if event.endswith("_submitted"):
+                detail = "queued"
+            elif reason == "measured_arrival" and metadata.get("arrival", {}).get("reached"):
+                detail = "arrived"
+            elif state == "completed" and tool == "policy":
+                detail = "chunk budget completed · inspect task result"
+            else:
+                detail = f"{state} · {reason}" if reason else state
+            self.agent_action.visible = True
+            self.agent_action.value = f"{label} · {detail}"
+            return
         if event in {"runtime_preparing", "runtime_home"}:
             if metadata.get("run_dir") != self.service_id:
                 return
@@ -2494,8 +2594,18 @@ class PolicyRoboGUI:
                 self.new_rollout_requested = False
             return
         if event == "episode_started":
+            self._set_execution_mode(str(metadata.get(
+                "execution_mode", "rpent" if metadata.get("launch_mode") == "rpent" else "vla"
+            )))
+            self.agent_action.visible = False
+            self.agent_action.value = "waiting"
+            self.agent_feed.reset()
             incoming_episode_id = str(metadata.get("episode_id", ""))
             incoming_service_id = str(metadata.get("run_dir", ""))
+            # The previous rollout's feedback cannot time out this new episode.
+            # Track the first-state grace separately; an event is not robot feedback.
+            self.last_state_time = 0.0
+            self._episode_started_time = time.time()
             if incoming_service_id != self.service_id or self.launch_mode == "unknown":
                 self._configure_research({
                     **metadata, "task": metadata.get("instruction", ""),
@@ -2513,12 +2623,22 @@ class PolicyRoboGUI:
             if incoming_service_id:
                 self.service_id = incoming_service_id
             self.observe_only = metadata.get("control_mode", "observe") == "observe"
-            self.active_home_available = bool(metadata.get("home_available", False))
+            self.active_home_available = bool(metadata.get("home_available", True))
             self.paused = True
-            self.rollout_started = bool(metadata.get("identity_frozen", False))
-            self._start_identity = None
+            self.home_requested = self.finish_requested = False
+            self.finish_home = None
+            self._home_request_id = self._finish_request_id = ""
+            self.rollout_started = bool(
+                metadata.get("identity_frozen", False) or metadata.get("operator_started", False)
+            )
+            self._start_identity = ({
+                "layout_id": metadata.get("layout_id", ""),
+                "repeat_id": metadata.get("repeat_id"),
+                "reference_layout": deepcopy(metadata.get("reference_layout")),
+            } if self.rollout_started else None)
             self.warmup_requested = False
             self._rollout_request = {
+                "execution_mode": self._execution_mode,
                 **{key: metadata.get(key, "") for key in
                    ("experiment_name", "condition", "notes")},
                 **{key: metadata.get(key) for key in
@@ -2576,13 +2696,27 @@ class PolicyRoboGUI:
             self.executor_info.value = "observe only" if self.observe_only else "managed"
             self.status.content = self._connected_status()
         elif event == "inference_submitted":
+            if self._execution_mode == "rpent" and metadata.get("dispatch_request_id"):
+                self.agent_action.visible = True
+                self.agent_action.value = "execute_policy (VLA) · inferring"
             planned = metadata.get("planned_switch_step")
             suffix = f" → switch {planned}" if planned is not None else ""
             self.executor_info.value = f"chunk #{message.get('chunk_id')} pending{suffix}"
         elif event == "episode_finished":
+            if self._execution_mode == "rpent":
+                status = metadata.get("agent_status") or {}
+                if status.get("phase") not in {"completed", "failed"}:
+                    status = {"phase": "stopped"}
+                self._update_agent_status(status)
             self._clear_warmup_preview()
             self.camera_view.freeze_images()
             self.episode_active = False
+            # Completion is authoritative even if an intermediate shutdown
+            # message was lost. Old Finish/Home requests cannot reach a new run.
+            self.home_requested = self.finish_requested = False
+            self.finish_home = None
+            self._home_request_id = self._finish_request_id = ""
+            self._update_warmup(None)
             self.service_ready = False
             self.launch_mode = str(metadata.get("launch_mode", self.launch_mode))
             self._set_experiment_mode(bool(metadata.get("experiment_mode", self.experiment_mode)))
@@ -2619,6 +2753,8 @@ class PolicyRoboGUI:
                     "⚪ Experiment mode was OFF; no human reward is required."
                 )
                 self.status.content = (
+                    "⚪ **Preparation cancelled · returning to setup**"
+                    if metadata.get("preparation_cancelled") else
                     "⚪ **Rollout finished · waiting for runtime service**"
                     if self.launch_mode == "serve"
                     else "⚪ **One-shot run finished · use `manimux run` for UI rollouts**"
