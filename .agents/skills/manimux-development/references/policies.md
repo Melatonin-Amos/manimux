@@ -31,6 +31,11 @@ Python integration. When XPolicyLab is the model's owning framework, follow
 Reuse an existing `XPolicyLab/policy/<POLICY>/` implementation when available.
 Model loading, preprocessing, normalization, sampling and training live there.
 Use the shared server and ManiMux's existing `xpolicylab_ws` client.
+Select the checkpoint's input/output transforms in its existing model implementation
+and reuse the matching ManiMux action adapter. A checkpoint's image keys or gripper
+convention do not justify a new ManiMux adapter. Loaded
+backend capabilities own sampling support; artifact inspection must not infer
+RTC/PAINT support from a checkpoint name or joint/pose representation.
 
 Do not put torch/JAX, model weights or another model server into ManiMux. A launcher
 that loads deployment config is different from a second inference implementation.
@@ -179,6 +184,12 @@ versus per-step hold behavior. SAPolicy's bounded IK must not be replaced as a
 side effect of a different model's integration.
 
 ### Observation state and IK seeds
+
+The XPolicyLab transport uses its standard single-arm keys `joint_state` and
+`ee_joint_state` when one group is selected. Dual-arm layouts retain side-prefixed
+keys such as `left_arm_joint_state`. The robot group's name is not a wire prefix
+for the standard single-arm schema. Checkpoint-specific gripper conventions and
+observation-relative action decoding belong to the selected model's transforms.
 
 `ActionContext.observation_state` is the real state captured with the request.
 `ActionContext.ik_seed` is the independently selected embodiment-conversion starting

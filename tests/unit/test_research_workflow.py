@@ -344,7 +344,10 @@ def test_reconnect_after_start_keeps_layout_locked(robogui):
     assert robogui.layout.disabled
     assert robogui.start_btn.label == "Resume rollout"
     robogui._start_rollout()
-    assert not robogui.paused and robogui._start_identity is None
+    assert not robogui.paused
+    assert robogui._start_identity == {
+        "layout_id": "", "repeat_id": None, "reference_layout": None,
+    }
 
 
 def test_layout07_is_the_only_selection_and_reference_is_attached(robogui):

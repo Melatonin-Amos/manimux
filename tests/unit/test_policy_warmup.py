@@ -474,6 +474,8 @@ def test_edge_discards_warmup_actions_and_keeps_formal_counts_zero(
         return next(controls)
 
     runtime = edge.EdgeRuntime.__new__(edge.EdgeRuntime)
+    runtime._dispatch = None
+    runtime._external = None
     runtime._step_ik = False
     runtime._ik_resolver = None
     runtime._config = config
