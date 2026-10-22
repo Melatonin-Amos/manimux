@@ -418,6 +418,14 @@ Record runtime evidence under `manimux/recording/`. Distinguish predicted action
 sent commands and measured motion; RoboGUI refresh rate is not control frequency.
 Do not reintroduce teleoperation or demonstration collection as part of replay.
 
+`recording.video_fps` is finite and non-negative; zero disables camera video.
+A positive rate must resolve to a finite, positive nanosecond sampling period.
+`video_queue_size` is a positive integer so recording remains bounded, and
+`video_codec` is a four-character ASCII FourCC. The `video` extra supplies OpenCV;
+configuration inspection remains independent of the encoder and storage packages.
+Plan copies own their nested metadata and handoff reference arrays so later
+selection or decoding cannot rewrite captured evidence.
+
 At rollout exit, stop the robot and policy worker, perform the configured Home
 only after a successful stop on a non-fault exit, and close control resources
 before video draining or Zarr finalization. Cleanup failures must leave
@@ -447,6 +455,13 @@ their task's destination.
 The composition entry is an experiment under
 `manimux/configs/experiments/<task>/<model>/`. Use `manimux.cli.load_config()` and
 the existing referenced-config loading; do not create another schema/merge system.
+
+Changing `executor.smooth.gripper.mode` through `_base_` replaces the inherited
+gripper block, matching executor recipe overrides. Declare the new mode's required
+fields, including `group_indices`, and restate any motion rates that should be
+retained. Overrides that retain the effective mode merge normally; an omitted mode
+defaults to `hysteresis`, so explicitly selecting that default does not replace it.
+An inactive `smooth: null` block remains valid for Direct execution.
 
 - **Component YAML**, `configs/embodiment/{arm,end_effector,sensor}/`: implementation,
   component model options, action layout and reusable device defaults.

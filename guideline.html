@@ -1396,6 +1396,7 @@ revisions, not automatically to a new checkpoint.</p>
 <tr><td>Local station</td><td>Device bindings, service endpoints and installed artifact paths</td><td>Study storage; <code>paths.output_dir</code> is rejected for config lists</td></tr>
 </tbody></table>
 <p><code>_base_</code> accepts a file or list of files. Later bases override earlier ones, then the variant overrides its bases. Mappings merge; lists replace. References are relative to the file declaring them. Cycles and inheritance chains longer than four files are rejected. Prefer one shared base plus one task.</p>
+<p>Changing <code>executor.smooth.gripper.mode</code> replaces the inherited gripper block, as with executor recipe overrides. Declare the new mode's required fields, including <code>group_indices</code>, and restate any motion rates to retain; obsolete fields from the previous mode are discarded. Keeping the effective mode merges partial overrides normally. An omitted mode defaults to <code>hysteresis</code>.</p>
 <pre><code class="language-yaml"># lists/my-study.yaml
 id: my-study
 recording:
@@ -1712,6 +1713,7 @@ Select the session/rollout and score it in the existing form using its saved rub
 new YAML rules do not replace historical scoring rules. Free runs and partial attempts are excluded.</p>
 </section>
 <section aria-labelledby="records" class="guide-page" data-page-id="records" data-title="Records &amp; replay" hidden=""><h2 id="records">Records</h2>
+<p>For camera video, install the <code>video</code> extra in the runtime environment, for example <code>python -m pip install -e '.[video]'</code>. It supplies headless OpenCV; retain an existing working <code>cv2</code> installation instead of installing multiple OpenCV distributions. Set <code>recording.video_fps</code> to a finite, non-negative rate (zero disables video), <code>video_queue_size</code> to a positive integer, and <code>video_codec</code> to a four-character ASCII codec such as <code>mp4v</code>. Configuration inspection does not require the encoder. Encoder failures appear in <code>result.json.video_recording.error</code> and <code>videos/index.json</code>.</p>
 <pre><code class="language-text">&lt;run.output_dir&gt;/
 └── session-.../
     ├── session-manifest.json

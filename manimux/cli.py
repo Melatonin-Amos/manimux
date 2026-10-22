@@ -79,13 +79,13 @@ def _merge_executor(base: dict, overrides: dict) -> dict:
     """Merge an executor recipe while replacing a changed tagged gripper mode."""
 
     prepared = deepcopy(base)
-    base_gripper = prepared.get("smooth", {}).get("gripper")
-    override_gripper = overrides.get("smooth", {}).get("gripper")
+    base_gripper = (prepared.get("smooth") or {}).get("gripper")
+    override_gripper = (overrides.get("smooth") or {}).get("gripper")
     if (
         isinstance(base_gripper, dict)
         and isinstance(override_gripper, dict)
         and "mode" in override_gripper
-        and override_gripper["mode"] != base_gripper.get("mode")
+        and override_gripper["mode"] != base_gripper.get("mode", "hysteresis")
     ):
         prepared.setdefault("smooth", {})["gripper"] = {}
     return _merge(prepared, overrides)

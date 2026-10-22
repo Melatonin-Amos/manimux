@@ -108,7 +108,7 @@ including the YAM SDK, camera bindings and your private
 environment with the station SDKs installed:
 
 ```bash
-python -m pip install -e '.[dream,realsense]'
+python -m pip install -e '.[dream,realsense,video]'
 # Bash: enter your key without echoing it or saving it in shell history.
 read -rsp "Dream API key: " DREAM_API_KEY; echo
 export DREAM_API_KEY

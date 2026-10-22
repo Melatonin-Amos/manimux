@@ -33,8 +33,12 @@ Hardware/model environments are usually created with `uv venv`, then populated w
 `uv pip install --python`. When adding dependencies, target the interpreter explicitly:
 
 ```bash
-uv pip install --python envs/yam/.venv/bin/python -e '.[replay,realsense,xpolicylab]'
+uv pip install --python envs/yam/.venv/bin/python -e '.[replay,realsense,video,xpolicylab]'
 ```
+
+The `video` extra supplies headless OpenCV for camera recording; `replay` supplies
+PyAV for playback. Use only one OpenCV distribution per environment. A station
+with a working `cv2` installation can retain it instead of installing `video`.
 
 Do not point root-project `uv sync` or `UV_PROJECT_ENVIRONMENT` at an existing independent
 hardware/model environment: syncing the root lockfile can remove SDK/model dependencies

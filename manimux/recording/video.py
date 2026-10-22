@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from manimux.recording import recording_parameters
 from manimux.types import SensorFrame, UInt8Array
 
 
@@ -39,6 +40,7 @@ class AsyncVideoRecorder:
         codec: str,
         queue_size: int,
     ) -> None:
+        recording_parameters(video_fps=fps, video_codec=codec, video_queue_size=queue_size)
         self._enabled = fps > 0
         self._video_dir = episode_dir / "videos"
         self._fps = fps
@@ -96,7 +98,12 @@ class AsyncVideoRecorder:
     def _run(self) -> None:
         writers: dict[str, Any] = {}
         try:
-            import cv2
+            try:
+                import cv2
+            except ImportError as exc:
+                raise ImportError(
+                    f'OpenCV import failed: {exc}; install or repair the "video" extra'
+                ) from exc
 
             cv2_module: Any = cv2
             video_writer_fourcc = cv2_module.VideoWriter_fourcc

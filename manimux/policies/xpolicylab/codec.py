@@ -25,6 +25,7 @@ key rather than silently receive zeros.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -210,8 +211,8 @@ def _positive_float_option(options: Mapping[str, object], name: str, default: fl
     value = options.get(name, default)
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"policy.options.{name} must be a number")
-    if value <= 0:
-        raise ValueError(f"policy.options.{name} must be positive")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"policy.options.{name} must be finite and positive")
     return float(value)
 
 

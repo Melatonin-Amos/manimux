@@ -57,28 +57,30 @@ def _worker_main(
 ) -> None:
     model = None
     try:
-        config = config_data
-        model = build_policy_model(config)
-        model.reset(session_id)
-    except Exception as exc:
-        _put_latest(startup_queue, ("error", f"{type(exc).__name__}:{exc}"))
-        return
-    try:
-        capability_method = getattr(model, "capabilities", None)
-        capabilities = capability_method() if callable(capability_method) else PolicyCapabilities()
-        if not isinstance(capabilities, PolicyCapabilities):
-            raise TypeError("model capabilities have an invalid type")
-        if multi_inflight and (
-            not capabilities.multi_inflight
-            or not callable(getattr(model, "submit", None))
-            or not callable(getattr(model, "poll", None))
-        ):
-            raise ValueError("policy backend does not support multi_inflight")
-    except Exception as exc:
-        _put_latest(startup_queue, ("error", f"capability_error:{type(exc).__name__}:{exc}"))
-        return
-    _put_latest(startup_queue, ("ready", capabilities))
-    try:
+        try:
+            config = config_data
+            model = build_policy_model(config)
+            model.reset(session_id)
+        except Exception as exc:
+            _put_latest(startup_queue, ("error", f"{type(exc).__name__}:{exc}"))
+            return
+        try:
+            capability_method = getattr(model, "capabilities", None)
+            capabilities = (
+                capability_method() if callable(capability_method) else PolicyCapabilities()
+            )
+            if not isinstance(capabilities, PolicyCapabilities):
+                raise TypeError("model capabilities have an invalid type")
+            if multi_inflight and (
+                not capabilities.multi_inflight
+                or not callable(getattr(model, "submit", None))
+                or not callable(getattr(model, "poll", None))
+            ):
+                raise ValueError("policy backend does not support multi_inflight")
+        except Exception as exc:
+            _put_latest(startup_queue, ("error", f"capability_error:{type(exc).__name__}:{exc}"))
+            return
+        _put_latest(startup_queue, ("ready", capabilities))
         pending_request = None
         while True:
             if multi_inflight:

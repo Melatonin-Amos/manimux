@@ -6,6 +6,7 @@ import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -32,9 +33,17 @@ def initial_pose_targets(config: dict):
     return initial_pose_metadata(config).get("joints")
 
 
-def compose(path: str | Path, stack: tuple[Path, ...] = ()) -> tuple[dict, dict[str, str]]:
-    from manimux.cli import _merge
+def _merge_experiment(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Use the same tagged executor merge for inheritance and recipe references."""
+    from manimux.cli import _merge, _merge_executor
 
+    result = _merge(base, overrides)
+    if isinstance(base.get("executor"), dict) and isinstance(overrides.get("executor"), dict):
+        result["executor"] = _merge_executor(base["executor"], overrides["executor"])
+    return result
+
+
+def compose(path: str | Path, stack: tuple[Path, ...] = ()) -> tuple[dict, dict[str, str]]:
     source = Path(path).expanduser().resolve()
     if source in stack:
         raise ValueError(f"Configuration inheritance cycle: {(*stack, source)}")
@@ -52,7 +61,7 @@ def compose(path: str | Path, stack: tuple[Path, ...] = ()) -> tuple[dict, dict[
     result, sources = {}, {}
     for reference in bases:
         base, dependencies = compose(source.parent / reference, (*stack, source))
-        result = _merge(result, base)
+        result = _merge_experiment(result, base)
         sources.update(dependencies)
 
     def resolve(value):
@@ -68,7 +77,7 @@ def compose(path: str | Path, stack: tuple[Path, ...] = ()) -> tuple[dict, dict[
         }
 
     sources[str(source)] = hashlib.sha256(content).hexdigest()
-    return _merge(result, resolve(deepcopy(raw))), sources
+    return _merge_experiment(result, resolve(deepcopy(raw))), sources
 
 
 def _validated_pose(pose_id: str, pose: dict, dimensions: dict, default_duration) -> dict:

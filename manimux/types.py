@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
@@ -223,6 +224,7 @@ def copy_group_vector(groups: GroupVector) -> GroupVector:
 
 
 def copy_action_chunk(chunk: ActionChunk) -> ActionChunk:
+    """Own a plan's mutable arrays and evidence independently of later decoding."""
     return ActionChunk(
         plan_id=chunk.plan_id,
         request_seq=chunk.request_seq,
@@ -232,7 +234,7 @@ def copy_action_chunk(chunk: ActionChunk) -> ActionChunk:
         dt_ns=chunk.dt_ns,
         groups={name: values.copy() for name, values in chunk.groups.items()},
         source_offset_steps=chunk.source_offset_steps,
-        metadata=dict(chunk.metadata),
+        metadata=deepcopy(chunk.metadata),
         hold_from_step=dict(chunk.hold_from_step),
         runtime_trajectory=(
             None
@@ -246,5 +248,5 @@ def copy_action_chunk(chunk: ActionChunk) -> ActionChunk:
                 },
             )
         ),
-        handoff=chunk.handoff,
+        handoff=deepcopy(chunk.handoff),
     )
