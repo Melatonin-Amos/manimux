@@ -123,5 +123,5 @@ and recordings remain private.
 - [Launch commands](../../guideline.html#example-study): matching camera, model, RoboGUI and runtime services.
 - [Switching and reload rules](../../guideline.html#experiment-switch-boundaries): compatible entries and service restart boundaries.
 - [Policy recipes](policy/README.md) and [camera recipes](embodiment/sensor/cameras/README.md): component-specific ownership.
-- [Experiment skill](../../.agents/skills/manimux-experiments/SKILL.md): agent workflow for eliciting task details, writing files and validating them.
-- [Station setup skill](../../.agents/skills/manimux-station-setup/SKILL.md): agent workflow for local hardware and service bindings.
+- [Experiment skill](../../skills/manimux-experiments/SKILL.md): agent workflow for eliciting task details, writing files and validating them.
+- [Station setup skill](../../skills/manimux-station-setup/SKILL.md): agent workflow for local hardware and service bindings.

@@ -46,7 +46,7 @@ RoboGUI provides the operator workspace.
 
 </details>
 
-[Architecture and extension protocols](.agents/skills/manimux-development/references/README.md) · [Inference guide](https://sii-liulab.github.io/manimux/guideline.html#algorithms)
+[Architecture and extension protocols](skills/manimux-development/references/README.md) · [Inference guide](https://sii-liulab.github.io/manimux/guideline.html#algorithms)
 
 <a id="integrate"></a>
 <a id="included-integrations"></a>
@@ -213,8 +213,8 @@ for external model/camera services, separate trial roots and Franka.
 ## Contributing & community
 
 Contributions to robot and policy integrations, inference strategies, RoboGUI,
-and documentation are welcome. Start with the [contribution guide](.agents/skills/manimux-development/references/README.md#contributing).
-For agent-assisted development, use the [development skill](.agents/skills/manimux-development/SKILL.md).
+and documentation are welcome. Start with the [contribution guide](skills/manimux-development/references/README.md#contributing).
+For agent-assisted development, use the [development skill](skills/manimux-development/SKILL.md).
 
 **Latest update · 2026-10-18:** The [ManiMux website](https://sii-liulab.github.io/manimux/) and dedicated [user guide](https://sii-liulab.github.io/manimux/guideline.html) are live.
 

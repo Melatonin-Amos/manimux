@@ -62,7 +62,7 @@ Use <code>--robot piper</code> or <code>--robot aloha</code> for the correspondi
 <pre><code class="language-bash">uv pip install --python envs/yam/.venv/bin/python -e '.[replay,realsense,xpolicylab]'
 </code></pre>
 <p>This does not install the robot SDK or create the model environment. Follow the
-<a href=".agents/skills/manimux-station-setup/references/station.md">station setup reference</a>
+<a href="skills/manimux-station-setup/references/station.md">station setup reference</a>
 and the selected <a href="#support">model runbook</a>. Do not run root <code>uv sync</code> against an
 independent hardware/model environment; it can remove dependencies absent from the root lockfile.</p>
 </section>
@@ -229,7 +229,7 @@ bounds, scalar cap, command-safety rates and control period are saved as
 <code>meta.json: command_limits</code>.</p>
 <p>Use the same <code>--local PATH</code> on entry points that support station binding. The common camera, policy and runtime entry points
 support it; RoboGUI network options remain separate. Advanced model-specific launchers
-may instead take a model recipe as <code>--config</code>. See <a href=".agents/skills/manimux-station-setup/references/station.md#scope-and-remaining-independent-entry-points">entry-point scope</a>.</p>
+may instead take a model recipe as <code>--config</code>. See <a href="skills/manimux-station-setup/references/station.md#scope-and-remaining-independent-entry-points">entry-point scope</a>.</p>
 <p><strong>Before launch, inspect the resolved config without connecting hardware:</strong></p>
 <pre><code class="language-bash">envs/yam/.venv/bin/python - &lt;&lt;'PY'
 from manimux.collections import load_collection
@@ -246,7 +246,7 @@ editing a file does not hot-reload a running deployment.</p>
 <h3 id="managed-deployment">Agent-assisted managed deployment</h3>
 <p>On an installed station, start a fresh agent conversation in the checkout and ask to
 deploy a specific supported model/checkpoint and task, open RoboGUI, and leave preparation
-and execution to you. The <a href="https://github.com/SII-LiuLab/manimux/tree/main/.agents/skills/manimux-deploy">deployment skill</a>
+and execution to you. The <a href="https://github.com/SII-LiuLab/manimux/tree/main/skills/manimux-deploy">deployment skill</a>
 resolves existing recipes and station bindings. Missing physical camera mappings or an
 ambiguous checkpoint still require your input. This is a new conversation on a configured
 station; SDK installation, weights and calibration are separate setup work.</p>
@@ -866,7 +866,7 @@ pairs such as RTC + PAINT.</p>
   RTC, PAINT, AAC and AutoHorizon require the corresponding advertised sampling mode
   (<code>rtc</code>, <code>paint</code>, <code>aac</code>, <code>autohorizon</code>). BID also requires <code>aac</code> candidate sampling.
   Adding ACT does not change the base algorithm's sampling requirement. Check the
-  <a href=".agents/skills/manimux-inference/references/inference-matrix.md">model sampling matrix</a> and the running server's capabilities;
+  <a href="skills/manimux-inference/references/inference-matrix.md">model sampling matrix</a> and the running server's capabilities;
   a YAML setting cannot enable a missing model hook.</li>
 <li>Process decoding supports ordinary <code>async</code>, <code>serial</code>, RTC and train-time RTC without ACT,
   using a compatible adapter and a non-streaming schedule. Serial preserves its complete
@@ -1020,7 +1020,7 @@ on the final four of the seven fixed rows, then preserves the complete seven-row
 lead in the returned trajectory. Select the existing ABC RTC experiment YAMLs;
 their strategy and wire mode are now <code>train_time_rtc</code>, not PAINT.
 The checkpoint, 30-step horizon, action frames and direct executor are unchanged.</p>
-<p>See the <a href=".agents/skills/manimux-inference/references/inference.md#train-time-rtc">timing contract</a> and <a href=".agents/skills/manimux-inference/references/deployment/umi-dp-tianji-taccap.md#pack-plate-train-time-rtc">deployment reference</a>.</p></section>
+<p>See the <a href="skills/manimux-inference/references/inference.md#train-time-rtc">timing contract</a> and <a href="skills/manimux-inference/references/deployment/umi-dp-tianji-taccap.md#pack-plate-train-time-rtc">deployment reference</a>.</p></section>
 <section aria-labelledby="paint" class="guide-page" data-page-id="paint" data-title="PAINT" hidden=""><h2 id="paint">PAINT</h2>
 <pre><code class="language-yaml">inference:
   algorithm: paint
@@ -1133,7 +1133,7 @@ them. Pi05 loads the experiment with
 in its model environment. With a standalone server recipe, put <code>autohorizon</code>
 at the recipe's top level and launch through the ManiMux wrapper; direct
 <code>third_party/XPolicyLab/setup_policy_server.py</code> does not apply these overrides.
-See the <a href=".agents/skills/manimux-inference/references/inference-matrix.md">model recipe and sampling matrix</a>
+See the <a href="skills/manimux-inference/references/inference-matrix.md">model recipe and sampling matrix</a>
 for backend constraints.</p>
 </section>
 <section aria-labelledby="bid-backward" class="guide-page" data-page-id="bid-backward" data-title="BID backward-only" hidden=""><h2 id="bid-backward">BID backward-only</h2>
@@ -1370,11 +1370,11 @@ Apply the asynchronous overrides above for single-inflight or multi-inflight;
 <li>AutoHorizon with RTC, PAINT, BID or AAC sampling/horizon selection.</li>
 </ul>
 <h3 id="further-configuration">Further configuration</h3>
-<p>For model-specific sampler options, use the <a href=".agents/skills/manimux-inference/references/inference-matrix.md">sampling matrix</a>.
-For executor smoothing, limits and IK, use <a href=".agents/skills/manimux-development/references/execution.md">execution and IK</a>.
-Algorithm sources and derivations are kept in the <a href=".agents/skills/manimux-inference/references/reproductions/README.md">reproduction records</a>;
+<p>For model-specific sampler options, use the <a href="skills/manimux-inference/references/inference-matrix.md">sampling matrix</a>.
+For executor smoothing, limits and IK, use <a href="skills/manimux-development/references/execution.md">execution and IK</a>.
+Algorithm sources and derivations are kept in the <a href="skills/manimux-inference/references/reproductions/README.md">reproduction records</a>;
 advanced decoder/waypoint configuration is covered by the
-<a href=".agents/skills/manimux-development/references/runtime-config.md">runtime configuration reference</a>.</p>
+<a href="skills/manimux-development/references/runtime-config.md">runtime configuration reference</a>.</p>
 </section>
 <section aria-labelledby="support" class="guide-page" data-page-id="support" data-title="Model support &amp; presets" hidden=""><h2 id="support">Support</h2>
 <p>BID requires AAC candidate sampling plus complete absolute-joint decoding. Adding ACT or asynchronous adaptive horizons also requires the decoding and client constraints in the <a href="#algorithms">compatibility table</a>; a model hook alone is insufficient.</p>
@@ -1438,7 +1438,7 @@ decides availability. It does not establish task performance.</p>
 <p>OpenWAM specialized modes require a single-stream, full-horizon backend and CFG scale 1. RTC permits compilation and can opt into DiT caching. Compiled RTC has synthetic CPU regression coverage; real-checkpoint CUDA validation is still required before claiming correctness or speed on a deployment. Existing eager experiments keep their recorded settings; compilation comparisons need distinct variants. PAINT/AutoHorizon currently require eager execution and remain uncached;
 AutoHorizon also requires the joint-attention driver. LingBot conditioned/attention modes
 require the native horizon; attention capture needs eager execution. Pi05 PyTorch and
-Pi05 EEF are outside this matrix. <a href=".agents/skills/manimux-inference/references/inference-matrix.md">Detailed model contracts</a></p>
+Pi05 EEF are outside this matrix. <a href="skills/manimux-inference/references/inference-matrix.md">Detailed model contracts</a></p>
 <p><strong>Generate selecting configs from one existing deployment, without launching services:</strong></p>
 <pre><code class="language-bash">PYTHONPATH=. envs/yam/.venv/bin/python scripts/experiments/build_inference_matrix.py \
   --base manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml \
@@ -1465,23 +1465,23 @@ Progress requires the built-in Async strategy with single-inflight scheduling.</
 </thead>
 <tbody>
 <tr>
-<td><a href=".agents/skills/manimux-inference/references/deployment/pi05-yam.md">Pi05 / YAM</a></td>
+<td><a href="skills/manimux-inference/references/deployment/pi05-yam.md">Pi05 / YAM</a></td>
 <td>OpenPI environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 <tr>
-<td><a href=".agents/skills/manimux-inference/references/deployment/xiaomi-xr1-yam.md">XR1 / YAM</a></td>
+<td><a href="skills/manimux-inference/references/deployment/xiaomi-xr1-yam.md">XR1 / YAM</a></td>
 <td>XR1 environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 <tr>
-<td><a href=".agents/skills/manimux-inference/references/deployment/lingbot-vla2-yam.md">LingBot / YAM</a></td>
+<td><a href="skills/manimux-inference/references/deployment/lingbot-vla2-yam.md">LingBot / YAM</a></td>
 <td>LingBot environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 <tr>
-<td><a href=".agents/skills/manimux-inference/references/deployment/dp-yam.md">DP / YAM</a></td>
+<td><a href="skills/manimux-inference/references/deployment/dp-yam.md">DP / YAM</a></td>
 <td>DP environment; <code>manimux.servers.dp --experiment</code></td>
 </tr>
 <tr>
-<td><a href=".agents/skills/manimux-inference/references/deployment/openwam-yam.md">OpenWAM / YAM</a></td>
+<td><a href="skills/manimux-inference/references/deployment/openwam-yam.md">OpenWAM / YAM</a></td>
 <td>OpenWAM environment; <code>manimux.servers.policy --config-list</code></td>
 </tr>
 </tbody>
@@ -1859,7 +1859,7 @@ observations through a disconnected command sink before operator handoff.</p>
 <p>The former manimux-dispatch console entry and native environment launcher have been removed.
 Use execute_policy instead of native pi05_act/vla_grasp, select the matching model recipe,
 and migrate native arm aliases/coordinates to the configured groups and base frames.
-The <a href=".agents/skills/manimux-development/references/rpent.md">integration contract</a>
+The <a href="skills/manimux-development/references/rpent.md">integration contract</a>
 describes ownership, acceptance and migration details.</p>
 </section>
 <section aria-labelledby="experiments" class="guide-page" data-page-id="experiments" data-title="Rules, templates &amp; scoring" hidden=""><h2 id="experiments">Experiments</h2>
@@ -2727,7 +2727,7 @@ replace <code>--robot yam</code> with <code>--config /path/to/robogui.yaml</code
 The player starts paused and supports seeking and playback speed using recorded tick timestamps.
 It does not replay RGB videos or connect to hardware. No camera, policy or runtime service is needed.
 Partial episodes and records without the selected stream cannot be replayed.
-<a href=".agents/skills/manimux-experiments/references/records.md">Recording contract</a></p>
+<a href="skills/manimux-experiments/references/records.md">Recording contract</a></p>
 </section>
 <section aria-labelledby="reports" class="guide-page" data-page-id="reports" data-title="Evaluation reports" hidden=""><h2 id="reports">Reports</h2>
 <p>The report index is <strong>separate from the scoring template</strong>. Save it under
@@ -2823,12 +2823,12 @@ Bind the recorded checkpoint and resolved setting; do not pool trials by folder 
   threshold: 0.05
 </code></pre>
 <p><strong>NLDLJ ↓</strong> uses <code>ln(T³ × ∫||jerk||²dt / peak_speed²)</code>; jerk stencils crossing plan changes are excluded. <strong>NSPARC ↓</strong> uses positive spectral arc length of speed and retains switches. Both use scheduled EE references, with verified constant commands replacing historical hold placeholders. Pause/reset, identity breaks and long gaps split segments. Duration-weight valid segments, then equally weight active channels and rollouts; this is not a score of measured tracking accuracy.</p>
-<p>The report generates handoff, overlap and outcome/smoothness figures when data is available. Colored manipulation-area overlays require a <code>manipulation_scope</code> profile; inference coverage must use that method's recorded state points. Speed-distribution diagnostics have a <a href=".agents/skills/manimux-experiments/references/chunk-speed.md">separate entry point</a>.</p>
+<p>The report generates handoff, overlap and outcome/smoothness figures when data is available. Colored manipulation-area overlays require a <code>manipulation_scope</code> profile; inference coverage must use that method's recorded state points. Speed-distribution diagnostics have a <a href="skills/manimux-experiments/references/chunk-speed.md">separate entry point</a>.</p>
 <p>Each report is a new immutable version. <code>latest.json</code> points to its HTML and summary. The CLI leaves raw recordings and human labels unchanged; <code>episode-metrics.json</code> preserves exclusions and metric provenance.</p>
 <p>Invalid and unreviewed counts stay visible; missing metrics remain missing. Keep different rubric
-snapshots separate. The report CLI computes reference seams and smoothness offline; it does not run a robot or PRM inference. <a href=".agents/skills/manimux-experiments/references/evaluation-reports.md">Report schema and metric options</a>
-· <a href=".agents/skills/manimux-experiments/references/prm.md">PRM workflow</a>
-· <a href=".agents/skills/manimux-experiments/references/chunk-speed.md">Speed diagnostics</a></p>
+snapshots separate. The report CLI computes reference seams and smoothness offline; it does not run a robot or PRM inference. <a href="skills/manimux-experiments/references/evaluation-reports.md">Report schema and metric options</a>
+· <a href="skills/manimux-experiments/references/prm.md">PRM workflow</a>
+· <a href="skills/manimux-experiments/references/chunk-speed.md">Speed diagnostics</a></p>
 </section>
 <section aria-labelledby="agent-references" class="guide-page" data-page-id="agent-references" data-title="Work with your agent" hidden=""><h2 id="agent-references">Agent references</h2>
 <table>
@@ -2841,19 +2841,19 @@ snapshots separate. The report CLI computes reference seams and smoothness offli
 <tbody>
 <tr>
 <td>Components, models, adapters and runtime integration</td>
-<td><a href=".agents/skills/manimux-development/SKILL.md">Development skill</a></td>
+<td><a href="skills/manimux-development/SKILL.md">Development skill</a></td>
 </tr>
 <tr>
 <td>Station devices, SDKs and endpoints</td>
-<td><a href=".agents/skills/manimux-station-setup/SKILL.md">Station setup skill</a></td>
+<td><a href="skills/manimux-station-setup/SKILL.md">Station setup skill</a></td>
 </tr>
 <tr>
 <td>Algorithm/model capability and configuration</td>
-<td><a href=".agents/skills/manimux-inference/SKILL.md">Inference skill</a></td>
+<td><a href="skills/manimux-inference/SKILL.md">Inference skill</a></td>
 </tr>
 <tr>
 <td>Study rules, labels, metrics and results</td>
-<td><a href=".agents/skills/manimux-experiments/SKILL.md">Experiment skill</a></td>
+<td><a href="skills/manimux-experiments/SKILL.md">Experiment skill</a></td>
 </tr>
 </tbody>
 </table>
@@ -3006,6 +3006,6 @@ document.addEventListener('click',e=>{if(!e.target.closest('.search-box'))result
 document.querySelector('#print').onclick=()=>window.print();
 window.addEventListener('beforeprint',()=>{document.querySelectorAll('.guide-page details').forEach(d=>{d.dataset.wasOpen=String(d.open);d.open=true;});});
 window.addEventListener('afterprint',()=>{document.querySelectorAll('.guide-page details').forEach(d=>d.open=d.dataset.wasOpen==='true');});
-if(location.hostname.endsWith('github.io'))document.querySelectorAll('a[href]').forEach(a=>{const h=a.getAttribute('href');if(/^(\.agents\/|manimux\/)/.test(h))a.href='https://github.com/SII-LiuLab/manimux/blob/main/'+h;});
+if(location.hostname.endsWith('github.io'))document.querySelectorAll('a[href]').forEach(a=>{const h=a.getAttribute('href');if(/^(skills\/|manimux\/)/.test(h))a.href='https://github.com/SII-LiuLab/manimux/blob/main/'+h;});
 route();
 </script></body></html>

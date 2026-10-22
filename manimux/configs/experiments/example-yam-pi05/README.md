@@ -24,7 +24,7 @@ validated task performance. [`put_bottles/rpent.yaml`](put_bottles/rpent.yaml) s
 `robot.options.execute: false`; enable actuation in a private variant only after the RPent
 offline and Finish checks.
 
-First complete the [station setup](../../../../.agents/skills/manimux-station-setup/SKILL.md),
+First complete the [station setup](../../../../skills/manimux-station-setup/SKILL.md),
 including the YAM SDK, camera bindings and your private
 `manimux/configs/local/station.yaml`. Its `paths.checkpoints` is the root below which the
 [model recipe](../../policy/pi05/yam/put-bottles/joint-step30000.yaml) selects the

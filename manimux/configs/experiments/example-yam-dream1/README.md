@@ -20,7 +20,7 @@ returned actions before requesting the next chunk. It does not use Smooth, blend
 latency cropping; API latency therefore produces a pause between chunks. This is a
 starting example, not a claim of validated task performance.
 
-First complete the [station setup](../../../../.agents/skills/manimux-station-setup/SKILL.md),
+First complete the [station setup](../../../../skills/manimux-station-setup/SKILL.md),
 including the YAM SDK, camera bindings and your private
 `manimux/configs/local/station.yaml`. From the repository root, use the Python
 environment with the station SDKs installed:
