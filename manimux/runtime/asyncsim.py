@@ -63,6 +63,11 @@ class AsyncSimRuntime:
             config["robot"], config["policy"], motion_limits=config["executor"]["motion_limits"],
         )
         self.adapter.validate(config["robot"], config["policy"])
+        factory = getattr(self.adapter, "create_command_controller", None)
+        self.command_controller = factory(config) if callable(factory) else None
+        self._source_action_space = (
+            self.command_controller.source_action_space if self.command_controller else "joint_position"
+        )
         robot = config["robot"]
         options = robot["options"]
         self.client = client or AsyncSimClient(options["endpoint"], env_index=options.get("env_index", 0))
@@ -145,6 +150,8 @@ class AsyncSimRuntime:
             raise RuntimeError("AsyncSim runtime already started")
         self.robot.connect()
         try:
+            if self.command_controller is not None:
+                self.command_controller.start(recording_directory)
             if recording_directory is None:
                 episode = self.client.reset(seed=seed)
             else:
@@ -163,6 +170,8 @@ class AsyncSimRuntime:
             self._instruction = None
             self._timeline_origin_ns = None
             self._timeline_now_ns = None
+            if self.command_controller is not None:
+                self.command_controller.reset()
             self.client.subscribe(self.streams)
             self.sensor.start()
             self._started = True
@@ -255,8 +264,8 @@ class AsyncSimRuntime:
         state = observation.state
         result = None
         if chunk is not None:
-            if chunk.action_space != "joint_position":
-                raise ValueError("AsyncSim requires a canonical joint_position chunk")
+            if chunk.action_space != self._source_action_space:
+                raise ValueError("AsyncSim chunk does not match the configured source action space")
             result = self.timeline.commit(
                 chunk, now_ns=now_ns,
                 max_plan_age_ns=round(self.config["inference"]["max_plan_age_s"] * 1e9),
@@ -274,10 +283,16 @@ class AsyncSimRuntime:
             active = self.timeline.active_horizon()
             if active is not None and now_ns >= active.start_time_ns:
                 sample_ns = active.start_time_ns + ((now_ns - active.start_time_ns) // active.dt_ns) * active.dt_ns
-        horizon = self.timeline.reference_horizon(
-            now_ns=sample_ns, dt_ns=self.dt_ns, horizon_steps=self.executor.horizon_steps
+        horizon = (
+            self.timeline.reference_horizon(
+                now_ns=sample_ns, dt_ns=self.dt_ns, horizon_steps=self.executor.horizon_steps
+            ) if self.command_controller is None else None
         )
-        if horizon is None:
+        if self.command_controller is not None:
+            command = self.command_controller.sample(
+                now_ns, state, self.timeline.active_horizon(), self._last_command,
+            )
+        elif horizon is None:
             if isinstance(self.executor, SmoothExecutor) and self.executor.braking_tracking:
                 command = self.executor.brake_hold(now_ns, state)
             elif isinstance(self.executor, SmoothExecutor):
@@ -533,8 +548,8 @@ class AsyncSimRuntime:
                                     max_source_steps=self.config["inference"]["max_chunk_policy_steps"],
                                 ),
                             )
-                            if chunk.action_space != "joint_position":
-                                raise ValueError("policy adapter must return joint_position")
+                            if chunk.action_space != self._source_action_space:
+                                raise ValueError("policy adapter returned the wrong source action space")
                             chunk = prepare_strategy_chunk(
                                 self.strategy, chunk=chunk, response=response, now_ns=now_ns,
                             )
@@ -631,7 +646,9 @@ class AsyncSimRuntime:
                 "inference_time_s": inference_ms / 1000.0,
                 "wall_elapsed_s": time.monotonic() - started_wall,
                 "audit": {"episode_id": episode["episode_id"], "snapshots": self._snapshot_audit,
-                          "actions": command_acks, "manimux_events": events},
+                          "actions": command_acks, "manimux_events": events,
+                          **({"execution_contract": self.command_controller.audit()}
+                             if self.command_controller is not None else {})},
                 "packets": tuple(self._selected_packets.values()),
             }
         finally:
@@ -662,5 +679,11 @@ class AsyncSimRuntime:
 
     def close(self) -> None:
         self._started = False
-        self.sensor.close()
-        self.robot.close()
+        try:
+            if self.command_controller is not None:
+                self.command_controller.close()
+        finally:
+            try:
+                self.sensor.close()
+            finally:
+                self.robot.close()
