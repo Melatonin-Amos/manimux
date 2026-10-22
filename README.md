@@ -20,6 +20,10 @@ An open-source harness for real-world manipulation inference and experiment mana
 **Dream-1 on YAM, through RoboGUI.** Watch a real-robot run with live camera views,
 robot state and predicted action chunks in one workspace.
 
+## News
+
+- **2026-10-22** — Support for [Franka FR3 with Robotiq gripper](https://sii-liulab.github.io/manimux/guideline.html#franka-deployment) and the [RPent agent](https://sii-liulab.github.io/manimux/guideline.html#agent-integrations).
+
 <a id="what-you-can-do"></a>
 
 ## Why ManiMux
