@@ -17,6 +17,7 @@ import yaml
 
 from manimux.agents.execution import agent_parameters
 from manimux.agents.rpent.cli import load_agent_config
+from manimux.agents.rpent.transcript import TranscriptFollower
 from manimux.dispatch.server import DispatchServer
 from manimux.runtime.dispatch import PolicyDispatch
 from manimux.runtime.edge import EdgeRuntime
@@ -32,7 +33,7 @@ class ManagedRPentRuntime:
         self.launch = agent_parameters(self.config.get("agent") or {})
         if "debug_max_plan_age_s" in self.launch:
             # Explicit RPent-only debugging condition, shared by preview and
-            # execution. The caller's Direct VLA configuration stays unchanged.
+            # execution, on this runtime's copy of the experiment configuration.
             self.config["inference"]["max_plan_age_s"] = self.launch["debug_max_plan_age_s"]
         self.recipe_path = Path(self.launch["config"])
         self.recipe = load_agent_config(self.recipe_path, {})
@@ -112,8 +113,12 @@ class ManagedRPentRuntime:
     def _supervise(self, endpoint: str) -> None:
         phase = "waiting"
         self.dispatch.set_agent_status(phase, detail="Start rollout to begin RPent decisions.")
+        transcript, ticks = TranscriptFollower(self.artifacts / "planner"), 0
         try:
             while not self.stop.wait(0.05):
+                ticks += 1
+                if self.process is not None and ticks % 5 == 0:
+                    self.dispatch.add_agent_messages(transcript.poll())
                 status = self.dispatch.status()
                 if status["closed"] or self.dispatch.stop_requested:
                     return
@@ -147,6 +152,7 @@ class ManagedRPentRuntime:
             self.dispatch.finish(session_id=self.dispatch.session_id)
         finally:
             self._stop_planner()
+            self.dispatch.add_agent_messages(transcript.poll(final=True))
 
     def _stop_planner(self) -> None:
         if self.process is not None:

@@ -1,7 +1,7 @@
 # Pi05 joint+EEF checkpoint: YAM EEF execution
 
 The paired experiment is
-`manimux/configs/experiments/pi05-yam-put-bottles-eef-from-joint-ee-step30000/put_bottles/manimux_eef_step30000.yaml`.
+`manimux/configs/experiments/{pi05-eef-study}/put_bottles/manimux_eef_step30000.yaml` (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)).
 It uses the existing bottle-task joint+EEF step-30000 checkpoint. No retraining
 or checkpoint modification is required.
 
@@ -35,13 +35,13 @@ continue to return 14 joint/gripper dimensions with their existing capabilities.
 
 ## Startup
 
-From `/home/ubuntu/manimux`, use separate terminals. Finish the old rollout and
+From `{repo}`, use separate terminals. Finish the old rollout and
 exit its runtime before starting a new robot owner. Matching camera and RoboGUI
 services can be reused.
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config-list manimux/configs/lists/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
+  --config-list manimux/configs/lists/{pi05-eef-study}.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 ```bash
@@ -51,13 +51,13 @@ envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
 
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --config-list manimux/configs/lists/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
+  --config-list manimux/configs/lists/{pi05-eef-study}.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 ```bash
 envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/pi05-yam-put-bottles-eef-from-joint-ee-step30000-standalone.yaml --experiment-id put_bottles_manimux_eef_step30000
+  --config-list manimux/configs/lists/{pi05-eef-study}.yaml --experiment-id put_bottles_manimux_eef_step30000
 ```
 
 The model endpoint is `ws://127.0.0.1:8530`. RoboGUI flow is Prepare, Start rollout,

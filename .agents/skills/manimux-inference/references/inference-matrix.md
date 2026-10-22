@@ -61,7 +61,7 @@ OpenWAM's entire generated comparison disables compilation and DiT caching.
 
 ```bash
 PYTHONPATH=. envs/yam/.venv/bin/python scripts/experiments/build_inference_matrix.py \
-  --base manimux/configs/experiments/pi05-yam-put-bottles-joint-step30000/put_bottles/serial_joint_step30000.yaml \
+  --base manimux/configs/experiments/example-yam-pi05/put_bottles/serial.yaml \
   --output-dir data/configs/pi05-inference \
   --execution-steps 16 --paint-delay-steps 4 --async-trigger progress \
   --methods serial async act rtc paint autohorizon
@@ -82,18 +82,18 @@ single-inflight scheduling, not an observation-history strategy plugin.
 The generator covers the listed standalone methods; configure BID and ensemble
 compositions through the [composition guide](../../../../guideline.html#optional-algorithm-composition).
 
-Existing inputs for the remaining families:
+Inputs for the remaining families (station-local experiments; build them like the [example study](../../../../manimux/configs/lists/example-yam-pi05.yaml)):
 
-- XR1: `manimux/configs/experiments/xiaomi-xr1-yam-finetune-put-bottles-step30000/put_bottles/manimux_step30000.yaml`.
-  Supply `--policy-server manimux/configs/policy/xiaomi-xr1/yam/finetune-put-bottles-step30000.yaml`
+- XR1: `manimux/configs/experiments/{xr1-study}/put_bottles/manimux_step30000.yaml`.
+  Supply `--policy-server manimux/configs/policy/xiaomi-xr1/yam/{recipe}.yaml`
   when the base only describes the client. H=30; example K=12, d=4.
-- LingBot: `manimux/configs/examples/lingbot_vla2_yam_sampling.yaml`.
-  This example binds an existing screwdriver checkpoint and disables robot
+- LingBot: `manimux/configs/experiments/{lingbot-study}/<task>/<sampling-variant>.yaml`.
+  The former sampling example binds an existing screwdriver checkpoint and disables robot
   execution. It does not restore the retired task into the experiment register.
   H=50; example K=16, d=4.
-- DP: `manimux/configs/experiments/dp-yam-put-bottles-eef-step100000/put_bottles/serial_eef_step100000.yaml`.
+- DP: `manimux/configs/experiments/{dp-study}/put_bottles/serial_eef_step100000.yaml`.
   H=6; example K=3. PAINT and AutoHorizon are reported as not generated.
-- OpenWAM: `manimux/configs/experiments/openwam-custom/put_bottles/serial_step30000.yaml`.
+- OpenWAM: `manimux/configs/experiments/{openwam-study}/put_bottles/serial_step30000.yaml`.
   Supply `--policy-server manimux/configs/policy/openwam/yam/finetune-put-bottles-step30000.yaml`.
   H=32; example K=12, d=4.
 
@@ -110,7 +110,7 @@ infeasible. Do not truncate a checkpoint's action horizon to fit a preset.
 `manimux/runtime/` owns request times, overlap masks and execution prefixes.
 `policy_adapter/<model>/yam.py` maps canonical absolute joint targets into each
 model's physical action representation. `policies/xpolicylab/client.py` transports
-the transformed condition with the observation. `XPolicyLab/policy/<model>/`
+the transformed condition with the observation. `third_party/XPolicyLab/policy/<model>/`
 owns normalization, noise, sampling and output metadata.
 
 - XR1: old absolute joint targets go through FK and are rebased to the new
@@ -134,7 +134,7 @@ LingBot, DP and OpenWAM adapters. StarVLA returns the same execution-length key.
 
 - [PAINT Algorithm 1](https://arxiv.org/html/2606.19774v1) supplies the naive
   forward, backward Euler inversion, prefix-noise replacement and final forward
-  sequence. `XPolicyLab/utils/flow_sampling.py` implements the flow sequence for
+  sequence. `third_party/XPolicyLab/utils/flow_sampling.py` implements the flow sequence for
   XR1/LingBot. `policy/OpenWAM/sampling.py` extends it to the checkpoint's joint
   video/action grid; this is a local WAM adaptation, not an official WAM port.
 - [RTC](https://arxiv.org/html/2506.07339v2) uses guided denoising and runtime
@@ -161,7 +161,7 @@ shadow XPolicyLab tests.
 PYTHONPATH=. envs/yam/.venv/bin/python -m pytest -o addopts='' -q \
   tests/unit/test_inference_expansion.py
 
-cd XPolicyLab
+cd third_party/XPolicyLab
 PYTHONPATH=..:policy/Pi_05/openpi/src JAX_PLATFORMS=cpu \
   policy/Pi_05/openpi/.venv/bin/python -m pytest -o addopts='' -q \
   tests/unit/test_flow_sampling_expansion.py tests/unit/test_ws_infer_sampling.py \
@@ -180,7 +180,7 @@ outstanding for the newly added combinations.
 
 ## Shared sampler structure and cache validation
 
-`XPolicyLab/utils/sampling_contracts.py` owns CPU request checks (shapes, finite
+`third_party/XPolicyLab/utils/sampling_contracts.py` owns CPU request checks (shapes, finite
 values, weights in [0,1], positive beta). It imports neither Torch nor JAX.
 Pi05 asks for writable copies; each model retains its normalization and schedule.
 `flow_sampling.rtc_correction` shares only the clean-estimate Torch VJP between
@@ -214,7 +214,7 @@ adapter. Missing source or runtime evidence is explicitly retained below.
 | DP | Adapter loads the saved workspace/policy and calls prediction without adding compile. Exact checkpoint policy remains the owner. | The [official U-Net policy](https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/policy/diffusion_unet_hybrid_image_policy.py) has no automatic compile wrapper; this is not proof that arbitrary checkpoint plugins cannot compile internally. |
 | UMI-DP | Adapter instantiates the checkpoint policy with Hydra and calls `predict_action`, without a compile override. | No fresh checkpoint-specific upstream compile-default verification; do not claim an optimization was disabled or that adding a YAML flag would enable it. |
 | Isaac-0.5 | Adapter loads `PerceptronIsaacPolicy.from_pretrained`; no explicit torch.compile call in the inspected local integration. | The official [project](https://github.com/perceptron-ai-inc/isaac) delegates inference to a pinned LeRobot/runtime stack. This audit does not establish compilation inside all checkpoint-owned/runtime implementations. |
-| StarVLA | Recipes expose no compile setting; launcher delegates to `StarVLA/deployment/model_server/serve.py`. That checkout is absent on this station. | Cannot verify effective backend compilation here. A configured framework label or HF capability is not runtime evidence. |
+| StarVLA | Recipes expose no compile setting; launcher delegates to `third_party/StarVLA/deployment/model_server/serve.py`. That checkout is absent on this station. | Cannot verify effective backend compilation here. A configured framework label or HF capability is not runtime evidence. |
 
 Keep the live service separate from the files on disk: edits take effect only
 when the operator restarts the model service and runtime. First-call compilation

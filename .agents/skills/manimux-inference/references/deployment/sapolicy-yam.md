@@ -1,18 +1,20 @@
 # SAPolicy + YAM
 
+SAPolicy recipes are station-local (checkpoint bundles are not published); `{recipe}` below is your recipe under `manimux/configs/policy/sapolicy/yam/`.
+
 ## Current deployment
 
-SAPolicy checkpoints connect through `XPolicyLab/policy/SAPolicy` and shared `xpolicylab_ws`.
+SAPolicy checkpoints connect through `third_party/XPolicyLab/policy/SAPolicy` and shared `xpolicylab_ws`.
 Model source, dependency installation, data, and training entry points reside in that policy directory. ManiMux owns cameras,
 observation mapping, YAM FK/IK, scheduling, execution, and recording. For installation and resources, see
-[SAPolicy README](../../../../../XPolicyLab/policy/SAPolicy/README.md).
+[SAPolicy README](../../../../../third_party/XPolicyLab/policy/SAPolicy/README.md).
 
 Supports `yam_dual / ee`. The model returns absolute end-effector poses for both arms (`[x,y,z,qw,qx,qy,qz]`) and a
 continuous gripper opening from 0 closed to 1 open. The YAM adapter solves IK for the whole chunk and hands the runtime
 two 7D joint trajectories, so RoboGUI reports `joint_position`; the model's own EE targets are recorded per plan as
 `raw_model_eef`.
 
-| Runtime configuration (`manimux/configs/experiments/put_bottles/sapolicy/`) | Policy server (`manimux/configs/policy/sapolicy/yam/`) | Checkpoint |
+| Runtime configuration (`manimux/configs/experiments/{sapolicy-study}/put_bottles/`, station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) | Policy server (`manimux/configs/policy/sapolicy/yam/`) | Checkpoint |
 | --- | --- | --- |
 | `yam_sapolicy_mv51_async25_braking_capped.yaml` | `teleopMV51/raw.yaml` | MV51 RAW, trained on this station's teleop data |
 | `yam_sapolicy_tcp_rot20_async48_z22.yaml` | `tcp_rot20/raw-50k.yaml` | tcp_rot20 RAW 50k, ABC bottles, zero-shot (below) |
@@ -43,11 +45,11 @@ Run from the ManiMux root. First follow the policy README to build the checkpoin
 Model weights and local recordings are excluded from Git.
 
 ```bash
-bash XPolicyLab/policy/SAPolicy/install.sh
-XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
-  --config manimux/configs/policy/sapolicy/yam/teleopMV51/raw.yaml --check
-XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
-  --config manimux/configs/policy/sapolicy/yam/teleopMV51/raw.yaml
+bash third_party/XPolicyLab/policy/SAPolicy/install.sh
+third_party/XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
+  --config manimux/configs/policy/sapolicy/yam/{recipe}.yaml --check
+third_party/XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
+  --config manimux/configs/policy/sapolicy/yam/{recipe}.yaml
 ```
 
 `--check` validates configuration and resources only. The shared model service defaults to `ws://127.0.0.1:8510`
@@ -69,7 +71,7 @@ GUI defaults to `camera_mode: policy`, following `policy.adapter.camera_map` rep
 
 ```bash
 envs/yam/.venv/bin/manimux run \
-  --config-list manimux/configs/lists/sapolicy-custom-standalone.yaml --experiment-id put_bottles_mv51_async25_braking_capped
+  --config-list manimux/configs/lists/{sapolicy-study}.yaml --experiment-id put_bottles_mv51_async25_braking_capped
 ```
 
 Open `http://localhost:8086`, click **Prepare normal rollout**, arrange the scene, then
@@ -97,17 +99,17 @@ without fine-tuning on this station's data.
 | `source/` | SpatialAlignVLA rollsweep0917 source snapshot with an inference-time RTC patch; ordinary sampling is bitwise identical to the original |
 
 ```bash
-rsync -aL --info=progress2 <source-host>:~/manimux/checkpoints/finetuned/sapolicy/tcp_rot20/ \
+rsync -aL --info=progress2 <source-host>:{repo}/checkpoints/finetuned/sapolicy/tcp_rot20/ \
   checkpoints/finetuned/sapolicy/tcp_rot20/
 ```
 
 ### Startup
 
 ```bash
-XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
-  --config manimux/configs/policy/sapolicy/yam/tcp_rot20/raw-50k.yaml
+third_party/XPolicyLab/policy/SAPolicy/.venv/bin/python manimux/servers/sapolicy.py \
+  --config manimux/configs/policy/sapolicy/yam/{recipe}.yaml
 envs/yam/.venv/bin/manimux run \
-  --config-list manimux/configs/lists/sapolicy-custom-standalone.yaml --experiment-id put_bottles_tcp_rot20_async48_z22
+  --config-list manimux/configs/lists/{sapolicy-study}.yaml --experiment-id put_bottles_tcp_rot20_async48_z22
 ```
 
 Server inference takes about 60–90 ms on a 4090 without compilation. For faster inference, change `cfg_file` to
@@ -156,9 +158,9 @@ RTC forward about 200 ms because the guided branch runs uncompiled). RTC runtime
 
 ```bash
 envs/sapolicy/.venv/bin/python -m manimux.servers.sapolicy \
-  --config manimux/configs/policy/sapolicy/yam/caps1010_3task_tcp/ema-160k.yaml
+  --config manimux/configs/policy/sapolicy/yam/{recipe}.yaml
 envs/yam/.venv/bin/manimux run \
-  --config-list manimux/configs/lists/sapolicy-custom-standalone.yaml --experiment-id put_bottles_caps1010_3task_async48_z22
+  --config-list manimux/configs/lists/{sapolicy-study}.yaml --experiment-id put_bottles_caps1010_3task_async48_z22
 ```
 
 Same deployment as tcp_rot20 above, without a z bias. On 2026-10-15/16 grippers closed at 0.800–0.818 (ABC demos 0.804),
@@ -183,16 +185,16 @@ The following commands still use MV51 as an example; substitute the new checkpoi
 
 ```bash
 envs/yam/.venv/bin/python -m pytest -o addopts='' -q \
-  XPolicyLab/policy/SAPolicy/tests tests/unit/test_sapolicy_xpl_model.py \
+  third_party/XPolicyLab/policy/SAPolicy/tests tests/unit/test_sapolicy_xpl_model.py \
   tests/unit/test_sapolicy_xpl_transport.py tests/unit/test_sapolicy_decode_timing.py
-XPolicyLab/policy/SAPolicy/.venv/bin/python -m pytest -o addopts='' -q \
-  XPolicyLab/policy/SAPolicy/tests
-XPolicyLab/policy/SAPolicy/.venv/bin/python -m XPolicyLab.policy.SAPolicy.validate_checkpoint \
-  --model-config manimux/configs/policy/sapolicy/yam/teleopMV51/raw.yaml \
+third_party/XPolicyLab/policy/SAPolicy/.venv/bin/python -m pytest -o addopts='' -q \
+  third_party/XPolicyLab/policy/SAPolicy/tests
+third_party/XPolicyLab/policy/SAPolicy/.venv/bin/python -m XPolicyLab.policy.SAPolicy.validate_checkpoint \
+  --model-config manimux/configs/policy/sapolicy/yam/{recipe}.yaml \
   --checkpoint "$PWD/checkpoints/finetuned/sapolicy/teleopMV51" --rtc \
   --output data/sapolicy/checkpoint-validation.json
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/sapolicy-custom/put_bottles/mv51_async25_braking_capped.yaml
+  --config manimux/configs/experiments/{sapolicy-study}/put_bottles/mv51_async25_braking_capped.yaml
 ```
 
 The final command requires the model service and sends only synthetic images and configured joint states; it opens no cameras and controls

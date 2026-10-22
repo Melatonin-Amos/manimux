@@ -29,4 +29,4 @@ Before hardware acceptance, each method needs its own document recording:
 
 | Offline | BID backward-only | [`bid-backward.md`](bid-backward.md) | Formula, transport and runtime checks; real checkpoint and robot validation pending |
 
-New methods cannot be marked complete only in a README table; every status must link back to evidence here.
+Start a new record from [`TEMPLATE.md`](TEMPLATE.md). New methods cannot be marked complete only in a README table; every status must link back to evidence here.

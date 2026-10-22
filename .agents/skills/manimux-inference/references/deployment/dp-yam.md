@@ -1,7 +1,7 @@
 # Ordinary DP on YAM: bottle task, absolute EEF
 
 The paired experiment is
-`manimux/configs/experiments/dp-yam-put-bottles-eef-step100000/put_bottles/manimux_eef_step100000.yaml`.
+`manimux/configs/experiments/{dp-study}/put_bottles/manimux_eef_step100000.yaml` (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)).
 It uses the ordinary XPolicyLab DP model, checkpoint EMA weights, 100 DDPM
 sampling steps, three RGB cameras, three measured observations at 30 Hz,
 and six action waypoints per request. The training horizon is eight: the model
@@ -15,7 +15,7 @@ XYZ+WXYZ. Gripper is normalized, zero closed and one open.
 From the repository root:
 
 ```bash
-bash XPolicyLab/policy/DP/install_inference.sh
+bash third_party/XPolicyLab/policy/DP/install_inference.sh
 ```
 
 Expected local checkpoint:
@@ -32,7 +32,7 @@ and RoboGUI processes when their configuration matches.
 
 ```bash
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config-list manimux/configs/lists/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
+  --config-list manimux/configs/lists/{dp-study}.yaml --experiment-id put_bottles_manimux_eef_step100000
 ```
 
 ```bash
@@ -42,13 +42,13 @@ envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
 ```
 
 ```bash
-XPolicyLab/policy/DP/.venv/bin/python -m manimux.servers.dp \
-  --experiment manimux/configs/experiments/dp-yam-put-bottles-eef-step100000/put_bottles/manimux_eef_step100000.yaml
+third_party/XPolicyLab/policy/DP/.venv/bin/python -m manimux.servers.dp \
+  --experiment manimux/configs/experiments/{dp-study}/put_bottles/manimux_eef_step100000.yaml
 ```
 
 ```bash
 envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/dp-yam-put-bottles-eef-step100000-standalone.yaml --experiment-id put_bottles_manimux_eef_step100000
+  --config-list manimux/configs/lists/{dp-study}.yaml --experiment-id put_bottles_manimux_eef_step100000
 ```
 
 The policy endpoint is `ws://127.0.0.1:8520`; a private station may override it

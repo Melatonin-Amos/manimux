@@ -42,13 +42,13 @@ not a measurement of fingertip contact or a physical calibration.
 
 ## XPolicyLab
 
-`XPolicyLab/` is a Git submodule tracking the `Cuzyoung/XPolicyLab` fork of
-`XPolicyLab/XPolicyLab`. It remains a separately versioned project and retains
+`third_party/XPolicyLab/` is a Git submodule tracking the `Cuzyoung/XPolicyLab` fork of
+`third_party/XPolicyLab/XPolicyLab`. It remains a separately versioned project and retains
 its own license and third-party notices inside the submodule.
 
 ## StarVLA
 
-`StarVLA/` is a separately versioned Git submodule tracking the
+`third_party/StarVLA/` is a separately versioned Git submodule tracking the
 `GuHaomingcs/starVLA` fork of `starVLA/starVLA`. The integration is based on upstream
 revision `312fac890ab75b7651d2bc4f8f8c8dbb5e055184`; the parent gitlink identifies
 its exact version. Source and sampler licenses remain in that submodule.
@@ -59,9 +59,9 @@ retained in `licenses/starvla-MIT.txt`.
 
 ## PRM-as-a-Judge
 
-`PRM-as-a-Judge/` is a Git submodule tracking
+`third_party/PRM-as-a-Judge/` is a Git submodule tracking
 `YuyangLiu2003/PRM-as-a-Judge`. It remains separately versioned under the
-Apache License 2.0; see `PRM-as-a-Judge/LICENSE`.
+Apache License 2.0; see `third_party/PRM-as-a-Judge/LICENSE`.
 
 ## i2rt YAM model assets
 
@@ -111,14 +111,10 @@ model scope are documented in `.agents/skills/manimux-station-setup/references/p
 
 ## Tianji Marvin model assets
 
-`manimux/embodiments/arm/tianji/assets/` and
-`manimux/embodiments/robot/tianji_taccap/assets/` contain the vendor CAD exports of the Tianji
-Marvin left arm, right arm and stand (URDF and STL), as bundled in
-`SII-LiuLab/universal_robogui` at commit `a7278af`. The stand URDF keeps only
-the `Link_Base`/`Link_Stand` links of the vendor's full assembly, and link
-colors are replaced with the palette of the bundled YAM model. These assets
-are used only for robogui rendering. The DH parameters and joint limits in
-`manimux/kinematics/tianji.py` are copied from the vendor SDK's
+The Tianji Marvin CAD exports (arm and stand URDF/STL) are not distributed with this
+repository; stations install them locally under `manimux/embodiments/arm/tianji/assets/`
+and `manimux/embodiments/robot/tianji_taccap/assets/`. The DH parameters and joint limits
+in `manimux/kinematics/tianji.py` are copied from the vendor SDK's
 `CommonConfig/ccs_m6_40.MvKDCfg`.
 
 ## Tianji differential IK
@@ -132,21 +128,6 @@ Tracking-lag guard semantics follow CalibWrist revision
 port boundaries and numerical validation. The source tianji-control checkout
 does not include a project-level license file; no different license is asserted
 for this derived code here.
-
-## Marvin SDK
-
-`manimux/embodiments/arm/tianji/sdk/marvin/` contains the Python bindings
-(`fx_robot.py`, `fx_kine.py`), Linux x86-64 libraries (`libMarvinSDK.so`,
-`libKine.so`) and the `ccs_m6_40.MvKDCfg` arm table from the vendor's
-`TJ_FX_ROBOT_CONTRL_SDK`, unmodified. The SDK is Copyright 2025 上海孚晞科技有限公司
-under the Apache License 2.0; see the `LICENSE` file in that directory.
-
-## UMI follower gripper assets
-
-`manimux/embodiments/end_effector/taccap/assets/umi_follower/` contains the XenseRobotics
-UMI follower gripper CAD (follower gripper assembly 0720, URDF and STL) with colors replaced by
-the bundled YAM gripper palette. Its flange mount and TCP follow the
-derivation in `SII-LiuLab/tianji-control` commit `d1def56`.
 
 ## README Earth model and architecture animation
 

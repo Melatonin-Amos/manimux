@@ -112,14 +112,14 @@ RTC, PAINT and AutoHorizon combinations remain unsupported for BID.
 The preset disables additional seam blending. Changing executor smoothing or
 blending also changes the actions executed and should be recorded in comparisons.
 
-The selecting experiment keeps the existing Pi05 joint step-30000 checkpoint:
+The selecting experiment (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) keeps the existing Pi05 joint step-30000 checkpoint:
 
 ```bash
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_bid_backward_joint_step30000
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
+  --config-list manimux/configs/lists/{pi05-study}.yaml --experiment-id put_bottles_bid_backward_joint_step30000
 
 envs/yam/.venv/bin/python -m manimux.cli run \
-  --config manimux/configs/experiments/pi05-yam-put-bottles-joint-step30000/put_bottles/bid_backward_joint_step30000.yaml
+  --config manimux/configs/experiments/{pi05-study}/put_bottles/bid_backward_joint_step30000.yaml
 ```
 
 The experiment selects `manimux/configs/inference/yam_bid_backward.yaml`. To use an

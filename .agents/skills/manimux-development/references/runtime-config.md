@@ -133,21 +133,13 @@ immutable; matching explicit history inputs contribute to live GUI repeat counti
 The derived inventory is refreshed during operation and by `inspect --index`; labels
 remain authoritative. See [the protocol](../../../../guideline.html#experiment-lists).
 
-## Native external actions
+## Runtimes without a policy worker
 
-`ExternalActionSource` supplies bounded joint rows to `EdgeRuntime` without a policy
-worker. The runtime retains the executor, shared `_send_command` validation,
-recording and GUI lifecycle. This mode is exclusive with policy dispatch and
-uses direct serial execution; every row advances only after successful submission.
-Stop is latched until a control-thread hold acknowledgement. The
-[legacy native protocol fixture](rpent-native.md) owns environment requests, calibrated path
-planning and logical episode receipts without writing hardware.
-
-Startup and cleanup do not assume a policy worker exists. Shutdown closes agent
-admission before potentially blocking Home/release operations, then uses the shared
-resource cleanup before finalizing recordings. External events and cleanup errors
-remain in aborted recordings. `max_control_steps: 0` disables the tick budget;
-Finish, faults and external shutdown still terminate the runtime.
+RPent primitive-only runs have no policy worker; startup and cleanup do not assume one.
+Shutdown closes agent admission before potentially blocking Home/release operations,
+then uses the shared resource cleanup before finalizing recordings. Agent events and
+cleanup errors remain in aborted recordings. `max_control_steps: 0` disables the tick
+budget; Finish and faults still terminate the runtime.
 
 ## Inference algorithm versus executor
 
@@ -531,7 +523,7 @@ another just because one example happens to use the same value.
 
 ## Example and checks
 
-Trace `configs/experiments/put_bottles/pi05/yam_pi05_rtc_joint_step30000.yaml` under `manimux/`:
+Trace `configs/experiments/example-yam-pi05/put_bottles/rtc.yaml` under `manimux/`:
 robot assembly -> component YAMLs; camera set -> station bindings; policy server
 recipe -> client format and joint adapter; RTC -> timeline; direct executor ->
 robot commands. Copy only the relevant choices when adding an experiment.
@@ -603,15 +595,14 @@ or stale controls cannot enable it. Preview work creates no agent tool calls or
 formal dispatched-step/chunk counts, and all timing and motion limits still apply.
 
 An explicit `agent.debug_max_plan_age_s` overrides only managed GUI RPent's copied
-plan-age limit for both preview and execution. It must be finite and positive;
-Direct VLA uses the original inference limit even within the same variant. Provider
+plan-age limit for both preview and execution. It must be finite and positive. Provider
 request timeouts, control freshness and motion checks remain unchanged. The opt-in
 participates in the collection fingerprint; select a new debug variant for recorded
 conditions. Omission preserves existing fingerprints and runtime behavior.
 
 `agent.policy_enabled: false` selects observation and motion primitives only for
 managed RPent. This boolean defaults to true. It omits the policy worker and VLA
-warmup in that runtime, while Direct VLA keeps its original configuration. Runtime
+warmup in that runtime. Runtime
 status exposes the capability; `/execute` rejects disabled policy calls and the
 native Toolkit omits both `execute_policy` and `observe.policy_contract`. Shared
 motion, safety, control freshness and Start/Pause/Finish behavior stay unchanged.
@@ -756,7 +747,7 @@ step modes. RTC executor forecasts are unsupported. `InferenceRequest` carries
 both have width 16. A pose condition goes directly back to model coordinates;
 conditioning does not solve future IK.
 
-Example: `configs/experiments/put_bottles/openwam/yam_openwam_serial_step30000_step_ik.yaml`.
+Example: `configs/experiments/{openwam-study}/put_bottles/<serial-step-ik-variant>.yaml` (station-local; build it like the [example study](../../../../manimux/configs/lists/example-yam-pi05.yaml)).
 Existing presets retain chunk IK; the new example is not activated automatically.
 
 

@@ -10,14 +10,25 @@ runbook:
 - [GR00T N1.7 + YAM](gr00t-yam.md)
 - [Xiaomi XR-1 + YAM](xiaomi-xr1-yam.md)
 - [LingBot-VLA2 + YAM](lingbot-vla2-yam.md)
+- [ABC-DiT + YAM](abc-dit-yam.md)
+- [SAPolicy + YAM](sapolicy-yam.md)
+- [Pi05 zero-pose + Tianji–TacCap pass ball](pi05-tianji-taccap.md)
+- [Pi05 pack-plate + Tianji–TacCap](pi05-tianji-pack-plate.md)
+- [Pi05 pack-plate inter-hand-relative + Tianji–TacCap](pi05-tianji-pack-plate-inter-hand-relative.md)
+- [Cosmos3 DROID offline inference](cosmos3-offline.md)
+- [Isaac 0.5 offline integration](isaac05-offline.md)
+- [Pi05 EEF + YAM](pi05-yam-eef.md)
+- [OpenWAM + YAM](openwam-yam.md)
+- [Diffusion Policy + YAM](dp-yam.md)
+- [Xiaomi XR-1 + Tianji–TacCap](xiaomi-xr1-tianji-taccap.md)
 
 Configurations follow `configs/<model>/<embodiment>/`; see naming conventions in
-[`manimux/configs/README.md`](../../../../../manimux/configs/README.md). `manimux/configs/experiments/pick_red_object/xpolicylab/yam_xpolicylab_smoke.yaml` is only for
+[`manimux/configs/README.md`](../../../../../manimux/configs/README.md). `manimux/configs/experiments/{study}/pick_red_object/xpolicylab_smoke.yaml` (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) is only for
 generic WebSocket bridge smoke tests, not a specific model experiment.
 
 ## Source relationship
 
-`XPolicyLab/` is a Git submodule pointing to the `Cuzyoung/XPolicyLab` fork. ManiMux pins and records
+`third_party/XPolicyLab/` is a Git submodule pointing to the `Cuzyoung/XPolicyLab` fork. ManiMux pins and records
 the fork commit; the fork receives updates from official `upstream`. Models still run in isolated environments and processes;
 ManiMux runtime does not import model dependencies such as torch/JAX.
 
@@ -95,14 +106,14 @@ Each model starts its XPolicy server in its own environment. Do not install mode
 
 ## New model integration checklist
 
-**Integrate new models and reproductions under `XPolicyLab/policy/<POLICY>/`, without adding standalone native paths.**
+**Integrate new models and reproductions under `third_party/XPolicyLab/policy/<POLICY>/`, without adding standalone native paths.**
 First read the repository [development conventions](../../../manimux-development/references/agent-guide.md#learned-models-and-backend-frameworks) and
-[XPolicyLab contribution rules](../../../../../XPolicyLab/CONTRIBUTING.md). Model source, loading, preprocessing, normalization,
+[XPolicyLab contribution rules](../../../../../third_party/XPolicyLab/CONTRIBUTING.md). Model source, loading, preprocessing, normalization,
 training adaptations, and samplers belong in XPolicyLab. ManiMux retains hardware/action adapters, configurations, lightweight launchers, and
 the shared runtime. A proxy shell in XPolicyLab with the actual model still in a ManiMux native server is insufficient.
 
 The built-in ManiMux MolmoAct2 and ABC model services, HTTP clients, experiments, and action adapters
-were removed. Future MolmoAct2 deployment reuses `XPolicyLab/policy/MolmoACT2/`; any ABC reintegration
+were removed. Future MolmoAct2 deployment reuses `third_party/XPolicyLab/policy/MolmoACT2/`; any ABC reintegration
 must first implement and validate an XPolicyLab adapter rather than restore deleted native or HTTP paths.
 
 Each model needs separate server/infrastructure configurations and a runbook. Confirm:
@@ -129,9 +140,9 @@ PolicyWorker forwards these capabilities to ManiMux, and missing RTC fails befor
 ## Offline self-tests
 
 ```bash
-PYTHONPATH=/home/ubuntu/manimux:/home/ubuntu/manimux/XPolicyLab \
+PYTHONPATH={repo}:{repo}/XPolicyLab \
   envs/yam/.venv/bin/python -m pytest \
-  XPolicyLab/tests/unit/test_ws_infer_sampling.py \
+  third_party/XPolicyLab/tests/unit/test_ws_infer_sampling.py \
   tests/unit/test_xpolicylab_plugins.py
 ```
 

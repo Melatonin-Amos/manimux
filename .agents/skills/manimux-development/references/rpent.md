@@ -2,23 +2,63 @@
 
 RPent owns planning, memory and tool selection. ManiMux owns the selected policy
 client, action adapter, motion planning, robot, execution, RoboGUI and recording.
-`RPent/` remains the pinned peer submodule at `efc392adc98a30045d8fb83c4097917f28e20a94`.
+`third_party/RPent/` remains the pinned peer submodule at `efc392adc98a30045d8fb83c4097917f28e20a94`.
 No model implementation or hardware controller is copied into the agent package.
 
 ## One entry, one toolkit, one runtime
 
-### RoboGUI execution selection
+### RPent experiments in RoboGUI
 
-An ordinary experiment can declare `agent: {config: /path/to/agent.yaml,
-python: /path/to/rpent-env/bin/python}`. `config` resolves beside the declaring
-YAML, including inherited bases; `python` defaults to the runtime interpreter.
-The shared `manimux run` / `--config-list` service then offers **Execution**:
-**Direct VLA** or **RPent**. Without an agent profile the existing VLA page is
-unchanged. Only RPent selection reveals its status, decisions and artifact path.
-Prepare freezes the choice; Start launches the native planner with the current
-task and, when enabled, the selected experiment's VLA. The profile's experiment/task/output/endpoint
-do not replace that selection: output and loopback endpoint are unique per rollout.
-The profile supplies planner/model/reasoning, memory and the calibrated motion file.
+An experiment becomes an RPent experiment by declaring `agent: {config: /path/to/agent.yaml}`.
+`config` resolves beside the declaring YAML, including inherited bases. The planner
+interpreter `python` is optional: it defaults to `third_party/RPent/.venv/bin/python` when
+that environment exists, otherwise the runtime interpreter. Set it only for another env.
+
+Such an experiment runs only RPent; there is no Direct VLA choice. Running the VLA on its
+own is what an ordinary recipe without `agent` does (XPolicyLab, Dream-1 and the other
+policy integrations). `run.execution_mode` is not a YAML setting; recorded configs keep the
+mode of each rollout. The planner calls the experiment's own model, its `policy` section
+(and `policy_server` for a local model service), through `execute_policy` with a subtask
+prompt and `use_length`. To change the VLA, `_base_` another runtime recipe or override
+`policy`; there is no separate RPent model field.
+
+The shared `manimux run` / `--config-list` service shows the RPent agent view (bottom
+message bar). Prepare validates the planner environment; Start launches the native
+planner with the current task. The profile's experiment/task/output/endpoint do not replace
+the experiment's: output and loopback endpoint are unique per rollout. The profile supplies
+planner/model/reasoning, memory and the calibrated motion file.
+
+The experiment must satisfy the Serial bridge contract checked by
+`PolicyDispatch.validate_config`: `algorithm`/`inference_schedule: serial`,
+`action_start_mode: first_step_when_ready`, no blending, handoff skip, strategy or
+temporal ensemble, inline decoding and chunk IK. `chunk_policy_steps` implies
+`max_chunk_policy_steps`, so a base recipe with a chunk cap needs both set to `null`
+(the planner chooses rows per call). Blending stays off: one request at a time, and the
+robot holds between chunks while the next inference runs.
+
+Policy chunks still use the main loop's timeline and executor. Rows are interpolated at
+`robot.control_hz`, so a 10 Hz policy (`action_dt_s: 0.1`) at 100 Hz control works, and a
+Smooth executor filters both VLA chunks and motion primitives. Smooth limits add tracking
+lag, so `settle_timeout_s` in the motion profile must cover it (the default primitive
+speeds, 0.03 rad/s and 4 mm/s, are far below the YAM Smooth limits). The public
+`experiments/example-yam-dream1/put_bottles/rpent.yaml` is a complete example on the hosted
+Dream-1 YAM baseline:
+
+```yaml
+_base_: [../_base_.yaml, ../../../tasks/put_bottles.yaml]   # Serial 30 Hz, Direct executor
+agent: {config: ../../../agents/rpent_dream1_yam.yaml}
+inference: {chunk_policy_steps: null, max_chunk_policy_steps: null, max_plan_age_s: 10.0}
+policy: {timeout_s: 10.0}
+```
+
+Hosted workers (`dream_api`) need no model service: launch with `manimux up` without
+`--policy-python`, after exporting the key named by `policy.options.api_key_env`.
+The Dream gateway evicts sessions that sit idle, which happens while the planner thinks
+between calls. The Dream client therefore starts a new episode (`reset_episode()`) whenever
+the instruction changes, and on `DreamSessionExpired` asks once more on the replacement
+session the gateway already adopted. That retry costs one extra round trip (~3 s), so RPent
+Dream configs should allow `policy.timeout_s` and `inference.max_plan_age_s` of about 10 s;
+the arms hold while a call waits.
 
 `agents/rpent/session.py` wraps the ordinary EdgeRuntime, validates the independent
 planner environment before device startup, and owns only the planner process group
@@ -32,15 +72,15 @@ as a session error. Every Prepare creates new planner artifacts and a new dispat
 session, preventing an old planner from reaching a subsequent rollout.
 
 RPent trials append ` / RPent` to the configured study condition (or use `RPent`
-when empty); Direct VLA conditions are unchanged. This keeps repeat counts and
-human evaluations separate. The episode records execution mode and agent artifact
+when empty), keeping their repeat counts and human evaluations apart from VLA-only
+recipes in the same study. The episode records execution mode and agent artifact
 directory; that directory retains effective configuration, motion profile, native
 recipe, provider evidence, tool records and planner result. Existing Serial bridge
 limits still apply; incompatible methods fail before devices connect. Do not silently
 rewrite a VLA inference algorithm to enable the option.
 
 With policy calls enabled, optional `run.warmup_before_start: true` uses **Prepare → Activate
-Warmup → Start rollout** flow for both execution choices. RPent warmup runs the
+Warmup → Start rollout** flow. RPent warmup runs the
 selected VLA configuration through the shared isolated preview, including the
 same gripper-range and calibrated path validation as policy calls. It uses the
 configured task prompt and horizon without asking the planner to choose actions.
@@ -53,13 +93,12 @@ or motion checks; cold calls can still be rejected before later requests warm up
 For an explicit debugging condition, the experiment's optional
 `agent.debug_max_plan_age_s` accepts a finite positive number of seconds. Only
 managed GUI RPent applies it to its copied runtime configuration, including the
-warmup preview. Direct VLA retains ordinary `inference.max_plan_age_s`, even when
-selected in the same variant. The provider request timeout, control freshness and
+warmup preview. The provider request timeout, control freshness and
 motion checks are unchanged. This field is included in collection fingerprints
 only when set; use a distinct debug variant instead of changing a recorded condition.
 The session manifest retains the base limit and opt-in, while the agent's
 `runtime-config.json` records the effective limit. See
-`configs/examples/rpent_gui_debug.yaml` for a disconnected 2-second example.
+`configs/experiments/example-rpent-synthetic/demo/rpent_gui_debug.yaml` for a disconnected 2-second example.
 
 To test observation and motion primitives without VLA, set the experiment's
 `agent.policy_enabled: false`. It accepts only a boolean and defaults to enabled.
@@ -68,11 +107,10 @@ omits `execute_policy` and `observe.policy_contract`, and its prompt describes
 observation and motion without VLA instructions. Runtime status advertises the
 flag and `/execute` rejects requests independently of the tool schema. The same
 mailbox, motion planner, executor, safety checks and GUI lifecycle remain in use;
-Start still belongs to the operator. Direct VLA remains unchanged, including its
-configured warmup, even in this variant. Explicit `false` participates in condition
+Start still belongs to the operator. Explicit `false` participates in condition
 fingerprints; omission and `true` retain the baseline. Use a separate
 **RPent · Primitives only** variant.
-`configs/examples/rpent_gui_primitives.yaml` provides a disconnected example.
+`configs/experiments/example-rpent-synthetic/demo/rpent_gui_primitives.yaml` provides a disconnected example.
 
 ### Separate service/client commands
 
@@ -90,6 +128,16 @@ into the runtime manifest. Machine addresses stay in the normal private station.
 For separate `serve` / `run` commands, the shared agent recipe also accepts the
 boolean `policy_enabled` field, defaulting to true. Both roles must use the same
 setting; the runtime remains authoritative about the tools it permits.
+
+Provider selection remains native to RPent: `planner` selects `api`, `codex` or
+`claude_code`. API mode requires an explicit provider-prefixed `model`; `model: null`
+is a template awaiting configuration, not an API default. The ManiMux launcher
+passes `base_url` (API only), `max_tokens`, `planner_timeout_s` and
+`claude_code_max_budget_usd` through to RPent's planner factory. Keys remain in the
+provider's environment. Codex reads its native `CODEX_BASE_URL` / `CODEX_API_KEY`
+settings; Claude Code retains its SDK authentication. Managed runs inherit the
+launching runtime's environment. `endpoint` addresses the ManiMux dispatch server,
+not the model provider. Do not place credentials in URLs or recipes saved as evidence.
 
 For autonomous Astra decisions, select `planner: codex`, `model: gpt-6-astra`
 and `reasoning_effort: high` (or another level supported by both RPent and the
@@ -120,15 +168,25 @@ Changing experiments creates a new Toolkit and capability bound. The HTTP runtim
 still validates every request independently; oversized requests are rejected,
 never clipped or silently replaced.
 
-The public examples are:
+The public examples (experiments in `configs/experiments/example-*/`, recipes in
+`configs/agents/`):
 
-- `configs/agents/rpent.yaml`: entirely synthetic robot, geometry and policy.
-- `configs/agents/rpent_franka.yaml`: standard Franka Pi05 joint-position policy recipe.
-- `configs/agents/rpent_yam.yaml`: standard YAM Pi05 joint-position policy recipe.
+- `example-yam-dream1/put_bottles/rpent.yaml` + `agents/rpent_dream1_yam.yaml`: YAM with
+  hosted Dream-1 (Serial 30 Hz, no model service), beside the direct `serial.yaml`.
+- `example-yam-pi05/put_bottles/rpent.yaml` + `agents/rpent_pi05_yam.yaml`: YAM with Pi05
+  put-bottles served by XPolicyLab, beside the direct `serial.yaml`, `rtc.yaml` and
+  `async10.yaml`.
+- `example-franka/pick_yellow_block/rpent.yaml` + `agents/rpent_franka.yaml`: Franka FR3
+  with Pi05 DROID joint positions.
+- `example-rpent-synthetic/demo/rpent.yaml` + `agents/rpent.yaml`: entirely synthetic
+  robot, geometry and policy, plus the RoboGUI variants `rpent_gui`, `rpent_gui_debug` and
+  `rpent_gui_primitives`.
 
-The physical examples default to execute=false. Copy the corresponding
-`rpent_*_motion.example.yaml` to the private local directory and supply measured
-workspace bounds and calibration. Null bounds intentionally fail before connection.
+The YAM experiments carry their `agent` profile, so `manimux up --config` starts them
+directly; their recipes use the Codex Astra planner. Physical examples default to
+execute=false: for a station, add a private experiment that `_base_`s the example variant and
+sets `robot.options.execute: true`. Copy the corresponding `rpent_*_motion.example.yaml`
+to `local/` and supply measured workspace bounds (null bounds fail before connection).
 Do not copy the synthetic demo's workspace into a physical deployment.
 
 ## Ownership and action contracts
@@ -213,16 +271,21 @@ completed_motion_steps, dispatched_control_steps and measured arrival diagnostic
 Tool steps and plan records join through dispatch_request_id and session ID.
 The Toolkit reports selected/completed/failed tool decisions through the
 session-scoped `/agent-decision` telemetry endpoint. It never changes runtime
-admission or controls. RoboGUI receives the latest eight choices in ordinary
-state heartbeats, including observe/finish, arguments, model label and outcome;
-full `agent_decision` events are retained in the episode. **View all decisions**
-reads this rollout's recorded events and displays the complete chronological tool
-history, including uncut policy prompts, finish summaries and errors. Selected and
-terminal events merge by decision ID; late heartbeats cannot replace a terminal
-outcome with Selected. The reader also supports an active `.partial` rollout and
-reports unavailable or malformed recordings instead of inventing missing results.
-Reconnects recover the history and new rollouts clear it. Planner reasoning text
-is not projected.
+admission or controls. Full `agent_decision` events (arguments, model label and
+outcome) are retained in the episode recording; RoboGUI no longer has a separate
+decision panel.
+
+The planner's own transcript is RoboGUI's agent view: a bottom message bar, shown while
+RPent is selected, with answers, reasoning summaries, tool lines, operator steering and
+errors in chronological order and the time since Start ("planner is thinking" before the
+first message). Messages fill preallocated Viser slots: adding a Viser element re-creates
+its siblings' DOM, so appending would reset scrolling and text selection. The bar follows
+new lines only while scrolled to the bottom, keeps text selectable for copying, and its
+top grip resizes it.
+`agents/rpent/transcript.py` follows the backend's live `planner/*_planner.txt` (Codex and
+Claude Code write it as they run; the API planner returns its transcript only at the end,
+so only its tool decisions appear live). Each block is recorded as an `agent_message`
+event (text up to 16 KiB); heartbeats carry the latest 12, truncated for display.
 Completed motion budgets are not reported as policy rows. Toolkit close cancels
 its outstanding calls but does not finalize the rollout; RoboGUI Finish does.
 
@@ -246,12 +309,15 @@ synthetic robot and no physical sensors:
 python -m scripts.validation.rpent_offline_probe \
   --config manimux/configs/agents/rpent.yaml \
   --output data/acceptance/rpent-unified-<new-run>
+python -m scripts.validation.rpent_finish_probe \
+  --output data/acceptance/rpent-finish-<new-run>
 python -m pytest tests/unit/test_rpent_unified.py tests/unit/test_policy_dispatch.py \
   tests/unit/test_rpent_agent.py tests/unit/test_rpent_native.py \
   tests/unit/test_franka_bridge.py
 ```
 
-Local tests remain ignored. Cover cross-tool contention/idempotency, pause, deadline,
+The finish probe injects RoboGUI Finish and planner `/finish` during in-flight motion
+and VLA calls and requires zero robot commands afterwards. Local tests remain ignored. Cover cross-tool contention/idempotency, pause, deadline,
 cancel during planning, no measured arrival, malformed-response persistence,
 out-of-range grippers, recording and ordinary non-agent runtime regressions.
 Software checks are not physical qualification. Before operator handoff, use
@@ -259,17 +325,9 @@ representative live/recorded observations, the real provider and a disconnected
 command sink through the actual adapter/executor, including failure cases. Never
 connect a motor driver merely to call the run a dry run.
 
-The former manimux-rpent-env launcher and standalone manimux-dispatch console
-entry are retired, including direct module launches. Legacy launch attempts return migration guidance
-before constructing hardware. Old Env RPC classes and external-action fixtures
-remain for protocol regression/other callers; they are not another RPent product
-mode. Migrate native pi05_act/vla_grasp to execute_policy with an explicitly matched
-ManiMux model recipe. Migrate arm aliases to configured group names and use each
-group's base frame (the former YAM common left_base coordinates are not silently
-reinterpreted). Native ready-receipt reset is replaced by the shared RoboGUI lifecycle.
-
-Historical evidence from 2026-10-16 is retained under the private
-`data/acceptance/rpent-real-vla-20261016/` bundle: four real DROID predictions through
-the previous policy-only bridge used synthetic RGB and robot state. It did not
-exercise autonomous planning or physical tasks and does not qualify this unified
-implementation. Re-run real-provider and station checks for the selected deployment.
+The former native environment launcher (manimux-rpent-env), its Env RPC/external-action
+path and the standalone manimux-dispatch console entry have been removed; RPent runs only
+through this unified runtime. Migrate native pi05_act/vla_grasp to execute_policy with an
+explicitly matched ManiMux model recipe, and native arm aliases to the configured group
+names and base frames (the former YAM common left_base coordinates are not reinterpreted).
+Native ready-receipt reset is replaced by the shared RoboGUI lifecycle.

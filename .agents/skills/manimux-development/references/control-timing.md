@@ -14,7 +14,7 @@ flag. Existing camera, RoboGUI and policy services can stay running:
 
 ```bash
 envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
+  --config-list manimux/configs/lists/example-yam-pi05.yaml --experiment-id put_bottles_rtc \
   --control-timing
 ```
 

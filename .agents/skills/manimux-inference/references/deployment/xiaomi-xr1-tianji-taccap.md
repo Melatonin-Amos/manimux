@@ -1,6 +1,6 @@
 # Xiaomi Robotics 1 / Tianji–TacCap 传球接入
 
-本入口使用 `XPolicyLab/policy/Xiaomi_Robotics_1` 加载本地 step-50000
+本入口使用 `third_party/XPolicyLab/policy/Xiaomi_Robotics_1` 加载本地 step-50000
 DeepSpeed 模型文件，并通过共享 `xpolicylab_ws` worker 服务 ManiMux。模型只接收两路
 真实腕部 RGB；训练时的第三路 ego view 是纯黑，因此由 XPolicyLab 在预处理阶段生成
 全零 `uint8 RGB`，不注册虚假相机，也不复用任意现场画面。
@@ -31,8 +31,8 @@ DeepSpeed 模型文件，并通过共享 `xpolicylab_ws` worker 服务 ManiMux�
 ## 文件
 
 - 模型服务：`manimux/configs/policy/xiaomi-xr1/tianji/pass_ball/step50000.yaml`
-- 安全关闭执行的实验模板：
-  `manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml`
+- 安全关闭执行的实验模板（站点本地，参照[示例研究](../../../../../manimux/configs/lists/example-yam-pi05.yaml)构建）：
+  `manimux/configs/experiments/{xr1-tianji-study}/pass_ball/tianji_taccap_xiaomi_xr1_step50000.yaml`
 - server launcher：`manimux/servers/xiaomi_xr1_tianji_server.py`
 
 模板保持 `robot.options.execute: false`、RoboGUI 关闭。加载配置、检查 checkpoint 或启动
@@ -43,7 +43,7 @@ DeepSpeed 模型文件，并通过共享 `xpolicylab_ws` worker 服务 ManiMux�
 模型依赖不能装进 Tianji 硬件 runtime 环境：
 
 ```bash
-cd /path/to/manimux/XPolicyLab/policy/Xiaomi_Robotics_1
+cd /path/to/manimux/third_party/XPolicyLab/policy/Xiaomi_Robotics_1
 MIBOT_CONDA_ENV=mibot bash install.sh
 ```
 
@@ -56,7 +56,7 @@ Qwen processor 默认使用 `Qwen/Qwen3-VL-4B-Instruct`，首次启动需要 Hug
 cd /path/to/manimux
 conda run -n mibot --no-capture-output python \
   manimux/servers/xiaomi_xr1_tianji_server.py \
-  --experiment manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
+  --experiment manimux/configs/experiments/{xr1-tianji-study}/pass_ball/tianji_taccap_xiaomi_xr1_step50000.yaml \
   --local .local/tianji_taccap.yaml \
   --checkpoint /path/to/posttrain_pass_ball_50k_8gpu_epoch0_step50000_checkpoint \
   --check
@@ -73,7 +73,7 @@ conda run -n mibot --no-capture-output python \
 cd /path/to/manimux
 conda run -n mibot --no-capture-output python \
   manimux/servers/xiaomi_xr1_tianji_server.py \
-  --experiment manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
+  --experiment manimux/configs/experiments/{xr1-tianji-study}/pass_ball/tianji_taccap_xiaomi_xr1_step50000.yaml \
   --local .local/tianji_taccap.yaml \
   --checkpoint /path/to/posttrain_pass_ball_50k_8gpu_epoch0_step50000_checkpoint
 ```
@@ -90,7 +90,7 @@ checkpoint。
 cd /path/to/manimux
 conda run -n xense-taccap --no-capture-output python \
   -m manimux.servers.camera.server \
-  --config manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
+  --config manimux/configs/experiments/{xr1-tianji-study}/pass_ball/tianji_taccap_xiaomi_xr1_step50000.yaml \
   --local .local/tianji_taccap.yaml
 ```
 
@@ -98,7 +98,7 @@ conda run -n xense-taccap --no-capture-output python \
 
 ```bash
 conda run -n xense-taccap --no-capture-output python -m manimux run --once \
-  --config manimux/configs/experiments/pass_ball/xiaomi-xr1/tianji_taccap_xiaomi_xr1_step50000.yaml \
+  --config manimux/configs/experiments/{xr1-tianji-study}/pass_ball/tianji_taccap_xiaomi_xr1_step50000.yaml \
   --local .local/tianji_taccap.yaml
 ```
 

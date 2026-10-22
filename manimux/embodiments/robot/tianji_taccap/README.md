@@ -132,7 +132,7 @@ Null optical extrinsics mean unknown. TacCap TCP remains the fixed CAD approxima
 
 ## Experiment entry point and validation
 
-The experiment entry point is `manimux/configs/experiments/pass_ball/umi_dp/tianji_taccap_umi_dp.yaml`.
+The experiment entry point is `manimux/configs/experiments/{umi-dp-study}/pass_ball/tianji_taccap_umi_dp.yaml` (station-local; build it like the [example study](../../../configs/lists/example-yam-pi05.yaml)).
 Select the station with `--local`; policy configuration lives in `manimux/configs/policy/umi_dp/`.
 The existing XPolicyLab UMI_DP model and `xpolicylab_ws` remain in use. Bind checkpoint identity with the original launcher
 before running. See `.agents/skills/manimux-inference/references/deployment/umi-dp-tianji-taccap.md`.

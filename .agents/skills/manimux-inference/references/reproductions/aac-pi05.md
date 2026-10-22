@@ -8,8 +8,8 @@
 
 - **Recorded:** 2026-08-21.
 - **Target:** Pi05 JAX checkpoints through XPolicy + ManiMux AAC.
-- **Configs:** `manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac.yaml` and
-  `manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac_step1000.yaml`.
+- **Configs:** `manimux/configs/experiments/{pi05-study}/pick_red_object/aac.yaml` and
+  `manimux/configs/experiments/{pi05-study}/pick_red_object/aac_step1000.yaml` (station-local; build them like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)).
 - **Current gate:** source, contract, shape, regression and real `N=20` GPU forward passed. YAM
   hardware rollout has not been run for Pi05 AAC.
 - **Safety boundary:** Codex did not start the Pi05 server, cameras, CAN, preflight or robot.
@@ -20,7 +20,7 @@ candidate selectors and the YAM joint-to-incremental-EE adaptation.
 ## 1. Upstream Boundary
 
 The Pi05 model is the vendored Physical Intelligence OpenPI implementation under
-`XPolicyLab/policy/Pi_05/openpi/`, captured by XPolicyLab revision
+`third_party/XPolicyLab/policy/Pi_05/openpi/`, captured by XPolicyLab revision
 `9fff42bf2681379e2b6673c79893db14f13fec0b`. The official OpenPI entry points retained here are:
 
 | Responsibility | File |
@@ -67,7 +67,7 @@ continue through the original single-sample callable.
 
 ## 3. XPolicy Contract
 
-`XPolicyLab/policy/Pi_05/model.py::get_action_aac` accepts only:
+`third_party/XPolicyLab/policy/Pi_05/model.py::get_action_aac` accepts only:
 
 ```json
 {"mode": "aac", "num_samples": 20}
@@ -86,7 +86,7 @@ fail during capability negotiation rather than silently fall back to ordinary in
 
 ```text
 server: manimux/configs/policy/pi05/yam/finetune.yaml
-infra:  manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac.yaml
+infra:  manimux/configs/experiments/{pi05-study}/pick_red_object/aac.yaml
 output: N x 16 x 14 absolute joint positions
 dt:     1/30 s
 ```
@@ -95,7 +95,7 @@ dt:     1/30 s
 
 ```text
 server: manimux/configs/policy/pi05/yam/finetune-pick-red-ball-box-step1000.yaml
-infra:  manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac_step1000.yaml
+infra:  manimux/configs/experiments/{pi05-study}/pick_red_object/aac_step1000.yaml
 output: N x 50 x 14 absolute joint positions after official output transforms
 dt:     1/30 s
 ```
@@ -139,21 +139,21 @@ Pi05 server config.
 Offline tests only:
 
 ```bash
-cd /home/ubuntu/manimux
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m pytest -q \
-  XPolicyLab/policy/Pi_05/openpi/src/openpi/models/pi0_test.py \
-  XPolicyLab/policy/Pi_05/openpi/src/openpi/policies/policy_test.py
+cd {repo}
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m pytest -q \
+  third_party/XPolicyLab/policy/Pi_05/openpi/src/openpi/models/pi0_test.py \
+  third_party/XPolicyLab/policy/Pi_05/openpi/src/openpi/policies/policy_test.py
 
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m pytest -q \
-  XPolicyLab/tests/unit/test_pi05_aac_adapter.py \
-  XPolicyLab/tests/unit/test_ws_infer_sampling.py
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m pytest -q \
+  third_party/XPolicyLab/tests/unit/test_pi05_aac_adapter.py \
+  third_party/XPolicyLab/tests/unit/test_ws_infer_sampling.py
 ```
 
 Operator-run real GPU gate, after starting the matching Pi05 server:
 
 ```bash
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac_step1000.yaml
+  --config manimux/configs/experiments/{pi05-study}/pick_red_object/aac_step1000.yaml
 ```
 
 Pass criteria are `aac` capability, `N=20` finite native candidates, a finite selected `[K,14]`
@@ -167,9 +167,9 @@ After the hardware-free warm-up above and the normal camera, CAN, achieved-state
 emergency-stop checks, only the operator runs:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/manimux run --once \
-  --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac_step1000.yaml
+  --config manimux/configs/experiments/{pi05-study}/pick_red_object/aac_step1000.yaml
 ```
 
 Stop with one `Ctrl-C` and wait for the configured Home return and episode save. Do not stop the

@@ -7,9 +7,9 @@ recipe; both checked-in experiments have `execute: false`.
 ## Contract and artifact
 
 - Recipe: `manimux/configs/policy/pi05/tianji/pack_plate/wrist-only-step59999.yaml`
-- Experiment: `manimux/configs/experiments/pi05-tianji-pack_plate-wrist-only-step59999/pack_plate/wrist_only_step59999.yaml`
-- RTC experiment: `manimux/configs/experiments/pi05-tianji-pack_plate-wrist-only-step59999/pack_plate/wrist_only_step59999_rtc.yaml`
-- Checkpoint: `/home/jw/Desktop/policy/pi05-pack-plate-wrist-only-final-59999/checkpoint-59999`
+- Experiment: `manimux/configs/experiments/{pack-plate-study}/pack_plate/wrist_only_step59999.yaml` (station-local; build the study like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml))
+- RTC experiment: `manimux/configs/experiments/{pack-plate-study}/pack_plate/wrist_only_step59999_rtc.yaml`
+- Checkpoint: `{tianji_workspace}/policy/pi05-pack-plate-wrist-only-final-59999/checkpoint-59999`
 - Normalization: that checkpoint's `assets/pack-plate-taccap-h32-zero-pose/norm_stats.json`
 - Dataset task prompt: `plate` (from `pack-plate/meta/tasks.parquet`)
 - Input: left and right wrist RGB, zero TCP pose slots, live normalized gripper openings
@@ -58,12 +58,12 @@ From the ManiMux root:
 
 ```bash
 .venv/bin/python -m manimux.servers.pi05 \
-  --config-list manimux/configs/lists/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
+  --config-list manimux/configs/lists/{pack-plate-study}.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml --check
 ```
 
 When the GPU is free, run the standalone synthetic-image forward shown in
-`XPolicyLab/policy/Pi_05/README.md`. That verifies model loading and output
+`third_party/XPolicyLab/policy/Pi_05/README.md`. That verifies model loading and output
 shapes; it does not establish camera alignment, robot safety or task success.
 
 ## Service selection
@@ -73,8 +73,8 @@ handed over, start the policy server with the same experiment and station:
 
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --config-list manimux/configs/lists/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
+  --config-list manimux/configs/lists/{pack-plate-study}.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml
 ```
 
@@ -85,7 +85,7 @@ runtime, use the paired experiment for the observation-only ManiMux process:
 
 ```bash
 .venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/pi05-tianji-pack_plate-wrist-only-step59999-standalone.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
+  --config-list manimux/configs/lists/{pack-plate-study}.yaml --experiment-id pack_plate_wrist_only_step59999_rtc \
   --local .local/tianji_pi05_pack_plate.yaml
 ```
 

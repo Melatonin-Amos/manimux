@@ -140,8 +140,8 @@ from pprint import pprint
 from manimux.collections import load_collection
 from manimux.servers.camera.server import camera_config
 
-catalog = load_collection("manimux/configs/lists/pi05-latest300ep-step30000.yaml")
-config = catalog.choices["coin_rtc"].config
+catalog = load_collection("manimux/configs/lists/example-yam-pi05.yaml")
+config = catalog.choices["put_bottles_rtc"].config
 pprint({
     "local": str(config["local"]),
     "shared_hardware": config["robot"]["options"].get("hardware", {}),
@@ -202,9 +202,9 @@ for runtime configs; these are advanced runbook interfaces. Prefer the common po
 launcher for supported XPolicyLab deployments. Append the same `--local <path>` when
 choosing a different station. See the [startup guide](../../../../guideline.html#launch).
 
-The current `yam_pi05_rtc_joint_step30000.yaml` has `execute: true`,
-`move_to_start_on_connect: true` and `control_hz: 100`. The separate assembly example
-`yam_pi05_joint.yaml` uses `execute: false` and `control_hz: 100`.
+A station-local Pi05 RTC variant typically sets `execute: true`,
+`move_to_start_on_connect: true` and `control_hz: 100` (as the example study's
+`rtc.yaml` does); an assembly-only check can keep `execute: false`.
 Binding a station does not switch these experiment settings.
 
 ### Scope and remaining independent entry points

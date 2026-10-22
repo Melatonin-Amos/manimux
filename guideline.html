@@ -138,7 +138,7 @@ relative to the station file. Formal studies use collection <code>recording.root
 the normal adapter, runtime and executor; the driver uses Franky for joint control.
 RPent, RLinf and Ray are not required. An agent bridge is an optional caller, not
 a hardware dependency. The unified RPent motion and VLA integration is described below.</p>
-<p>Select <a href="manimux/configs/examples/franka_joint_policy.yaml">franka_joint_policy.yaml</a>
+<p>Select <a href="manimux/configs/experiments/example-franka/_base_.yaml">experiments/example-franka/_base_.yaml</a>
 and copy <a href="manimux/configs/local/franka_example.yaml">franka_example.yaml</a> to a private
 station file. Bind the robot IP, gripper serial device, measured travel endpoints and
 policy endpoint. The assembly has one <code>arm</code> group: seven joint radians followed by
@@ -150,7 +150,7 @@ python -m pip install -e '.[franka,robotiq,xpolicylab]'
 # Install a compatible Franky build exposing JointReferenceHandle and
 # JointImpedanceTrackingMotion; see the linked component's tested SDK build.
 python -m manimux run \
-  --config manimux/configs/examples/franka_joint_policy.yaml \
+  --config manimux/configs/experiments/example-franka/_base_.yaml \
   --local /path/to/private/franka-station.yaml
 </code></pre>
 <p>The example is a recipe, not a bundled policy: supply the selected model's cameras,
@@ -233,7 +233,7 @@ may instead take a model recipe as <code>--config</code>. See <a href=".agents/s
 <p><strong>Before launch, inspect the resolved config without connecting hardware:</strong></p>
 <pre><code class="language-bash">envs/yam/.venv/bin/python - &lt;&lt;'PY'
 from manimux.collections import load_collection
-catalog = load_collection('manimux/configs/lists/pi05-latest300ep-step30000.yaml')
+catalog = load_collection('manimux/configs/lists/example-yam-pi05.yaml')
 cfg = catalog.choices['coin_rtc'].config
 for key in ('run', 'policy', 'inference', 'executor', 'evaluation'):
     print(key, cfg[key])
@@ -257,27 +257,37 @@ selected as external dependencies. Config-list studies and other serving framewo
 continue to use the manual launch commands below.</p>
 <pre><code class="language-bash"># Read-only checks; no devices opened and no model weights loaded.
 uv run manimux doctor \
-  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/serial32.yaml \
+  --config manimux/configs/experiments/example-yam-pi05/put_bottles/serial.yaml \
   --local manimux/configs/local/station.yaml \
   --runtime-python envs/yam/.venv/bin/python \
-  --policy-python XPolicyLab/policy/Pi_05/openpi/.venv/bin/python --json
+  --policy-python third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python --json
 
 # Start camera, RoboGUI, model and interactive runtime. Wait for manual Prepare.
+# Holds the terminal; Ctrl-C stops every service, runtime first.
 uv run manimux up \
-  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/serial32.yaml \
+  --config manimux/configs/experiments/example-yam-pi05/put_bottles/serial.yaml \
   --local manimux/configs/local/station.yaml \
   --runtime-python envs/yam/.venv/bin/python \
-  --policy-python XPolicyLab/policy/Pi_05/openpi/.venv/bin/python --open --json
+  --policy-python third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python --open --json
 
+# From another terminal.
 uv run manimux status --json
 uv run manimux attach --service runtime  # detach: Ctrl-B, then D
-uv run manimux down --timeout 30 --json
 </code></pre>
 <p>Substitute your recipe and installed interpreters. Camera defaults to the runtime
 interpreter; use <code>--camera-python</code> when needed. Use <code>--output-dir</code> to
 select a separate trial root. <code>up --timeout</code> is a readiness deadline per service.
 JSON results stay on stdout and progress goes to stderr. <code>--open</code> opens the default
 browser; agents can instead open the returned <code>gui_url</code> in their browser panel.</p>
+<p><code>up</code> stays in the foreground; there is no separate stop command. Ctrl-C (or
+SIGINT to the <code>up</code> process) stops services in order, runtime first. If runtime
+cleanup blocks, for example while waiting for hardware recovery, the terminal says so and
+keeps every service alive; use RoboGUI recovery, or support all arms and payloads and press
+Ctrl-C again to force-kill the services. If the <code>up</code> terminal was lost, rerun the
+same <code>up</code> command: it attaches to the running deployment, and Ctrl-C stops it.</p>
+<p>Hosted policy APIs such as Dream-1 (<code>worker: dream_api</code>) have no model service:
+omit <code>--policy-python</code> and export the key named by
+<code>policy.options.api_key_env</code> in the shell that runs <code>up</code>; doctor checks it.</p>
 <p>For an existing or remote model, replace <code>--policy-python</code> with
 <code>--external-policy</code>; the runtime recipe and station binding select its WebSocket
 endpoint and expected identity. For cameras already published by another owner, use
@@ -285,7 +295,7 @@ endpoint and expected identity. For cameras already published by another owner, 
 a positive <code>max_frame_age_sec</code>. A local camera-server recipe is then unnecessary.
 Doctor checks configuration; up/status receive camera frames and a model HELLO without
 requesting inference. External services and any SSH tunnels retain their existing owners,
-and down leaves them running. For a configured Franka experiment:</p>
+and Ctrl-C leaves them running. For a configured Franka experiment:</p>
 <pre><code class="language-bash">python -m manimux up \
   --config /path/to/franka-experiment.yaml \
   --local /path/to/private/franka-station.yaml \
@@ -320,18 +330,17 @@ editing running service code. Preserve the state directory until its services ha
 <tr><td>Waiting for Prepare</td><td>The runtime session is reporting; robot connection and motion remain operator actions.</td></tr>
 <tr><td>Operator control</td><td>Prepare was requested. Inspect RoboGUI for preparation, execution, failure and cleanup details.</td></tr>
 </tbody></table>
-<p><strong>Shutdown:</strong> down signals the owned runtime first and waits for its existing
-cleanup. If it remains alive, dependencies and the operator terminal stay available;
-the command reports <code>shutdown_blocked</code>. Attach to the terminal and inspect
-RoboGUI. There is no force-kill or automatic RELEASE. Repeated down waits without sending
-another interrupt. When runtime has exited, owned policy, camera and RoboGUI services
-stop in order; external dependencies remain available.</p>
+<p><strong>Shutdown:</strong> Ctrl-C in the <code>up</code> terminal signals the owned runtime
+first and waits for its existing cleanup. If it remains alive, dependencies and the operator
+terminal stay available and the terminal reports the blocked cleanup; inspect RoboGUI.
+There is no automatic RELEASE. Only a second Ctrl-C, after the operator supports all arms
+and payloads, force-kills the services. When runtime has exited, owned policy, camera and
+RoboGUI services stop in order; external dependencies remain available.</p>
 <h3 id="deployment-demo-video">Rehearse and record the deployment demo</h3>
 <pre><code class="language-bash"># Synthetic preview: no camera, policy service, runtime or robot connection.
+# Holds the terminal; Ctrl-C stops it.
 uv run manimux up --demo --robot yam --gui-port 18086 \
-  --deployment-dir .local/demo --open --json
-uv run manimux status --deployment-dir .local/demo --json
-uv run manimux down --deployment-dir .local/demo --json
+  --deployment-dir .local/demo --open
 
 # Terminal footage (requires VHS); run from the repository root.
 mkdir -p recordings
@@ -367,19 +376,19 @@ root in four terminals, using the same config list in cameras, model and runtime
 <p>YAM Home keeps the Home target after interpolation and waits without an arrival deadline. Position error and speed must stay within the release limits continuously for <code>home_settle_duration_s: 0.25</code>, configured in <code>configs/embodiment/arm/yam.yaml</code>. While waiting, logs report joint error and speed every five seconds. Hardware feedback checks remain active; loss of control health stops motion rather than being ignored. The retired <code>home_settle_timeout_s</code> setting in old snapshots is ignored with a warning. RoboGUI displays <strong>Returning Home</strong>, <strong>Saving rollout</strong> or <strong>Actuator release blocked</strong> while cleanup owns the robot; its cleanup heartbeat does not certify motor health. Runtime and dashboard changes require restarting both processes after safe release; a browser refresh alone does not load Python changes.</p>
 <h3 id="1-camera-service">1 · Camera service</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
+  --config-list manimux/configs/lists/example-yam-pi05.yaml
 </code></pre>
 <h3 id="2-robogui">2 · RoboGUI</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
   --robot yam --host 127.0.0.1 --port 8086
 </code></pre>
 <h3 id="3-pi05-model-service">3 · Pi05 model service</h3>
-<pre><code class="language-bash">XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
+<pre><code class="language-bash">third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
+  --config-list manimux/configs/lists/example-yam-pi05.yaml
 </code></pre>
 <h3 id="4-runtime">4 · Runtime</h3>
 <pre><code class="language-bash">envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
+  --config-list manimux/configs/lists/example-yam-pi05.yaml
 </code></pre>
 <p>Open <code>http://127.0.0.1:8086</code>. <code>run</code> waits for GUI preparation; it does not launch the other
 three services. <strong>Prepare can connect hardware and move to the configured start pose.</strong>
@@ -395,7 +404,7 @@ from the chosen deployment. They are not additional services to run alongside Pi
 "$MM_MODEL_PY" -m manimux.servers.xr1 --config "$MM_RECIPE"
 
 # LingBot: shared XPolicyLab server, matching model recipe
-"$MM_MODEL_PY" XPolicyLab/setup_policy_server.py --config-path "$MM_RECIPE"
+"$MM_MODEL_PY" third_party/XPolicyLab/setup_policy_server.py --config-path "$MM_RECIPE"
 
 # DP: recipe selected from the experiment
 "$MM_MODEL_PY" -m manimux.servers.dp --experiment "$MM_EXPERIMENT"
@@ -513,7 +522,7 @@ responses are not robot commands.</p>
 Set <code>DREAM_API_KEY</code> in the runtime environment, never in configuration
 files. Dream-1 beta uses one current frame per camera (overhead and both wrists).
 Inference sends these images, state and task text to Dream Labs; the SDK's additional
-episode recording is disabled. A public <a href="https://github.com/SII-LiuLab/manimux/blob/main/manimux/configs/examples/dream1-yam/serial30-example.yaml">30 Hz serial example</a> is included; see the README for startup commands. Tuned station-specific trial configurations are not distributed. Custom configurations use
+episode recording is disabled. A public <a href="https://github.com/SII-LiuLab/manimux/blob/main/manimux/configs/experiments/example-yam-dream1/README.md">30 Hz serial example study</a> is included, with direct and RPent variants and startup commands. Tuned station-specific trial configurations are not distributed. Custom configurations use
 <code>policy.worker: dream_api</code>, the Dream YAM adapter and explicit playback,
 scheduling and execution parameters.</p>
 <pre><code>python -m manimux inspect --config /path/to/your/dream.yaml
@@ -1003,7 +1012,7 @@ and does not impose a joint-step limit or guarantee IK branch continuity.</p>
 <section aria-labelledby="train-time-rtc" class="guide-page" data-page-id="train-time-rtc" data-title="Train-time RTC" hidden=""><h2 id="train-time-rtc">Train-time RTC</h2>
 <p>Prefix-trained UMI-DP checkpoints use <code>algorithm: train_time_rtc</code> and <code>inference_schedule: single_inflight</code>. They advertise the separate <code>train_time_rtc</code> sampling capability; ordinary RTC guidance checkpoints do not support this mode.</p>
 <p>The pack-plate recipe fixes five leading action rows with <code>delay_estimator: fixed</code> and <code>fixed_prefix_steps: 5</code>. The first request and unavailable committed prefixes are unconditioned. Fixed prefixes do not guarantee latency coverage. Dynamic <code>decode_max</code> and <code>end_to_end_max</code> estimators are also available.</p>
-<p>Use <code>action_start_mode: drop_infer_latency</code>, <code>blend_policy_steps: 0</code> and <code>handoff_skip_steps: 0</code>. Both inline and process decoding are supported. Select <code>manimux/configs/experiments/umi_dp-tianji-pack_plate-train_time_rtc/pack_plate/train_time_rtc.yaml</code>.</p>
+<p>Use <code>action_start_mode: drop_infer_latency</code>, <code>blend_policy_steps: 0</code> and <code>handoff_skip_steps: 0</code>. Both inline and process decoding are supported. Put these settings in your experiment variant, organized like the <a href="#example-study">example study</a>.</p>
 <p>ABC-DiT 200k uses this strategy with <code>chunk_policy_steps: 16</code>,
 <code>delay_estimator: fixed</code> and <code>fixed_prefix_steps: 7</code>.
 Its model recipe retains <code>rtc_prefix_length: 4</code>: the backend conditions
@@ -1123,7 +1132,7 @@ them. Pi05 loads the experiment with
 <code>python -m manimux.servers.pi05 --experiment path/to/experiment.yaml</code>
 in its model environment. With a standalone server recipe, put <code>autohorizon</code>
 at the recipe's top level and launch through the ManiMux wrapper; direct
-<code>XPolicyLab/setup_policy_server.py</code> does not apply these overrides.
+<code>third_party/XPolicyLab/setup_policy_server.py</code> does not apply these overrides.
 See the <a href=".agents/skills/manimux-inference/references/inference-matrix.md">model recipe and sampling matrix</a>
 for backend constraints.</p>
 </section>
@@ -1432,7 +1441,7 @@ require the native horizon; attention capture needs eager execution. Pi05 PyTorc
 Pi05 EEF are outside this matrix. <a href=".agents/skills/manimux-inference/references/inference-matrix.md">Detailed model contracts</a></p>
 <p><strong>Generate selecting configs from one existing deployment, without launching services:</strong></p>
 <pre><code class="language-bash">PYTHONPATH=. envs/yam/.venv/bin/python scripts/experiments/build_inference_matrix.py \
-  --base manimux/configs/experiments/pi05-yam-coin-joint-step50000/coin/rtc_joint_step50000.yaml \
+  --base manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml \
   --output-dir data/configs/coin-pi05-comparison-v1 \
   --execution-steps 16 --paint-delay-steps 4 --async-trigger progress \
   --aac-stats manimux/policies/xpolicylab/norm_stats/yam_60ep_ee_increment.json \
@@ -1484,16 +1493,18 @@ revisions, not automatically to a new checkpoint.</p>
 <section aria-labelledby="experiment-lists" class="guide-page" data-page-id="experiment-lists" data-title="Config lists &amp; task switching" hidden=""><h2 id="experiment-lists">Config lists &amp; task switching</h2>
 <p>A <strong>config list</strong> is the entry point for a study, including a single experiment. It selects reusable variants, the trial plan and one recording root. Camera, model and runtime commands use the same config list and station. Compatible task/method choices switch in RoboGUI after Finish, recovery and evaluation.</p>
 <h3 id="experiment-config-locations">Configuration ownership</h3>
-<p><strong>Published example:</strong> only <code>experiments/pi05-latest300ep-step30000/</code> and its config list are tracked in this checkout. Other study directories and config lists are local and Git-ignored. Shared components and task definitions remain reusable. Update both allowlists in <code>.gitignore</code> explicitly when publishing another study.</p>
+<p><strong>Published examples:</strong> only the <code>example-*</code> studies under <code>experiments/</code> and their <code>lists/example-*.yaml</code> are tracked; they double as the runtime examples (Pi05 and Dream-1 on YAM, Franka, a hardware-free RPent check). Your own study directories and config lists stay local and Git-ignored; shared components and task definitions remain reusable.</p>
 <pre><code>manimux/configs/
-  lists/&lt;study&gt;.yaml                 # entries, trials, recording.root
-  tasks/&lt;task&gt;.yaml                        # prompt, layouts, rubric, optional pose
+  lists/&lt;study&gt;.yaml                       # entries, trials, recording.root
+  experiments/&lt;study&gt;/_base_.yaml            # runnable baseline: robot, cameras, policy
+  experiments/&lt;study&gt;/&lt;task&gt;/&lt;variant&gt;.yaml  # what one method changes
+  tasks/&lt;task&gt;.yaml                         # prompt, layouts, rubric, optional pose
+  policy/  agents/  inference/  executor/   # model recipes, RPent recipes, components
   embodiment/{robot,sensor,initial_poses}/  # shared hardware and named poses
-  policy/  inference/  executor/  local/
-  experiments/&lt;model-checkpoint&gt;/
-    _base_.yaml                            # common choices, only when needed
-    &lt;task&gt;/rtc32_beta10.yaml                # reusable variant and identity
+  local/station.yaml                        # private station bindings (not in Git)
 </code></pre>
+<p>The <a href="manimux/configs/README.md">configuration map</a> follows one entry of the
+example study through every layer, from the config list to the model recipe and station.</p>
 <table><thead><tr><th>File</th><th>Owns</th><th>Does not own</th></tr></thead><tbody>
 <tr><td>Component recipes</td><td>Model/artifacts, inference defaults, robot/camera contracts, executor</td><td>Trial counts and output directory</td></tr>
 <tr><td>Task</td><td>Exact prompt, available layouts, evaluation template, optional named initial pose</td><td>Which methods are compared</td></tr>
@@ -1594,63 +1605,52 @@ read-only. Session manifests stay in place. Small <code>.deleted</code> markers 
 rollout IDs so retests receive new IDs. Keep deletion receipts and exclude
 <code>_archive</code> from subsequent analyses. Changing a score uses
 <strong>Edit last evaluation</strong>; deletion is for explicitly discarded trials.</p>
-<h3 id="latest300ep-launch">Current Pi05 study: five tasks, 32-step fixed windows</h3>
-<p>Use <code>manimux/configs/lists/pi05-latest300ep-step30000.yaml</code>. It contains five tasks × six methods; moving-cube entries use the shared raised starting pose. Pi05 fixed windows use 32/50, Direct and blend=0; RTC beta=10. AutoHorizon remains adaptive. Async uses <code>request_trigger: progress</code> and retains the full model horizon. Async/RTC/PAINT source progress includes latency-trimmed rows; this is not a guarantee of 32 physical commands.</p>
-<p>For this comparison, LingBot uses 32/50 source steps and OpenWAM uses 20/32. Subsequent Xiaomi Robotics-1 trials use an explicitly selected 18/30 window (2026-10-20), replacing the previous rounded 19/30 window under separate recording identities. These are study choices, not universal defaults for new users. Xiaomi's chunk-IK and step-IK config lists both include Serial, Async, RTC and PAINT. FastWAM has no bound YAM config list.</p>
-<p>For Xiaomi/YAM, <code>policy.adapter.gripper_output: clip</code> explicitly declares the adapter's gripper handling: reconstruct absolute opening from the observation and predicted delta, then clip to <code>[0, 1]</code> for both chunk and step IK. Non-finite inputs and reconstructed openings fail. Chunk metadata records <code>gripper_clip_max_abs</code>. Raw observations, predicted deltas, pose targets and IK constraints remain unchanged. Current local experiment variants use <code>_grip_clip</code> to separate earlier tolerance-based recordings.</p>
-<pre><code class="language-bash">cd /home/ubuntu/manimux
+<h3 id="example-study">Example study: one task, four methods</h3>
+<p><code>manimux/configs/lists/example-yam-pi05.yaml</code> shows how a study is organized.
+It lists four entries for the put-bottles task with the same Pi05 model served by
+XPolicyLab: Serial (30 Hz), RTC (100 Hz control), Async with 10 Hz playback and Smooth
+execution, and Pi05 driven by RPent. Each entry is a small file under
+<code>experiments/example-yam-pi05/put_bottles/</code> that inherits the study baseline
+(<code>experiments/example-yam-pi05/_base_.yaml</code>) and the task (<code>tasks/put_bottles.yaml</code>:
+prompt, layouts, scoring), then sets only what the method changes and its
+<code>experiment.task</code>/<code>experiment.variant</code>. Keep your own studies as
+private lists and variants in the same layout.</p>
+<pre><code class="language-bash">manimux up --config-list manimux/configs/lists/example-yam-pi05.yaml \
+  --runtime-python envs/yam/.venv/bin/python \
+  --policy-python third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python
 envs/yam/.venv/bin/python -m manimux inspect \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml --index
-envs/yam/.venv/bin/python scripts/experiments/check_step_ratio.py \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml</code></pre>
-<p>Start each long-running command in its own terminal after checking existing services:</p>
-<pre><code class="language-bash"># Camera service
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
-
-# RoboGUI
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux.robogui.dashboard \
-  --robot yam --host 127.0.0.1 --port 8086
-
-# Pi05 model service
-cd /home/ubuntu/manimux
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml
-
-# Runtime: Task / Method / Layout selection
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/pi05-latest300ep-step30000.yaml</code></pre>
-<p>Open <a href="http://127.0.0.1:8086">RoboGUI</a>. Choose Task → Method → Layout → Prepare Run / Prepare Experiment → Activate Warmup → Start → Finish → save/skip evaluation. Prepare may move to the configured initial pose. The moving-cube task defaults to the measured Raised ready preset across the current Pi05, Xiaomi, LingBot and OpenWAM config lists. Other tasks retain their configured starts. Earlier Home-start Pi05 moving-cube variants remain available for historical reproduction but are excluded from the active list. Changed starts use distinct recorded variant IDs; existing recordings are not rewritten. General tasks may inherit an <code>initial_pose: {config: …, id: …}</code> from their task YAML; overrides belong to deliberate variants.</p>
+  --config-list manimux/configs/lists/example-yam-pi05.yaml --index
+</code></pre>
+<p>Open RoboGUI. Choose Task → Method → Layout → Prepare Run / Prepare Experiment → Activate
+Warmup → Start → Finish → save/skip evaluation. Prepare may move to the configured initial
+pose. Changed scientific conditions use distinct variant IDs; existing recordings are not
+rewritten. Tasks may inherit an <code>initial_pose: {config: …, id: …}</code>; overrides
+belong to deliberate variants.</p>
 <h3 id="mixed300ep-launch">Other config lists and service selection</h3>
 <p>The following config lists are local examples, not included in a fresh clone. When present on your station, use <code>lists/lingbot-vla2-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-all-tasks.yaml</code>, <code>openwam-bottles30k-cached-all-tasks.yaml</code>, <code>openwam-bottles30k-rtc-cache-all-tasks.yaml</code> or <code>xiaomi-xr1-bottles30k-ratio64-all-tasks.yaml</code> as appropriate. These bottle-trained weights are being evaluated across tasks; inclusion is not evidence of training coverage or successful task performance.</p>
 <p>The generic XPolicyLab launcher is <code>python -m manimux.servers.policy --config-list …</code>, using that model's installed Python environment. <code>--check</code> prints the resolved service recipe without loading weights. Camera <code>--check</code> resolves devices without opening them. Pi05's dedicated launcher additionally validates its artifact paths.</p>
 <p><strong>YAM IK position acceptance:</strong> Set <code>options.pos_threshold</code> in <code>manimux/configs/embodiment/arm/yam.yaml</code>: <code>0.0001</code> means 0.1 mm (solver default), <code>0.001</code> means 1 mm, and <code>null</code> disables final position-error acceptance. This applies to chunk and step IK across model adapters using that arm definition. Disabling acceptance retains position optimization, orientation acceptance, finite-value checks and joint limits; it does not guarantee faster solving or bound the remaining position error. Step IK retains its computation budget. Restart the runtime after finishing the current trial to load a changed setting.</p>
-
 <p><strong>LingBot-VLA2 RTC withdrawn (2026-10-18).</strong> RTC is removed from the model capability list and all LingBot experiment entries. Measured conditioned sampling averaged 961.32 ms, exceeding the 0.60 s remaining-action budget at H=50, K=32 and 30 Hz. Historical RTC-labelled records include unconditioned fallbacks and must not be treated as a validated RTC baseline. Normal inference, PAINT and AutoHorizon retain their separate paths. Running processes must be restarted normally to load this removal; editing files does not update an already loaded model.</p>
-<p>This station's multi-task LingBot-VLA2 checkpoint uses <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml</code>, with <code>envs/lingbot-vla2/.venv/bin/python</code> for the model service. It binds <code>yam_latest300_micro8_v5_step30000</code> on the external drive, checkpoint-matched normalization and the existing relative-joint deployment projection. The main list contains five tasks × four fixed-window methods with <code>use_compile: true</code> and 32/50 windows. Serial is the initial selection; no <code>--experiment-id</code> is needed. Compiled PAINT and AutoHorizon are selected by <code>manimux/configs/lists/lingbot-vla2-latest300ep-step30000-compiled-samplers.yaml</code> (five tasks, separate recording variants). AutoHorizon receives attention as an explicit tensor from the third model evaluation; selection runs outside compilation. The old eager list is retained for historical reproduction. Start the model service and runtime with the same selected list after stopping the previous run normally. Warm each algorithm separately and check its measured latency and numerical diagnostics; a compile flag alone is not a performance guarantee. Compiled variants have an <code>_compile</code> recording suffix, and <code>use_compile</code> is part of the model handshake identity. Configuration and live HELLO checks passed, followed by finite real-checkpoint CUDA ordinary/PAINT outputs on synthetic observations; this is not a hardware trial or a matched speedup benchmark. Compilation happens lazily during warmup. The first ordinary call in the probe took 86.52 seconds, so <code>policy.options.warmup_request_timeout_s: 300</code> permits display-only warmup to finish while the ordinary request timeout remains 20 seconds. A started server alone does not establish a warmed sampler. Moving-cube starts at Raised ready, other tasks at Home. Records use <code>data/experiments/lingbot-vla2-latest300ep-step30000/</code>, separately from the bottle-trained checkpoint.</p>
 <p><strong>PAINT waiting behavior:</strong> PAINT can keep running when inference exceeds the old chunk's remaining duration. It conditions the next prediction on the available suffix followed by a repeated terminal target, including the gripper. The runtime holds the last command until a valid result arrives, then applies the usual latency trimming. It does not reduce the configured execution steps or switch algorithms. Recorded metadata includes forecast and elapsed terminal-hold policy steps. Real request failures retain the common recovery path; a delay consuming the entire new prediction horizon still fails explicitly. The terminal-hold extension is covered by offline tests, not a new hardware validation.</p>
 <p>OpenWAM cached Serial/Async uses the original compiled DiT cache recipe. The RTC-cache config list uses eager execution and the declared cache modes. Specialized sampling and compilation support remain model-specific; retain these flags and measured latency when comparing methods.</p>
 <h3 id="single-config-trial">Try one existing configuration</h3>
 <p>No study YAML is required. Reuse a concrete variant, or let the agent write one runtime configuration from your robot, model and task requirements. Layouts, repetition budgets and a scoring rubric are optional for trials. Keep the same config and station across services; use the model's installed environment for policy serving.</p>
-<pre><code class="language-bash">cd /home/ubuntu/manimux
+<pre><code class="language-bash">cd {repo}
 # Validate only; opens no hardware and creates no recording directories.
 envs/yam/.venv/bin/python -m manimux inspect \
-  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+  --config manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml
 
 # Camera: separate terminal; append --check for configuration-only validation.
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+  --config manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml
 
 # Pi05 model: separate terminal; append --check to avoid loading weights.
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
-  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.policy \
+  --config manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml
 
 # Runtime: separate terminal; reuse the RoboGUI command above.
 envs/yam/.venv/bin/python -m manimux run \
-  --config manimux/configs/experiments/pi05-latest300ep-step30000/coin/rtc32_beta10.yaml
+  --config manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml
 </code></pre>
 <p>The last command waits for Prepare Run. It does not start robot motion by itself. Optional <code>--once</code> connects immediately and exits after one rollout, so use it deliberately. A bare camera component recipe uses the advanced <code>--camera-config</code> flag; common <code>--config</code> always refers to a full runtime configuration.</p>
 <p><strong>Naming migration:</strong> configuration lists now live under <code>manimux/configs/lists/</code> and use <code>--config-list</code>. The list YAML contents, IDs, recording roots and existing episode files are unchanged. Internal <code>manimux.collections</code> helpers and saved <code>collection</code> metadata retain their schema names for historical compatibility.</p>
@@ -1664,20 +1664,32 @@ envs/yam/.venv/bin/python -m manimux run \
 <p id="experiment-list-records">Current recorded conditions remain the authority. Configuration inspection does not validate model outputs or physical execution. Validate the first trials' actual switch timing before collecting a full cohort.</p>
 </section>
 <section aria-labelledby="agent-integrations" class="guide-page" data-page-id="agent-integrations" data-title="RPent / HarnessVLA" hidden=""><h2 id="agent-integrations">RPent / HarnessVLA</h2>
+<p>External framework sources are pinned under <code>third_party/</code>:
+<code>third_party/RPent</code>, <code>third_party/XPolicyLab</code>,
+<code>third_party/StarVLA</code> and <code>third_party/PRM-as-a-Judge</code>.
+Existing stations must update private paths and reinstall editable packages after
+moving a checkout; finish active runs before changing its source layout.</p>
+<p>RPent API mode requires an explicit provider-prefixed <code>model</code>.
+Its recipe also accepts <code>base_url</code> (API mode), <code>max_tokens</code>,
+<code>planner_timeout_s</code> and <code>claude_code_max_budget_usd</code>.
+Keep credentials in the native provider environment. The recipe's
+<code>endpoint</code> is the ManiMux tool service, not the model API.</p>
 <p><strong>One recipe and one Toolkit for motion and VLA calls.</strong> RPent owns planning,
 memory and tool selection. ManiMux owns the configured model worker, action adapter,
 motion planning, hardware execution and recording. A task can call move_to, execute_policy
 and set_gripper consecutively without changing runtime modes.</p>
 <h3 id="rpent-install">Install and start</h3>
-<pre><code class="language-bash">git submodule update --init RPent
-uv venv --python 3.11 envs/rpent/.venv
-uv pip install --python envs/rpent/.venv/bin/python -e ./RPent -e .
+<pre><code class="language-bash">git submodule update --init third_party/RPent
+# The planner environment lives in RPent's own directory, like other peer/model environments.
+uv venv --python 3.11 third_party/RPent/.venv
+uv pip install --python third_party/RPent/.venv/bin/python -e ./third_party/RPent -e .
 
-# Runtime terminal: the default recipe is entirely synthetic.
+# Runtime terminal: the robot runtime interpreter (e.g. envs/yam/.venv/bin/python).
+# The default recipe is entirely synthetic.
 python -m manimux.agents.rpent serve --config manimux/configs/agents/rpent.yaml
 
 # Planner terminal, using the same recipe and endpoint.
-envs/rpent/.venv/bin/manimux-rpent run --config manimux/configs/agents/rpent.yaml \
+third_party/RPent/.venv/bin/manimux-rpent run --config manimux/configs/agents/rpent.yaml \
   --task 'Put the red object into the tray.' --planner api --model '&lt;provider:model&gt;' \
   --memory-root /path/to/task-memory --output-dir /path/to/new-planner-run
 </code></pre>
@@ -1697,36 +1709,43 @@ use its Codex backend with the account already logged in on the planner host:</p
 by the model. RPent saves the native planner transcript and tool calls in the
 output directory. Direct tool calls from a chat or scripted probe do not exercise
 this autonomous planner loop.</p>
-<h3>Choose RPent in RoboGUI</h3>
-<p>Add an agent profile to an ordinary experiment, then launch it with the usual
-<code>manimux run --config</code> or <code>--config-list</code> command:</p>
+<h3>Run RPent in RoboGUI</h3>
+<p>Add an agent profile to an experiment to make it an RPent experiment, then launch it
+with the usual <code>manimux up</code>, <code>manimux run --config</code> or
+<code>--config-list</code> command:</p>
 <pre><code class="language-yaml">agent:
   config: ../local/rpent-agent.yaml
-  python: /path/to/rpent-env/bin/python
-run:
-  execution_mode: vla
+  # python: optional; defaults to third_party/RPent/.venv/bin/python when installed
 </code></pre>
-<p><strong>Execution</strong> offers <strong>Direct VLA</strong> and <strong>RPent</strong>.
-The existing task, method, layout, Prepare Run / Prepare Experiment, Start, Pause / Hold,
-Resume, Finish and evaluation controls remain in place. The RPent status, decisions and
-agent record location appear only when RPent is selected. An experiment without an agent
-profile keeps its existing VLA interface.</p>
-<p>The RPent panel shows the latest eight tool decisions. <strong>View all decisions</strong>
-opens the current rollout's complete recorded history in chronological order, with full
-policy prompts, finish summaries and error text. This view reports recorded tool choices
-and outcomes; unavailable recordings are shown explicitly.</p>
-<p>Prepare freezes the choice and validates the planner environment. Start launches RPent
+<p>An RPent experiment runs only RPent; running the VLA on its own is what an ordinary
+recipe without <code>agent</code> does. The planner calls the experiment's own
+<code>policy</code> through <code>execute_policy</code>. Change the VLA by inheriting another
+runtime recipe, as <code>experiments/example-yam-dream1/put_bottles/rpent.yaml</code> does with
+that study's hosted Dream-1 <code>_base_.yaml</code>. RPent requires plain
+Serial inference without blending; a recipe with <code>chunk_policy_steps</code> must also set
+it and <code>max_chunk_policy_steps</code> to <code>null</code>.</p>
+<p>The existing task, method, layout, Prepare Run / Prepare Experiment, Start, Pause / Hold,
+Resume, Finish and evaluation controls remain in place, plus the agent message bar. An
+experiment without an agent profile keeps its existing VLA interface.</p>
+<p>A message bar at the bottom of RoboGUI follows the planner live: its answers, reasoning
+summaries, tool calls and errors in chronological order, with the time since Start. It
+follows new lines while scrolled to the bottom, keeps its place when you scroll up, lets
+you select and copy text, and resizes from the grip on its top edge. Before the first
+reply it shows that the planner is thinking. Codex and Claude Code planners stream into it;
+the API planner shows only its tool decisions until it finishes. Messages are also recorded
+with the rollout.</p>
+<p>Prepare validates the planner environment. Start launches RPent
 with the selected task and enabled tools; no separate planner command is needed. Pause cancels the
 current bounded action and waits for operator Resume. Finish stops the rollout and its
 planner. A planner verdict also ends the rollout through the normal robot cleanup; scored
 experiments still require a human evaluation or Skip. RPent trials use a separate
-<code> / RPent</code> condition suffix so they do not count toward Direct VLA repeats.</p>
+<code> / RPent</code> condition suffix so they do not count toward VLA-only repeats.</p>
 <p>The agent profile supplies its planner, model, reasoning level, memory and calibrated
 motion file. The current GUI experiment supplies the robot, VLA and task; managed runs
 allocate their own endpoint and output directory. The existing Serial bridge
 constraints still apply. An incompatible method is rejected before robot connection.
-<code>manimux/configs/examples/rpent_gui_demo.yaml</code> provides a disconnected synthetic
-example; configure the referenced planner provider before selecting RPent.</p>
+<code>manimux/configs/experiments/example-rpent-synthetic/demo/rpent_gui.yaml</code> provides a disconnected synthetic
+example; configure the referenced planner provider first.</p>
 <p>To warm the selected VLA before RPent starts, set
 <code>run.warmup_before_start: true</code> and use the existing
 <strong>Prepare → Activate Warmup → Start rollout</strong> controls. Warmup uses the
@@ -1740,11 +1759,10 @@ that later model calls will meet them.</p>
 <p>For an explicit RPent debugging condition, add
 <code>agent.debug_max_plan_age_s: 2.0</code> to the experiment. This optional finite,
 positive value changes the plan-age limit only for managed GUI RPent, including its
-warmup. Direct VLA keeps the ordinary <code>inference.max_plan_age_s</code>, even
-when selected in that same variant. Provider request timeout, control freshness and
+warmup. Provider request timeout, control freshness and
 motion checks stay unchanged. Use a distinct debug variant rather than changing an
 existing recorded condition; the setting is included in its condition fingerprint.
-The disconnected <a href="manimux/configs/examples/rpent_gui_debug.yaml">RPent debug
+The disconnected <a href="manimux/configs/experiments/example-rpent-synthetic/demo/rpent_gui_debug.yaml">RPent debug
 example</a> shows this opt-in.</p>
 <p>To test RPent using only observation and motion primitives, set
 <code>agent.policy_enabled: false</code> in the experiment. This boolean defaults
@@ -1753,12 +1771,11 @@ to true. RPent then offers <code>observe</code>, <code>move_to</code>,
 <code>execute_policy</code> and the observation's policy contract are absent.
 The runtime also rejects policy calls and skips its VLA worker and warmup.
 Use <strong>Prepare → Start rollout</strong>; Astra chooses the primitives through
-the existing motion, safety and GUI controls. Direct VLA retains its configured
-policy and warmup even in the same variant. Keep these records in a distinct
+the existing motion, safety and GUI controls. Keep these records in a distinct
 <strong>RPent · Primitives only</strong> variant; <code>false</code> changes its
 condition fingerprint, while omission and <code>true</code> retain the baseline.
 See the disconnected
-<a href="manimux/configs/examples/rpent_gui_primitives.yaml">primitives example</a>.
+<a href="manimux/configs/experiments/example-rpent-synthetic/demo/rpent_gui_primitives.yaml">primitives example</a>.
 For separate <code>manimux-rpent serve</code> / <code>run</code> commands, put
 <code>policy_enabled: false</code> in their shared agent recipe.</p>
 <h3 id="policy-dispatch">Tools in one rollout</h3>
@@ -1786,23 +1803,39 @@ response location. For <code>plan_too_old</code>, compare observation age with
 <p>RoboGUI shows primitive tool names on the shared action timeline without model inference
 latency. <strong>Agent action</strong> shows executing, measured arrival or failure;
 VLA completion reports its chunk budget and still requires inspection of the task result.</p>
-<p><strong>RPent decisions</strong> shows the latest eight native tool choices, newest first:
-observe, move_to, move_delta, rotate, set_gripper, execute_policy and finish. Each entry
-retains the submitted target, units, VLA prompt or chunk budget and its result. Selected
-means the planner invoked the tool; hardware execution and arrival remain separate runtime
-receipts. Decision history recovers from state heartbeats after a GUI reconnect and clears
-for a new rollout. Full decision events remain in the rollout recording.</p>
+<p>The bottom message bar shows each native tool call (observe, move_to, move_delta, rotate,
+set_gripper, execute_policy and finish) with its arguments and result as the planner
+reports it; hardware execution and arrival remain separate runtime receipts. Full decision
+events remain in the rollout recording.</p>
 <p>Motion completion checks measured TCP/gripper errors; completed VLA rows count dispatched
 references, not physical arrival or task success. Paths use bounded joint interpolation,
 not a Cartesian straight line. The current bridge supports ordinary Serial and complete
 joint chunks with optional pre-Start warmup; blending, specialized sampling and temporal
 ensemble remain unsupported.</p>
 <h3>Physical station recipes</h3>
-<p>Use <a href="manimux/configs/agents/rpent_franka.yaml">Franka</a> or
-<a href="manimux/configs/agents/rpent_yam.yaml">YAM</a>, and fill the corresponding
-motion template with measured workspace bounds. YAM also requires calibrated base/camera
-transforms and the configured table/collision checks. Missing values fail before connection.
-Both runtime examples default to execute=false. This setting alone does not make device
+<p>Each YAM example study pairs a direct VLA variant with its RPent variant; both inherit
+the study <code>_base_.yaml</code>, and the RPent one adds the agent profile:
+<code>example-yam-dream1/put_bottles/{serial,rpent}.yaml</code> and
+<code>example-yam-pi05/put_bottles/{serial,rpent}.yaml</code>. The RPent variants ship with
+<code>robot.options.execute: false</code>; enable actuation in a private variant after the
+offline and Finish checks. Start them with the usual <code>manimux up</code>:</p>
+<pre><code class="language-bash"># Hosted Dream-1: no model service.
+export DREAM_API_KEY=...
+manimux up --config manimux/configs/experiments/example-yam-dream1/put_bottles/rpent.yaml \
+  --runtime-python envs/yam/.venv/bin/python
+
+# Local Pi05 put-bottles model service.
+manimux up --config manimux/configs/experiments/example-yam-pi05/put_bottles/rpent.yaml \
+  --runtime-python envs/yam/.venv/bin/python \
+  --policy-python third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python
+</code></pre>
+<p>Both reference the private <code>local/rpent_yam_motion.yaml</code>: copy
+<a href="manimux/configs/agents/rpent_yam_motion.example.yaml">the YAM motion template</a>
+and fill in measured workspace bounds; its whole-arm collision check is optional and needs
+measured hand-eye extrinsics and table height. For Franka use
+<a href="manimux/configs/agents/rpent_franka.yaml">its recipe</a> and motion template.
+Missing values fail before connection. The examples default to execute=false; enable it
+in a private experiment that inherits the example. This setting alone does not make device
 connection a hardware-free qualification. Use a disconnected sink for software acceptance.</p>
 <pre><code class="language-bash">manimux-rpent serve --config manimux/configs/agents/rpent_franka.yaml \
   --local /path/to/private/station.yaml --motion /path/to/private/motion.yaml
@@ -1820,10 +1853,10 @@ and Franka's existing stop/close semantics remain assembly-owned.</p>
 <p>This runs RPent's actual Toolkit through preposition, synthetic VLA calls, gripper
 and subsequent motion, retaining standard rollout/replay records. It uses no hardware
 or autonomous LLM and is not physical task evidence. The unified runtime saves provider
-responses before action validation; XPolicyLab/StarVLA also capture malformed wire replies.
+responses before action validation; third_party/XPolicyLab/StarVLA also capture malformed wire replies.
 Rejections identify their saved evidence. Qualify the chosen real provider and representative
 observations through a disconnected command sink before operator handoff.</p>
-<p>The former manimux-dispatch console entry and native environment launcher are retired.
+<p>The former manimux-dispatch console entry and native environment launcher have been removed.
 Use execute_policy instead of native pi05_act/vla_grasp, select the matching model recipe,
 and migrate native arm aliases/coordinates to the configured groups and base frames.
 The <a href=".agents/skills/manimux-development/references/rpent.md">integration contract</a>
@@ -2683,7 +2716,7 @@ The failed attempt is excluded from successful tick data.</p>
 </tbody></table></details><p>The raw recording has no human-label file after Skip. An absent label is unreviewed, not failure and not success. Warmup generates event/latency evidence, but its predicted chunks are display-only and do not populate the formal recorded plan/tick/video streams. Detailed loop-stage timing is absent when control_timing is disabled.</p></div>
 <p>Check the actual episode path in RoboGUI; station configuration can override the output root.
 Open a finalized episode in a separate, read-only replay process:</p>
-<pre><code class="language-bash">cd /home/ubuntu/manimux
+<pre><code class="language-bash">cd {repo}
 envs/yam/.venv/bin/python -m manimux.robogui.replay \
   --robot yam --episode /path/to/session-xxx/rollout-001 \
   --source state --host 127.0.0.1 --port 8087
@@ -2911,7 +2944,7 @@ decisions and result tables; it is not a second public guide.</p>
     budget_ms: 5.0
 run:
   control_timing: true</code></pre>
-<p>Merge these fields into an experiment with a direct executor and inline action decoding. The optional budget defaults to half the control period and must be shorter than that period. Reuse the example <code>manimux/configs/experiments/openwam-custom/put_bottles/serial_step30000_step_ik.yaml</code>. Existing experiments remain in chunk mode.</p>
+<p>Merge these fields into an experiment with a direct executor and inline action decoding. The optional budget defaults to half the control period and must be shorter than that period. Add them to a variant whose adapter uses IK (for example OpenWAM YAM or XR1 YAM). Existing experiments remain in chunk mode.</p>
 <p>Step mode supports serial/async for IK adapters. OpenWAM YAM and XR1 YAM also support pose-space RTC/PAINT; Pi05 Tianji, XR1 Tianji and UMI-DP Tianji support pose-space RTC. Unsupported combinations fail at configuration validation. Smooth/MPC, joint candidate scoring, temporal ensembling, executor-based RTC forecasts, cubic joint blends, waypoint handoff and decoder diffIK substeps require chunk mode.</p>
 <p>The current pose is interpolated with linear position/gripper and quaternion SLERP, then IK is seeded from the current measured joint state. Both arms share the budget; a failed or late solution holds both arms at the previous command. Watch the <code>step_ik</code> timing stage and <code>step_ik_hold</code> events. The budget is cooperative: native calls cannot always be interrupted, so verify control timing on the target machine. Pose-space interpolation can produce a different joint path from interpolating a pre-solved joint chunk.</p>
 <p><strong>Optional TCP target speed limit (off by default):</strong> set <code>execution.ik.pose_speed_limit</code> to a mapping with <code>max_linear_m_s</code> and/or <code>max_angular_rad_s</code>. Values must be positive and finite. Omit it or use <code>null</code> to disable. This setting applies to step IK only.</p>

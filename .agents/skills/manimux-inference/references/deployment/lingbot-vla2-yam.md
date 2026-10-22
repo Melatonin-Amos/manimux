@@ -2,7 +2,7 @@
 
 ## Current local experiment entry (2026-10-20)
 
-Use `manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml` for the
+Use `manimux/configs/lists/{lingbot-study}.yaml` (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) for the
 five-task study: Serial, zero-blend progress-triggered Async, compiled PAINT and
 serial-scheduled adaptive AutoHorizon. The list uses the existing
 `paint32_compiled_sampler` and `autohorizon_serial_compile` variants and preserves
@@ -25,7 +25,7 @@ below is a PAINT/AutoHorizon subset, not the full study entry.
 ## Overview
 
 LingBot-VLA2 has released full source and inference entry points. ManiMux now has a dedicated
-`XPolicyLab/policy/LingBot_VLA2/` adapter instead of reusing the old Qwen2.5
+`third_party/XPolicyLab/policy/LingBot_VLA2/` adapter instead of reusing the old Qwen2.5
 `LingBot_VLA`.
 
 The local `checkpoints/pretrained/lingbot-vla-v2-6b` is a foundation checkpoint,
@@ -105,12 +105,12 @@ independent safety boundaries.
 ```text
 finetune server: manimux/configs/policy/lingbot-vla2/yam/finetune.yaml
 base server:     manimux/configs/policy/lingbot-vla2/yam/base.yaml
-infra:   manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
-adapter: XPolicyLab/policy/LingBot_VLA2/model.py
-sampler: XPolicyLab/policy/LingBot_VLA2/sampling.py  # PAINT / AutoHorizon
-server:  XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh
-profile: XPolicyLab/policy/LingBot_VLA2/robot_configs/yam_dual_absolute.yaml
-source:  XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/  # vendored upstream source
+infra:   manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml
+adapter: third_party/XPolicyLab/policy/LingBot_VLA2/model.py
+sampler: third_party/XPolicyLab/policy/LingBot_VLA2/sampling.py  # PAINT / AutoHorizon
+server:  third_party/XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh
+profile: third_party/XPolicyLab/policy/LingBot_VLA2/robot_configs/yam_dual_absolute.yaml
+source:  third_party/XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/  # vendored upstream source
 check:   scripts/validation/check_lingbot_vla2_yam.py
 audit:   scripts/validation/lingbot_vla2_yam_audit.py
 prepare: scripts/datasets/prepare_lingbot_vla2_base_assets.py
@@ -124,7 +124,7 @@ ignored by Git and absent from a fresh clone. Deployment uses the policy recipes
 and checkpoint artifacts independently of those local training launchers.
 
 There is no second native server entry point. The standard launcher calls
-`XPolicyLab/setup_policy_server.py`, which loads `model.py` solely through `policy_name: LingBot_VLA2`.
+`third_party/XPolicyLab/setup_policy_server.py`, which loads `model.py` solely through `policy_name: LingBot_VLA2`.
 ManiMux uses it only through the shared WebSocket bridge.
 
 The shared flow bridge prepares normalized inputs and cached visual prefixes for
@@ -159,7 +159,7 @@ grippers. XPolicy preserves native output semantics; ManiMux selects the corresp
 does not silently convert relative actions into absolute ones.
 
 Official source is included directly under
-`XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/`. Its baseline is official revision
+`third_party/XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/`. Its baseline is official revision
 `951475ae1b1d87553e7dc47c97b53a3d695c0d13`, with YAM extensions tracked by XPolicyLab itself.
 LingBot no longer requires a nested submodule or personal fork.
 
@@ -188,14 +188,14 @@ values.
 These commands check files and YAML/JSON contracts only; they neither import the official Torch model nor start a service:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/check_lingbot_vla2_yam.py
 ```
 
 The checker reads explicit paths from the server configuration. Missing weight shards, training configuration, robot
 configuration, or norm stats produce `status: blocked` without loading a GPU model.
 
-The checker also reads `manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml` and requires:
+The checker also reads `manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml` and requires:
 
 - `policy.action_dt_s == 1 / native_hz`;
 - `policy.horizon_policy_steps == action_horizon`;
@@ -231,7 +231,7 @@ containing:
 All four feature groups use the official real-robot configuration's `meanstd`. This gives state inputs and action outputs
 correct YAM units, but these are **not the foundation checkpoint's paired post-training stats**,
 so they are only for base-capability diagnostics. For a new dataset or formal fine-tuning, use
-`XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/scripts/compute_norm_stats.py`
+`third_party/XPolicyLab/policy/LingBot_VLA2/lingbot_vla_v2/scripts/compute_norm_stats.py`
 to recompute statistics from the training data configuration, and store the generated `norm_stats.json` beside the checkpoint.
 
 ### Prepare base assets
@@ -240,12 +240,12 @@ These commands do not copy the 6B weights. They create relative symlinks in the 
 the loader-required `lingbotvla_cli.yaml` from the pinned official `real_robot.yaml`:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/datasets/prepare_lingbot_vla2_base_assets.py
 
 envs/yam/.venv/bin/python scripts/validation/check_lingbot_vla2_yam.py \
   --config manimux/configs/policy/lingbot-vla2/yam/base.yaml \
-  --infra-config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
+  --infra-config manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml
 ```
 
 The second command must report `status: ready`,
@@ -260,7 +260,7 @@ Like other models, LingBot uses an isolated `uv venv`, fixed at
 `uv sync` on it. Installation is performed by the operator:
 
 ```bash
-cd /home/ubuntu/manimux/XPolicyLab/policy/LingBot_VLA2
+cd {repo}/third_party/XPolicyLab/policy/LingBot_VLA2
 bash install.sh
 ```
 
@@ -270,13 +270,13 @@ hardware:
 
 ```bash
 # terminal 1: XPolicy foundation base server
-cd /home/ubuntu/manimux
-bash XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
+cd {repo}
+bash third_party/XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
   manimux/configs/policy/lingbot-vla2/yam/base.yaml
 
 # terminal 2: no-CAN forward probe
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
+  --config manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml
 ```
 
 Proceed to camera and dual-arm YAM experiments only after the probe returns finite `native_shape: [50, 14]` and
@@ -299,8 +299,8 @@ terminals in order; do not start a second LingBot server or RTC runtime concurre
 ### Terminal 1: LingBot model service
 
 ```bash
-cd /home/ubuntu/manimux
-bash XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
+cd {repo}
+bash third_party/XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
   manimux/configs/policy/lingbot-vla2/yam/base.yaml
 ```
 
@@ -308,9 +308,9 @@ After `Model initialized ...`, wait for the service to listen on `127.0.0.1:8501
 run the no-CAN probe in another terminal:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
+  --config manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml
 ```
 
 ### Terminal 2: Three-camera service
@@ -318,7 +318,7 @@ envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
 Do not start a duplicate if a camera service already uses `5555`:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 ```
 
@@ -329,7 +329,7 @@ Confirm all three RealSense cameras are open and both `REP bound` and `PUB bound
 ### Terminal 3: RoboGUI
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 .venv/bin/manimux-robogui --robot yam --host 0.0.0.0 --port 8086
 ```
 
@@ -349,9 +349,9 @@ done
 Run only when both report `ERROR-ACTIVE`:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/manimux run --once \
-  --config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
+  --config manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml
 ```
 
 After connection, the arms take the configured `3.5 s` to reach the initial pose, and return Home in `3.5 s` at completion. For normal shutdown,
@@ -386,8 +386,8 @@ Start the following in order only after the check reports `ready`:
 
 ```bash
 # terminal 1: model server
-cd /home/ubuntu/manimux
-bash XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
+cd {repo}
+bash third_party/XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
   manimux/configs/policy/lingbot-vla2/yam/finetune.yaml
 
 # terminal 2: cameras
@@ -395,7 +395,7 @@ bash XPolicyLab/policy/LingBot_VLA2/setup_eval_policy_server.sh \
 
 # terminal 3: ManiMux
 envs/yam/.venv/bin/manimux run --once \
-  --config manimux/configs/experiments/pick_red_object/lingbot-vla2/yam_lingbot_vla2_manimux.yaml
+  --config manimux/configs/experiments/{lingbot-study}/pick_red_object/manimux.yaml
 ```
 
 These fine-tuning commands still have no recorded GPU forward, server handshake, camera, CAN, or hardware evidence.
@@ -418,7 +418,7 @@ Keep historical data; do not resume RTC collection or regenerate its configs.
 
 ## Latest300ep compilation entry
 
-`manimux/configs/lists/lingbot-vla2-latest300ep-step30000.yaml` selects
+`manimux/configs/lists/{lingbot-study}.yaml` selects
 `use_compile: true` for Serial, Async, PAINT and AutoHorizon across five tasks.
 BID settings described below are retained historical configurations, not active study entries.
 
@@ -446,7 +446,7 @@ prefix and native velocity-prediction regions; sampling control remains in Pytho
 model forward, then applies the unchanged selector outside compilation. It does
 not attach a mutable Python hook to the compiled network.
 
-Use `manimux/configs/lists/lingbot-vla2-latest300ep-step30000-compiled-samplers.yaml`
+Use `manimux/configs/lists/{lingbot-compiled-samplers-study}.yaml`
 for the five tasks, each with PAINT and serial-scheduled adaptive AutoHorizon.
 The same list selects a single compiled model recipe for policy, camera and runtime;
 no experiment ID is needed. The new `paint32_compiled_sampler` and

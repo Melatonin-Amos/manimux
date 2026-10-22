@@ -10,15 +10,15 @@ Neither experiment inherits the other experiment's settings.
 
 The entry points are:
 
-- [step 20000 experiment](../../../../../manimux/configs/experiments/pi05-tianji-pack_plate-inter-hand-relative-step20000/pack_plate/rtc.yaml)
-- [step 59999 experiment](../../../../../manimux/configs/experiments/pi05-tianji-pack_plate-inter-hand-relative-step59999/pack_plate/rtc.yaml)
+- step 20000 experiment: `manimux/configs/experiments/{interhand-step20000-study}/pack_plate/rtc.yaml` (station-local; build both experiments like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml))
+- step 59999 experiment: `manimux/configs/experiments/{interhand-step59999-study}/pack_plate/rtc.yaml`
 - [step 20000 model recipe](../../../../../manimux/configs/policy/pi05/tianji/pack_plate/inter-hand-relative-step20000.yaml)
 - [step 59999 model recipe](../../../../../manimux/configs/policy/pi05/tianji/pack_plate/inter-hand-relative-step59999.yaml)
 - [frozen robot assembly and Home](../../../../../manimux/configs/embodiment/robot/tianji_taccap_inter_hand_relative.yaml)
 - Private station: `.local/tianji_pi05_pack_plate_inter_hand_relative.yaml`.
 
 The local station is already configured on this installation. It supplies device
-bindings, the checkpoint storage root `/home/jw/Desktop/policy`, and separate
+bindings, the checkpoint storage root `{tianji_workspace}/policy`, and separate
 model endpoints: `8572` for best and `8573` for final. The experiments reference
 this station explicitly and do not fall back to the shared station. On another
 installation, provide its replacement with `--local`.
@@ -113,7 +113,7 @@ representation are unchanged by the state variant.
 From the ManiMux repository root, select one experiment:
 
 ```bash
-export PI05_INTERHAND_EXPERIMENT=manimux/configs/experiments/pi05-tianji-pack_plate-inter-hand-relative-step20000/pack_plate/rtc.yaml
+export PI05_INTERHAND_EXPERIMENT=manimux/configs/experiments/{interhand-step20000-study}/pack_plate/rtc.yaml
 
 .venv/bin/python -m manimux.servers.pi05 \
   --experiment "$PI05_INTERHAND_EXPERIMENT" --check
@@ -125,7 +125,7 @@ experiment variable in each terminal:
 
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
   --experiment "$PI05_INTERHAND_EXPERIMENT"
 ```
 
@@ -136,7 +136,7 @@ PYTHONPATH="$PWD/manimux/embodiments/end_effector/taccap/sdk/TacCap-Gripper/pyth
 
 This installation uses the project's already-built TacCap 0.4.2 SDK. The explicit
 `PYTHONPATH` above replaces inherited SDK paths for this process. The failed
-runtime had inherited `/home/jw/Desktop/project/TacCap-Gripper/python`, loading
+runtime had inherited `{tianji_workspace}/project/TacCap-Gripper/python`, loading
 the external 0.1.9 native extension, whose `Motor` has no `get_model()` method.
 The root `.venv` does not have an independently installed TacCap package, so
 simply unsetting `PYTHONPATH` is insufficient here. The model-server command does
@@ -194,8 +194,8 @@ resources are available:
 
 ```bash
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
   -m XPolicyLab.policy.Pi_05.offline_pack_plate \
   --config manimux/configs/policy/pi05/tianji/pack_plate/inter-hand-relative-step20000.yaml \
-  --checkpoint /home/jw/Desktop/policy/pi05-pack-plate-inter-hand-relative-tracker-fixed-best-20000-final-59999/checkpoints/20000
+  --checkpoint {tianji_workspace}/policy/pi05-pack-plate-inter-hand-relative-tracker-fixed-best-20000-final-59999/checkpoints/20000
 ```

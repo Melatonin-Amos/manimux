@@ -67,7 +67,7 @@ left 6 joint radians + left gripper
 + right 6 joint radians + right gripper
 ```
 
-`XPolicyLab/policy/Pi_05/model.py` pads the `d` prefix rows to the model horizon only so the unchanged
+`third_party/XPolicyLab/policy/Pi_05/model.py` pads the `d` prefix rows to the model horizon only so the unchanged
 OpenPI input transform can process a full action tensor. `Policy.infer` places that tensor under the
 official `actions` transform key. The resulting normalized/padded model tensor becomes
 `paint_action_condition`; only the first `d` rows participate in Algorithm 1.
@@ -80,7 +80,7 @@ trajectory to EE space.
 
 ### XPolicy / Pi05 sampler
 
-`XPolicyLab/policy/Pi_05/openpi/src/openpi/models/pi0.py` owns:
+`third_party/XPolicyLab/policy/Pi_05/openpi/src/openpi/models/pi0.py` owns:
 
 - fresh Gaussian noise;
 - the naive forward pass;
@@ -89,12 +89,12 @@ trajectory to EE space.
 - prefix-only noise repainting;
 - the final ordinary forward pass.
 
-`XPolicyLab/policy/Pi_05/openpi/src/openpi/policies/policy.py` owns the official input/output
+`third_party/XPolicyLab/policy/Pi_05/openpi/src/openpi/policies/policy.py` owns the official input/output
 transforms and passes the normalized condition into the sampler.
 
 ### XPolicy adapter and wire
 
-`XPolicyLab/policy/Pi_05/model.py` exposes `get_action_paint` and validates `d x native_action_dim`.
+`third_party/XPolicyLab/policy/Pi_05/model.py` exposes `get_action_paint` and validates `d x native_action_dim`.
 The WebSocket server advertises `paint` only when that method exists. The request payload is:
 
 ```text
@@ -159,11 +159,11 @@ deliberately stricter than switching to an unanchored suffix.
 
 ## 7. Experiment Configuration
 
-The initial Pi05 experiment is:
+The initial Pi05 experiment (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) is:
 
 ```text
 server: manimux/configs/policy/pi05/yam/finetune-pick-red-ball-box-step1000.yaml
-infra:  manimux/configs/experiments/pick_red_object/pi05/yam_pi05_paint_step1000.yaml
+infra:  manimux/configs/experiments/{pi05-study}/pick_red_object/paint_step1000.yaml
 H:      50
 N:      10
 s:      12
@@ -183,8 +183,8 @@ at 30 Hz would consume about nine policy steps, violating `2d <= H` for `H=16`.
 Start the same step-1000 Pi05 model server used by the ordinary ManiMux baseline:
 
 ```bash
-cd /home/ubuntu/manimux
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
+cd {repo}
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
   manimux/servers/pi05.py \
   --config manimux/configs/policy/pi05/yam/finetune-pick-red-ball-box-step1000.yaml
 ```
@@ -192,18 +192,18 @@ XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
 After every server restart, warm the PAINT-specific JAX shape without camera, CAN or robot commands:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_paint_step1000.yaml
+  --config manimux/configs/experiments/{pi05-study}/pick_red_object/paint_step1000.yaml
 ```
 
 Record at least three warmed `round_trip_ms` values. Then complete the normal camera, CAN,
 achieved-state, start-pose and emergency-stop checks. Only the operator starts the real robot runtime:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/manimux run --once \
-  --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_paint_step1000.yaml
+  --config manimux/configs/experiments/{pi05-study}/pick_red_object/paint_step1000.yaml
 ```
 
 Stop with one `Ctrl-C` and wait for the configured Home return and partial episode save. Do not stop

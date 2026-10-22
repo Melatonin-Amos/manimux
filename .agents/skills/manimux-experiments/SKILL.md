@@ -76,7 +76,7 @@ Do not present the following checklist as one long form.
 | --- | --- |
 | Task and instruction | Ask what the robot should do. Preserve the checkpoint's expected prompt when known; do not silently translate or rewrite it. |
 | Success and partial credit | Ask what observable outcome counts as success and whether intermediate stages need scores. Obtain stage definitions and scores; distinguish achieved milestones from final-state scoring. |
-| Scene and starting pose | Establish layout/reference source, reset procedure and Home or a named robot pose. Reuse known presets; do not invent joint coordinates from prose or an image. |
+| Scene and starting pose | Establish layout/reference source, reset procedure and Home or a named robot pose. Reuse known presets; do not invent joint coordinates from prose or an image. Optional scene-restoration images: [reference images and Top overlay](references/reference-images.md). |
 | Trial boundaries | Establish timeout/stopping rules and what counts as an invalid trial versus a policy failure. |
 | Config list plan | Establish tasks, methods, layout subset and repetitions. Repeats create rollouts, not copied config files. |
 | Storage | Ask for the recording root when unknown, inspect existing progress, and explain resolved absolute output locations. Never silently change roots to bypass completed trials. |
@@ -108,10 +108,10 @@ The implemented protocol is documented in
 Do not create a second catalog format. Direct variant launches are unscored trials;
 formal scoring/progress requires `--config-list`.
 
-Publication is explicit: this checkout tracks only the `pi05-latest300ep-step30000`
-experiment group and its config list. Other studies remain local through `.gitignore`.
-Do not force-add ignored studies. If the user requests publishing another study,
-update the experiment and config list allowlists together and verify its dependencies.
+Publication is explicit: the public repository tracks only the example study
+(`experiments/example-yam-pi05/`, `lists/example-yam-pi05.yaml`). The user's own
+studies stay local through `.gitignore`; do not force-add them. Build new studies in
+the same layout: list → variants that inherit a runtime example and a task.
 
 ## Build a new real-robot experiment
 
@@ -201,6 +201,8 @@ uses K=32; old K=16 records are archival and must not be supplied as new launch 
   continuous versus end-hold seams, eligibility and per-episode aggregation.
 - [PRM](references/prm.md): optional judge profile, video manifest and GPU evaluation.
 - [Records](references/records.md): recorded fields and evidence limitations.
+- [DP chunk overlap](references/dp-chunk-overlap.md): offline HTML comparison of
+  recorded H32 UMI-DP asynchronous rollouts against train-time RTC.
 - [Manipulation scope](../../../manimux/evaluation/manipulation_scope/SKILL.md): only
   when drawing demonstration/inference coverage on camera frames.
 

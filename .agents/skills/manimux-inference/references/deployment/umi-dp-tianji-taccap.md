@@ -28,7 +28,7 @@ separate Python environments; see [Python environments](../../../manimux-station
 
 ```bash
 git submodule update --init --recursive XPolicyLab
-bash XPolicyLab/policy/UMI_DP/install.sh envs/umi_dp/.venv
+bash third_party/XPolicyLab/policy/UMI_DP/install.sh envs/umi_dp/.venv
 ```
 
 These paths name environments to prepare; cloning the repository does not create them.
@@ -90,11 +90,11 @@ Each recipe maps camera-server streams `taccap_left` / `taccap_right` to assembl
 runtime images to the component names; the other two retain their existing stream names.
 Their `policy.adapter.camera_map` matches the corresponding image names.
 
-Bind checkpoint identity in the model environment before launching a runtime:
+Bind checkpoint identity in the model environment before launching a runtime; the experiments below are station-local, built like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml):
 
 ```bash
 envs/umi_dp/.venv/bin/python -m manimux.servers.umi_dp \
-  --experiment manimux/configs/experiments/pass_ball/umi_dp/tianji_taccap_umi_dp.yaml \
+  --experiment manimux/configs/experiments/{umi-dp-study}/pass_ball/tianji_taccap_umi_dp.yaml \
   --bind-runtime-config .local/pass_ball/run.yaml
 ```
 
@@ -108,9 +108,9 @@ bound pair beside the private station file:
 
 ```bash
 envs/umi_dp/.venv/bin/python -m manimux.servers.umi_dp \
-  --experiment manimux/configs/experiments/pass_ball/umi_dp/tianji_taccap_umi_dp_diff_live.yaml \
+  --experiment manimux/configs/experiments/{umi-dp-study}/pass_ball/tianji_taccap_umi_dp_diff_live.yaml \
   --local manimux/configs/local/station.yaml \
-  --bind-runtime-config manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml
+  --bind-runtime-config manimux/configs/local/deployments/{deployment}.yaml
 ```
 
 The live recipe selects `tianji_control_live.yaml`, enables arm and end-effector commands,
@@ -124,8 +124,8 @@ camera or robot service. Existing output files are not overwritten.
 
 Binding writes the requested runtime path and a sibling whose name ends in
 `-server.yaml`. In the live example these are
-`manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml` and
-`manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live-server.yaml`:
+`manimux/configs/local/deployments/{deployment}.yaml` and
+`manimux/configs/local/deployments/{deployment}-server.yaml`:
 
 - The runtime file retains an absolute reference to the selected station. Runtime and
   `--experiment` service launches reread its current bindings; hardware identifiers
@@ -139,7 +139,7 @@ its expected identity matches the selected artifacts. Do not bypass identity che
 
 ## Pack-plate train-time RTC
 
-Use `manimux/configs/experiments/umi_dp-tianji-pack_plate-train_time_rtc/pack_plate/train_time_rtc.yaml`
+Use `manimux/configs/experiments/{pack-plate-study}/pack_plate/train_time_rtc.yaml`
 with the CalibWrist H32 prefix-trained pack-plate artifact. The recipe checks
 training prefix support `[0, 4, 5]`; the preset fixes `prefix_steps=5` for conditioned
 requests (`train_time_rtc.delay_estimator: fixed`, `fixed_prefix_steps: 5`). Initial
@@ -153,9 +153,9 @@ checkpoint, then validate and export the paired configs without starting service
 
 ```bash
 PYTHONPATH="$PWD:$PWD/XPolicyLab" envs/umi_dp/.venv/bin/python -m manimux.servers.umi_dp \
-  --experiment manimux/configs/experiments/umi_dp-tianji-pack_plate-train_time_rtc/pack_plate/train_time_rtc.yaml \
+  --experiment manimux/configs/experiments/{pack-plate-study}/pack_plate/train_time_rtc.yaml \
   --local manimux/configs/local/station.yaml \
-  --bind-runtime-config manimux/configs/local/deployments/pack_plate_train_time_rtc.yaml
+  --bind-runtime-config manimux/configs/local/deployments/{pack-plate-deployment}.yaml
 ```
 
 The template keeps arm and end-effector execution disabled. In an intended
@@ -172,21 +172,21 @@ Start the model in its environment:
 
 ```bash
 envs/umi_dp/.venv/bin/python -m manimux.servers.umi_dp \
-  --config manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live-server.yaml
+  --config manimux/configs/local/deployments/{deployment}-server.yaml
 ```
 
 Start the camera service on the computer with the wrist cameras:
 
 ```bash
 envs/tianji/.venv/bin/python -m manimux.servers.camera.server \
-  --config manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml
+  --config manimux/configs/local/deployments/{deployment}.yaml
 ```
 
 Start the hardware runtime:
 
 ```bash
 envs/tianji/.venv/bin/python -m manimux run \
-  --config manimux/configs/local/deployments/tianji_taccap_umi_dp_diff_live.yaml
+  --config manimux/configs/local/deployments/{deployment}.yaml
 ```
 
 Start RoboGUI after the runtime is listening:

@@ -6,13 +6,13 @@
 ## Red-ball step10000 with Pi-style RTC
 
 The paired experiment is
-`manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml`.
+`manimux/configs/experiments/{groot-study}/pick_red_object/rtc_joint_step10000.yaml` (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)).
 It selects `ziyang/gr00t-n17-yam-pick-red-ball-box-step10000`, not the robocurve
 baseline described in the historical section below. The recipe uses the
 checkpoint's three RGB views, absolute joint/gripper actions, 16 output steps,
 four denoising iterations and a 1/30-second action interval.
 
-The model implementation lives in `XPolicyLab/policy/GR00T_N17/`; ManiMux reuses
+The model implementation lives in `third_party/XPolicyLab/policy/GR00T_N17/`; ManiMux reuses
 its existing RTC strategy, WebSocket client, JointAdapter and smooth executor.
 `inference.rtc.beta` controls guided sampling, and
 `inference.rtc.min_execute_policy_steps` controls the execution window. Initial
@@ -26,21 +26,21 @@ Run each service in its own terminal from the repository root. Reuse an already
 running camera service only if it uses the same three-camera configuration.
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml
+  --config manimux/configs/experiments/{groot-study}/pick_red_object/rtc_joint_step10000.yaml
 ```
 
 ```bash
-cd /home/ubuntu/manimux
-XPolicyLab/policy/GR00T_N17/gr00t_n17/.venv/bin/python -m manimux.servers.groot \
-  --experiment manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml
+cd {repo}
+third_party/XPolicyLab/policy/GR00T_N17/gr00t_n17/.venv/bin/python -m manimux.servers.groot \
+  --experiment manimux/configs/experiments/{groot-study}/pick_red_object/rtc_joint_step10000.yaml
 ```
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python -m manimux run \
-  --config manimux/configs/experiments/pick_red_object/groot/yam_groot_rtc_joint_step10000.yaml
+  --config manimux/configs/experiments/{groot-study}/pick_red_object/rtc_joint_step10000.yaml
 ```
 
 The experiment enables real YAM execution when a rollout is started in the RoboGUI.
@@ -87,9 +87,9 @@ checkpoint did not complete the tested tasks; this is a policy-quality result, n
 
 | Item | Value |
 |---|---|
-| Official model code | `XPolicyLab/policy/GR00T_N17/gr00t_n17/` (vendored Isaac-GR00T N1.7) |
-| XPolicy adapter | `XPolicyLab/policy/GR00T_N17/model.py` |
-| Weights | `/home/ubuntu/manimux/checkpoints/finetuned/robocurve/gr00t-n1.7-yam-molmoact2` |
+| Official model code | `third_party/XPolicyLab/policy/GR00T_N17/gr00t_n17/` (vendored Isaac-GR00T N1.7) |
+| XPolicy adapter | `third_party/XPolicyLab/policy/GR00T_N17/model.py` |
+| Weights | `{repo}/checkpoints/finetuned/robocurve/gr00t-n1.7-yam-molmoact2` |
 | Release source | `robocurve/gr00t-n1.7-yam-molmoact2` |
 | Normalization | `new_embodiment` in the checkpoint's `statistics.json` |
 | cameras | `base_view`, `left_wrist_view`, `right_wrist_view` |
@@ -106,7 +106,7 @@ Pi05 stats, the original XPolicy ARX modality configuration, or the base model's
 This step does not import torch or load weights onto a GPU:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python manimux/servers/groot.py \
   --config manimux/configs/policy/groot/yam/finetune.yaml \
   --check
@@ -124,7 +124,7 @@ means only that local files are complete. Until actual inference completes,
 The documented local `gr00t_n17/.venv` has its dependencies installed. Use the same installer for a new checkout:
 
 ```bash
-cd /home/ubuntu/manimux/XPolicyLab/policy/GR00T_N17
+cd {repo}/third_party/XPolicyLab/policy/GR00T_N17
 bash install.sh
 ```
 
@@ -144,8 +144,8 @@ when the existing `envs/yam/.venv` already satisfies them.
 Terminal 1:
 
 ```bash
-cd /home/ubuntu/manimux
-XPolicyLab/policy/GR00T_N17/gr00t_n17/.venv/bin/python \
+cd {repo}
+third_party/XPolicyLab/policy/GR00T_N17/gr00t_n17/.venv/bin/python \
   manimux/servers/groot.py \
   --config manimux/configs/policy/groot/yam/finetune.yaml
 ```
@@ -155,9 +155,9 @@ images and the configured 14D YAM initial state, checking through the production
 `16 x 14` absolute joint chunk:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_box/yam_groot_manimux.yaml
+  --config manimux/configs/experiments/{groot-study}/pick_box/manimux.yaml
 ```
 
 A real GPU forward pass and WS round trip are complete only when the output reports `"status": "ok"`, `"action_space": "joint_position"`,
@@ -168,12 +168,12 @@ The first request may include CUDA/kernel/cache startup, so it cannot establish 
 and execute three times:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 
 for i in 1 2 3; do
   echo "===== Probe $i ====="
   envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-    --config manimux/configs/experiments/pick_box/yam_groot_manimux.yaml
+    --config manimux/configs/experiments/{groot-study}/pick_box/manimux.yaml
 done
 ```
 
@@ -189,7 +189,7 @@ Recorder, or hardware loop.
 In terminal 2, start the shared camera service. Do not start another instance if a service already uses `5555`:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 ```
 
@@ -205,9 +205,9 @@ Then run the read-only preflight. It connects to both physical arms and three ca
 disables `move_to_start_on_connect` and `home_on_close`, and sends no model actions:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/pi05_base_yam_preflight.py \
-  --config manimux/configs/experiments/pick_box/yam_groot_manimux.yaml
+  --config manimux/configs/experiments/{groot-study}/pick_box/manimux.yaml
 ```
 
 Verify every `contract_checks` value is `true`, then manually inspect the measured state, first action,
@@ -217,8 +217,8 @@ Pi05 name, but constructs the generic YAM policy/adapter from the supplied confi
 After clearing the workspace, keeping the emergency stop ready, and confirming preflight output, start default ManiMux:
 
 ```bash
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/pick_box/yam_groot_manimux.yaml
+cd {repo}
+envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/{groot-study}/pick_box/manimux.yaml
 ```
 
 After connecting, the hardware runtime takes `3.5 s` to move to the configured initial pose; normal `Ctrl-C` exit takes `3.5 s`

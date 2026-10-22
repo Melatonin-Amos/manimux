@@ -2,16 +2,16 @@
 
 ## Current deployment
 
-Official [ABC-DiT](https://abc.bot) (XL, 2.02B parameters) connects through `XPolicyLab/policy/ABC_DiT` and shared
+Official [ABC-DiT](https://abc.bot) (XL, 2.02B parameters) connects through `third_party/XPolicyLab/policy/ABC_DiT` and shared
 `xpolicylab_ws`. Like Pi05, it uses the generic `JointAdapter` without a dedicated ManiMux adapter.
 Model loading, image preprocessing, normalization, CLIP instruction encoding, and sampling reside in that policy directory. ManiMux owns cameras,
 observation mapping, scheduling, execution, and recording. For installation and `deploy.yml` keys, see
-[ABC_DiT README](../../../../../XPolicyLab/policy/ABC_DiT/README.md).
+[ABC_DiT README](../../../../../third_party/XPolicyLab/policy/ABC_DiT/README.md).
 
 | Parameter | Setting |
 | --- | --- |
 | Checkpoint | `checkpoints/pretrained/abc/abc_dit_xl_200k_model.pt` (official multitask pretraining for 200k steps, no local fine-tuning) |
-| SHA-256 | `79754ece…2ba175ddce41d018c9f51ba7`; identical to `~/sa/checkpoints/sapolicy/abc_dit_xl_200k_model.pt` |
+| SHA-256 | `79754ece…2ba175ddce41d018c9f51ba7`; identical to `{sapolicy_workspace}/checkpoints/sapolicy/abc_dit_xl_200k_model.pt` |
 | Normalization | XDOF `norm_stats` embedded in the checkpoint (state / actions z-score) |
 | Input | Three RGB views: `top` ← `d405_front`, `left` ← `d405_left`, `right` ← `d405_right`; 14D joint state |
 | Images | 640×480 → aspect-preserving bicubic resize with antialiasing to 224×168, 28 zero rows padded above and below, then ImageNet normalization |
@@ -36,8 +36,8 @@ Both configurations align execution with Pi05 Joint 30k (Direct executor, unrest
 --execute-chunk-dim=16 --prompt='throw plastic bottles in bin'
 ```
 
-- Serial: `manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/serial_200k.yaml`
-- RTC: `manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/rtc_200k.yaml`
+- Serial: `manimux/configs/experiments/{abc-dit-study}/put_bottles/serial_200k.yaml` (station-local; build the study like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml))
+- RTC: `manimux/configs/experiments/{abc-dit-study}/put_bottles/rtc_200k.yaml`
 - Model recipe: `manimux/configs/policy/abc_dit/yam/put-bottles/pretrained-200k.yaml`
 
 | Item | Pi05 Joint 30k | ABC-DiT 200k | Reason |
@@ -75,18 +75,18 @@ The station file needs `services.policy_abc_dit.endpoint: ws://127.0.0.1:8530` (
 ```bash
 # 1: Cameras
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config-list manimux/configs/lists/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
+  --config-list manimux/configs/lists/{abc-dit-study}.yaml --experiment-id put_bottles_rtc_200k
 
 # 2: RoboGUI
 envs/yam/.venv/bin/python -m manimux.robogui.dashboard --robot yam --host 127.0.0.1 --port 8086
 
 # 3: ABC-DiT model service (fp32 loading takes about 10 s; wait for the port before starting runtime)
 envs/abc/.venv/bin/python -m manimux.servers.abc_dit \
-  --experiment manimux/configs/experiments/abc_dit-yam-put-bottles-pretrained-200k/put_bottles/rtc_200k.yaml
+  --experiment manimux/configs/experiments/{abc-dit-study}/put_bottles/rtc_200k.yaml
 
 # 4: Runtime (for Serial, use yam_abc_dit_serial_200k.yaml; no model-service restart needed)
 envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/abc_dit-yam-put-bottles-pretrained-200k-standalone.yaml --experiment-id put_bottles_rtc_200k
+  --config-list manimux/configs/lists/{abc-dit-study}.yaml --experiment-id put_bottles_rtc_200k
 ```
 
 Adding `--check` to the model command resolves only paths and contracts without loading the model. Serial and RTC share the same model service and identity.
@@ -95,7 +95,7 @@ The 8 GB checkpoint is excluded from Git. On a new machine, copy it to `checkpoi
 the service verifies its SHA-256 at startup.
 
 `envs/abc` is ABC's isolated environment (Python 3.12, torch 2.11 cu128). On a new machine, create it with
-`bash XPolicyLab/policy/ABC_DiT/install.sh envs/abc/.venv`. CLIP assets live in
+`bash third_party/XPolicyLab/policy/ABC_DiT/install.sh envs/abc/.venv`. CLIP assets live in
 `~/.cache/clip/` (`ViT-B-32.pt`, `bpe_simple_vocab_16e6.txt.gz`) and download on first startup if missing.
 
 ## Validation record (2026-10-07, RTX 4090)

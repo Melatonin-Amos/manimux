@@ -97,7 +97,7 @@ run on identical observations and noise, framework parity remains unverified and
   `return_attention=True`.
 - `openpi/models_pytorch/autohorizon_official.py` holds the pinned official soft-pointer logic.
 - `openpi/policies/policy.py` calculates `execution_steps` before applying ordinary output transforms.
-- `XPolicyLab/policy/Pi_05/model.py` exposes `get_action_autohorizon` and returns the full decoded
+- `third_party/XPolicyLab/policy/Pi_05/model.py` exposes `get_action_autohorizon` and returns the full decoded
   `50 x 14` YAM joint chunk plus method metadata.
 
 Default, RTC, AAC and PAINT continue calling the existing sampler paths and do not request attention.
@@ -140,9 +140,11 @@ Smooth/MPC limits and Safety remain explicit outer real-robot layers and are not
 
 ## 5. Configuration
 
+The experiment is station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml).
+
 ```text
 server: manimux/configs/policy/pi05/yam/finetune-pick-red-ball-box-step1000.yaml
-infra:  manimux/configs/experiments/pick_red_object/pi05/yam_pi05_autohorizon_step1000.yaml
+infra:  manimux/configs/experiments/{pi05-study}/pick_red_object/autohorizon_step1000.yaml
 ```
 
 The server config is unchanged because AutoHorizon reuses the same JAX checkpoint and matching norm
@@ -153,8 +155,8 @@ stats. The infra config selects only `inference.algorithm: autohorizon` and disa
 Start the unchanged Pi05 server:
 
 ```bash
-cd /home/ubuntu/manimux
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
+cd {repo}
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
   manimux/servers/pi05.py \
   --config manimux/configs/policy/pi05/yam/finetune-pick-red-ball-box-step1000.yaml
 ```
@@ -162,9 +164,9 @@ XPolicyLab/policy/Pi_05/openpi/.venv/bin/python \
 Before any robot process, run the forward probe:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_autohorizon_step1000.yaml
+  --config manimux/configs/experiments/{pi05-study}/pick_red_object/autohorizon_step1000.yaml
 ```
 
 The probe must report a finite `50 x 14` native/canonical chunk and an `autohorizon` metadata block
@@ -200,9 +202,9 @@ Only after reviewing the forward output and completing the normal YAM physical p
 run:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/manimux run --once \
-  --config manimux/configs/experiments/pick_red_object/pi05/yam_pi05_autohorizon_step1000.yaml
+  --config manimux/configs/experiments/{pi05-study}/pick_red_object/autohorizon_step1000.yaml
 ```
 
 ## 7. Validation Matrix

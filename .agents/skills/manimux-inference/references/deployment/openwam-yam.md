@@ -3,7 +3,7 @@
 ## Scope and layout
 
 OpenWAM follows the XR1/Pi05 split: the policy and trainer live under
-`XPolicyLab/policy/OpenWAM`; ManiMux owns robot observations, FK/IK, scheduling,
+`third_party/XPolicyLab/policy/OpenWAM`; ManiMux owns robot observations, FK/IK, scheduling,
 execution constraints, recording and the robogui. There is no ManiMux OpenWAM
 JSON client or standalone OpenWAM service. The vendored upstream deployment
 modules remain because the XPolicy adapter uses their loader and preprocessor
@@ -13,7 +13,7 @@ For an upstream-only environment, install OpenWAM and its XPolicy extras into
 an already compatible Python environment:
 
 ```bash
-bash XPolicyLab/policy/OpenWAM/install.sh
+bash third_party/XPolicyLab/policy/OpenWAM/install.sh
 python -m pip install -e '.[xpolicylab]'
 ```
 
@@ -77,7 +77,7 @@ the robot:
 
 ```bash
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/openwam-custom/put_bottles/manimux_step30000.yaml \
+  --config manimux/configs/experiments/{openwam-study}/put_bottles/manimux_step30000.yaml \
   --instruction "Put the bottles into the bin."
 ```
 
@@ -87,7 +87,7 @@ After the probe succeeds, start the camera service and ManiMux runtime:
 envs/yam/.venv/bin/manimux-camera-server --camera-config manimux/configs/embodiment/sensor/cameras/realsense_3_views.yaml
 
 envs/yam/.venv/bin/manimux run \
-  --config-list manimux/configs/lists/openwam-custom-standalone.yaml --experiment-id put_bottles_manimux_step30000
+  --config-list manimux/configs/lists/{openwam-study}.yaml --experiment-id put_bottles_manimux_step30000
 ```
 
 ```bash
@@ -135,5 +135,20 @@ support boundary. Compiled RTC has synthetic CPU regression coverage, not a vali
 real-checkpoint CUDA performance claim. Existing eager experiment records retain
 their settings; use a distinct variant when comparing compilation.
 RTC can use native DiT caching via `dit_cache_modes: [default, rtc]`; PAINT and
-AutoHorizon remain uncached. See the [cache settings and commands](../../../../guideline.html#openwam-rtc-cache). CPU/dummy tests do not establish GPU inference,
+AutoHorizon remain uncached. See the [cache settings and commands](../../../../../guideline.html#openwam-rtc-cache). CPU/dummy tests do not establish GPU inference,
 training convergence, task success, or real-robot safety.
+
+## Local latest300 study (2026-10-20)
+
+`manimux/configs/lists/{openwam-latest300-study}.yaml` (station-local; build it like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) contains five
+tasks with Serial/Async only, 20/32 source steps, compilation and native DiT
+cache enabled for default sampling. The policy recipe is
+`manimux/configs/policy/openwam/yam/latest300ep-step60000-cache-compile.yaml`;
+use `envs/openwam/.venv/bin/python -m manimux.servers.policy --config-list ...`.
+Runtime and camera services use the same list with the YAM environment.
+Current chunk IK variants explicitly select `hold_last_valid` and use distinct
+`_ik_hold` recording identities. The shared YAM arm configuration currently sets `options.pos_threshold: 0.001` (1 mm) for position convergence and acceptance; orientation acceptance and joint limits remain unchanged.
+An offline replay accepted a previously rejected prediction with held rows; this
+is not physical validation or evidence of task success. Restart the model and
+runtime after normal Finish/Home to load these changes; never hot-swap hardware
+control to apply a configuration.

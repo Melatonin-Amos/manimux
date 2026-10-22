@@ -164,9 +164,9 @@ manimux/policies/xpolicylab/norm_stats/yam_60ep_ee_increment.json
 Generation command:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/datasets/compute_yam_aac_ee_stats.py \
-  --episodes /home/ubuntu/yam-abc-reproduce/data/episodes \
+  --episodes {yam_abc_reproduce}/data/episodes \
   --out manimux/policies/xpolicylab/norm_stats/yam_60ep_ee_increment.json
 ```
 
@@ -226,11 +226,11 @@ selection and runtime below are shared.
 
 | File | Change | Invariant |
 |---|---|---|
-| `XPolicyLab/policy/GR00T_N17/gr00t_n17/gr00t/model/gr00t_n1d7/gr00t_n1d7.py` | Accept `options.n_samples`, expand post-backbone features and alternate-model masks | Denoising equations and step count unchanged |
-| `XPolicyLab/policy/GR00T_N17/gr00t_n17/gr00t/policy/gr00t_policy.py` | Pass options and repeat state batch only for decoding | One observation only |
-| `XPolicyLab/policy/GR00T_N17/model.py` | Add `get_action_aac`, return `N` native action-step sequences | No entropy or robot FK inside model package |
-| `XPolicyLab/client_server/ws/model_server.py` | Advertise and dispatch `aac` capability | Non-AAC models cannot claim support |
-| `XPolicyLab/tests/unit/test_ws_infer_sampling.py` | Cover capability and dispatch | Wire behavior remains explicit |
+| `third_party/XPolicyLab/policy/GR00T_N17/gr00t_n17/gr00t/model/gr00t_n1d7/gr00t_n1d7.py` | Accept `options.n_samples`, expand post-backbone features and alternate-model masks | Denoising equations and step count unchanged |
+| `third_party/XPolicyLab/policy/GR00T_N17/gr00t_n17/gr00t/policy/gr00t_policy.py` | Pass options and repeat state batch only for decoding | One observation only |
+| `third_party/XPolicyLab/policy/GR00T_N17/model.py` | Add `get_action_aac`, return `N` native action-step sequences | No entropy or robot FK inside model package |
+| `third_party/XPolicyLab/client_server/ws/model_server.py` | Advertise and dispatch `aac` capability | Non-AAC models cannot claim support |
+| `third_party/XPolicyLab/tests/unit/test_ws_infer_sampling.py` | Cover capability and dispatch | Wire behavior remains explicit |
 
 Only `mode=aac` and `num_samples=N` cross the WebSocket boundary. Motion threshold, normalization and
 selectors are ManiMux concerns and are not sent to the model server.
@@ -246,9 +246,9 @@ selectors are ManiMux concerns and are not sent to the model server.
 | `manimux/runtime/aac.py` and `runtime/__init__.py` | Plain AAC parameters and required stats validation |
 | `scripts/datasets/compute_yam_aac_ee_stats.py` | Reproducible embodiment stats and motion calibration |
 | `scripts/validation/xpolicylab_yam_forward_probe.py` | Hardware-free AAC request and selected-horizon report |
-| `manimux/configs/experiments/pick_box/yam_groot_aac.yaml` | Complete GR00T/YAM experiment composition |
-| `manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac.yaml` | Robocurve 16-step Pi05/YAM composition |
-| `manimux/configs/experiments/pick_red_object/pi05/yam_pi05_aac_step1000.yaml` | Local 50-step Pi05/YAM composition |
+| `manimux/configs/experiments/{groot-study}/pick_box/aac.yaml` | Complete GR00T/YAM experiment composition (station-local; build these experiments like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml)) |
+| `manimux/configs/experiments/{pi05-study}/pick_red_object/aac.yaml` | Robocurve 16-step Pi05/YAM composition |
+| `manimux/configs/experiments/{pi05-study}/pick_red_object/aac_step1000.yaml` | Local 50-step Pi05/YAM composition |
 
 AAC waits until the selected chunk ends before submitting the next observation, matching the official
 synchronous rollout cadence. During model latency, the robot holds; AAC is not RTC.
@@ -312,7 +312,7 @@ inference:
 Commands:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python -m pytest -q \
   tests/unit/test_aac.py tests/unit/test_xpolicylab_plugins.py
 ```
@@ -351,9 +351,9 @@ git diff --check
 Operator starts the existing GR00T server using the GR00T environment, then runs:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python scripts/validation/xpolicylab_yam_forward_probe.py \
-  --config manimux/configs/experiments/pick_box/yam_groot_aac.yaml
+  --config manimux/configs/experiments/{groot-study}/pick_box/aac.yaml
 ```
 
 Pass criteria:
@@ -371,8 +371,8 @@ Only the operator runs hardware after the normal GR00T/YAM camera, achieved-stat
 checks in `.agents/skills/manimux-inference/references/deployment/gr00t-yam.md`:
 
 ```bash
-cd /home/ubuntu/manimux
-envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/pick_box/yam_groot_aac.yaml
+cd {repo}
+envs/yam/.venv/bin/manimux run --once --config manimux/configs/experiments/{groot-study}/pick_box/aac.yaml
 ```
 
 First run is an infrastructure characterization, not a task-success claim. Record:
@@ -404,7 +404,7 @@ repeated large oscillation or any mismatch between robogui and physical achieved
 
 - Stop the hardware runtime before stopping model/camera services.
 - Return to the previously verified default path with
-  `manimux/configs/experiments/pick_box/yam_groot_manimux.yaml`; it does not request AAC capability.
+  `manimux/configs/experiments/{groot-study}/pick_box/manimux.yaml`; it does not request AAC capability.
 - No checkpoint, checkpoint norm stats or robot driver files need to change when switching runtimes.
 - Do not delete AAC logs: they are required to explain why a selected horizon behaved differently.
 

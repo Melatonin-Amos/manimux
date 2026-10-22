@@ -2,17 +2,17 @@
 
 ## Current local study
 
-Use `manimux/configs/lists/xiaomi-xr1-bottles30k-ratio64-step-ik-all-tasks.yaml`
+Use `manimux/configs/lists/{xr1-step-ik-study}.yaml`
 for five-task Serial/Async/RTC/PAINT comparisons. The RTC-only subset is
-`manimux/configs/lists/xiaomi-xr1-bottles30k-rtc-beta10-step-ik-all-tasks.yaml`.
-Both reference the same concrete variants. These installation-local studies are ignored by Git.
+`manimux/configs/lists/{xr1-rtc-study}.yaml`.
+Both reference the same concrete variants. These installation-local studies are ignored by Git; build them like the [example study](../../../../../manimux/configs/lists/example-yam-pi05.yaml).
 The former base-checkpoint and beta-4.25 launch entries were retired;
 do not restore them as current experiment commands.
 
 | Setting | Current study |
 |---|---|
 | Checkpoint | YAM put-bottles post-training, step 30000; not the mixed-task latest300ep checkpoint |
-| Recipe | `manimux/configs/policy/xiaomi-xr1/yam/finetune-put-bottles-step30000.yaml` |
+| Recipe | `manimux/configs/policy/xiaomi-xr1/yam/{recipe}.yaml` (station-local; not published) |
 | Normalization | Checkpoint-paired `norm_stats.json` selected by that recipe |
 | Native horizon / denoising | 30 actions / 5 denoising steps |
 | Execution window | 18 source steps, explicitly selected for subsequent trials on 2026-10-20 |
@@ -38,7 +38,7 @@ six-bottle scores. Historical recordings and reference images remain intact.
 ## Chunk IK comparison (2026-10-20)
 
 For the operator-requested chunk IK trial, use
-`manimux/configs/lists/xiaomi-xr1-bottles30k-ratio64-chunk-ik-all-tasks.yaml`.
+`manimux/configs/lists/{xr1-chunk-ik-study}.yaml`.
 Its 20 variants retain the step study's checkpoint, sampling, timing, scoring and
 initial poses, with `execution.ik.mode: chunk`. Labels and recording variant IDs
 explicitly say chunk IK; historical step IK records stay separate.
@@ -76,26 +76,26 @@ The shared [user guide](../../../../../guideline.html) owns the launch workflow.
 For an RTC-only run, use one terminal per command:
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/xr1/.venv/bin/python -m manimux.servers.policy \
-  --config-list manimux/configs/lists/xiaomi-xr1-bottles30k-rtc-beta10-step-ik-all-tasks.yaml
+  --config-list manimux/configs/lists/{xr1-rtc-study}.yaml
 ```
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python -m manimux.servers.camera.server \
-  --config-list manimux/configs/lists/xiaomi-xr1-bottles30k-rtc-beta10-step-ik-all-tasks.yaml
+  --config-list manimux/configs/lists/{xr1-rtc-study}.yaml
 ```
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 .venv/bin/manimux-robogui --robot yam --host 0.0.0.0 --port 8086
 ```
 
 ```bash
-cd /home/ubuntu/manimux
+cd {repo}
 envs/yam/.venv/bin/python -m manimux run \
-  --config-list manimux/configs/lists/xiaomi-xr1-bottles30k-rtc-beta10-step-ik-all-tasks.yaml
+  --config-list manimux/configs/lists/{xr1-rtc-study}.yaml
 ```
 
 Only the operator performs Prepare, Warmup, Start and Finish. Do not restart an active

@@ -1,7 +1,7 @@
 # Pi05 + YAM deployment
 
 Use a current entry from the [experiment index](../../../../../manimux/configs/experiments/README.md)
-or adapt the [complete annotated example](../../../../../manimux/configs/examples/README.md).
+or adapt the [annotated Pi05 example study](../../../../../manimux/configs/experiments/example-yam-pi05/README.md).
 Retired red-object/screwdriver commands and local pilot measurements are not deployment
 presets; retrieve their historical revision only when investigating those runs.
 
@@ -9,8 +9,8 @@ presets; retrieve their historical revision only when investigating those runs.
 
 Prepare the YAM environment using the [component installation](../../../../../manimux/embodiments/arm/yam/README.md).
 For model dependencies, initialize XPolicyLab and follow its
-[Pi05 installation](../../../../../XPolicyLab/policy/Pi_05/README.md#installation).
-The model interpreter is normally `XPolicyLab/policy/Pi_05/openpi/.venv/bin/python`;
+[Pi05 installation](../../../../../third_party/XPolicyLab/policy/Pi_05/README.md#installation).
+The model interpreter is normally `third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python`;
 the hardware interpreter is normally `envs/yam/.venv/bin/python`. A fresh clone does
 not create either environment or supply weights. Install the intended ManiMux checkout
 into the environments that launch its modules.
@@ -37,8 +37,8 @@ For the current YAM joint recipes:
   [own adapter/runbook](pi05-yam-eef.md). Sharing a port does not make them compatible.
 
 Inspect current values rather than copying a historical timing/executor table.
-The joint-only bottle experiment is
-`manimux/configs/experiments/pi05-yam-put-bottles-joint-step30000/put_bottles/rtc_joint_step30000.yaml`;
+The public joint-only bottle example is
+`manimux/configs/experiments/example-yam-pi05/put_bottles/rtc.yaml`;
 its paired model recipe is selected by `policy_server.config`.
 
 ## Offline configuration and artifact checks
@@ -51,8 +51,8 @@ envs/yam/.venv/bin/python - <<'PYCODE'
 from pprint import pprint
 from manimux.collections import load_collection
 
-catalog = load_collection('manimux/configs/lists/pi05-latest300ep-step30000.yaml')
-config = catalog.choices['coin_rtc'].config
+catalog = load_collection('manimux/configs/lists/example-yam-pi05.yaml')
+config = catalog.choices['put_bottles_rtc'].config
 pprint({
     'task': config['run']['task_prompt'],
     'output_dir': config['run']['output_dir'],
@@ -72,8 +72,8 @@ Validate model artifact paths and print the resolved server contract without loa
 weights or listening on a port:
 
 ```bash
-XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
-  --config-list manimux/configs/lists/pi05-yam-put-bottles-joint-step30000-standalone.yaml --experiment-id put_bottles_rtc_joint_step30000 \
+third_party/XPolicyLab/policy/Pi_05/openpi/.venv/bin/python -m manimux.servers.pi05 \
+  --config-list manimux/configs/lists/example-yam-pi05.yaml --experiment-id put_bottles_rtc \
   --check
 ```
 
