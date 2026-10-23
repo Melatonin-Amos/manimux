@@ -6,7 +6,7 @@
 
 An open-source harness for real-world manipulation inference and experiment management.
 
-**[Website](https://sii-liulab.github.io/manimux/)** · **[Documentation](https://sii-liulab.github.io/manimux/guideline.html)** · **[Quick start](#quick-start)** · **[Demo](https://sii-liulab.github.io/manimux/#recordings)**
+**[Website](https://sii-liulab.github.io/manimux/)** · **[Documentation](https://sii-liulab.github.io/manimux/guideline.html)** · **[Quick start](#quick-start)** · **[Try GUI](#try-robogui-offline)** · **[中文](README.zh-CN.md)**
 
 [![Python: 3.11 | 3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-5C996B?style=flat&labelColor=45534B&logo=python&logoColor=white)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-5C996B?style=flat&labelColor=45534B)](LICENSE)
@@ -139,7 +139,12 @@ and [supported combinations](https://sii-liulab.github.io/manimux/guideline.html
 
 ## Quick start
 
-Try RoboGUI without hardware. Requires **Python 3.11 or 3.12** and [uv](https://docs.astral.sh/uv/).
+Requires **Python 3.11 or 3.12** and [uv](https://docs.astral.sh/uv/).
+
+### Try RoboGUI offline
+
+Launch the operator GUI with synthetic data — **no robot, camera, or model server required**.
+The key flags are `--robot yam --demo`.
 
 ```bash
 git clone https://github.com/SII-LiuLab/manimux.git
@@ -148,8 +153,22 @@ uv sync --dev
 uv run manimux-robogui --robot yam --demo --host 127.0.0.1 --port 8086
 ```
 
-Open **http://127.0.0.1:8086**. The preview uses synthetic data and does not connect
-to a robot. Model environments and checkpoints are needed only for real deployment.
+Then open **http://127.0.0.1:8086** in your browser.
+
+| Flag | Meaning |
+| --- | --- |
+| `--robot yam` | Use the YAM RoboGUI preset (also: `piper`, `aloha`, `tianji`) |
+| `--demo` | Drive the UI with synthetic joint/camera streams; no hardware I/O |
+| `--host` / `--port` | Bind address for the local web UI |
+
+Other presets (same environment, different port if needed):
+
+```bash
+uv run manimux-robogui --robot piper --demo --host 127.0.0.1 --port 8087
+uv run manimux-robogui --robot aloha --demo --host 127.0.0.1 --port 8087
+```
+
+Model environments and checkpoints are needed only for real-robot deployment below.
 
 ### Run on a robot: one command for all services
 
@@ -224,11 +243,10 @@ For agent-assisted development, use the [development skill](skills/manimux-devel
 
 <a id="developer-community"></a>
 
-<details>
-<summary>Join the developer WeChat group</summary>
+### Developer WeChat group
 
 Join the **ManiMux developer WeChat group** to discuss integrations, experiments,
-and contributions. Open the invitation below and scan it in WeChat.
+and contributions. Scan the invitation below in WeChat.
 
 <p align="center">
   <img src="assets/community/wechat-developers-20261021.jpg" alt="ManiMux developer WeChat group invitation QR code" width="300">
@@ -236,8 +254,6 @@ and contributions. Open the invitation below and scan it in WeChat.
 
 This invitation is valid until **October 28, 2026**. If it has expired, please open
 [a GitHub issue](https://github.com/SII-LiuLab/manimux/issues) to request an updated invitation.
-
-</details>
 
 ## Citation
 
