@@ -1,6 +1,7 @@
 """Runtime-owned, isolated IK process; no simulator or RoboDojo imports."""
 
 import argparse
+from contextlib import ExitStack
 from copy import deepcopy
 from numbers import Real
 from multiprocessing.connection import Client, Listener
@@ -85,42 +86,52 @@ class MotorIKClient:
     def __init__(self, config, log_path):
         self.config, self.log_path = validate_motor_config(config), Path(log_path)
         self.process = self.connection = self.folder = self.listener = self.log = None
+        self.pid = None
 
     def start(self):
-        timeout = self.config.get("startup_timeout_s", 900)
-        self.folder = tempfile.TemporaryDirectory(prefix="manimux-motor-ik-")
-        address = str(Path(self.folder.name) / "ik.sock")
-        key = os.urandom(32)
-        self.listener = Listener(address, family="AF_UNIX", authkey=key)
-        self.listener._listener._socket.settimeout(min(1., timeout))
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self.log = self.log_path.open("a")
-        package = str(Path(__file__).resolve().parents[2])
-        env = dict(os.environ, MANIMUX_MOTOR_IK_KEY=key.hex(), MANIMUX_MOTOR_PARENT=str(os.getpid()),
-                   PYTHONPATH=os.pathsep.join(filter(None, (package, os.environ.get("PYTHONPATH")))))
-        self.process = subprocess.Popen([self.config["worker_python"], "-u", "-m",
-            "manimux.runtime.motor_ik", "--socket", address],
-            env=env,
-            stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
-        started = time.monotonic()
-        while self.connection is None:
-            try:
-                self.connection = self.listener.accept()
-            except TimeoutError:
+        if self.folder is not None:
+            raise RuntimeError("runtime IK worker already started")
+        try:
+            timeout = self.config.get("startup_timeout_s", 900)
+            self.folder = tempfile.TemporaryDirectory(prefix="manimux-motor-ik-")
+            address = str(Path(self.folder.name) / "ik.sock")
+            key = os.urandom(32)
+            self.listener = Listener(address, family="AF_UNIX", authkey=key)
+            self.listener._listener._socket.settimeout(min(1., timeout))
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.log = self.log_path.open("a")
+            package = str(Path(__file__).resolve().parents[2])
+            env = dict(os.environ, MANIMUX_MOTOR_IK_KEY=key.hex(), MANIMUX_MOTOR_PARENT=str(os.getpid()),
+                       PYTHONPATH=os.pathsep.join(filter(None, (package, os.environ.get("PYTHONPATH")))))
+            self.process = subprocess.Popen([self.config["worker_python"], "-u", "-m",
+                "manimux.runtime.motor_ik", "--socket", address],
+                env=env,
+                stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
+            started = time.monotonic()
+            while self.connection is None:
+                try:
+                    self.connection = self.listener.accept()
+                except TimeoutError:
+                    if self.process.poll() is not None:
+                        raise RuntimeError("runtime IK worker exited during startup; see motor-ik.log")
+                    if time.monotonic() - started > timeout:
+                        raise TimeoutError("runtime IK worker connection timed out")
+            self.connection.send(self.config)
+            while not self.connection.poll(.1):
                 if self.process.poll() is not None:
-                    raise RuntimeError("runtime IK worker exited during startup; see motor-ik.log")
+                    raise RuntimeError("runtime IK worker exited during initialization; see motor-ik.log")
                 if time.monotonic() - started > timeout:
-                    raise TimeoutError("runtime IK worker connection timed out")
-        self.connection.send(self.config)
-        while not self.connection.poll(.1):
-            if self.process.poll() is not None:
-                raise RuntimeError("runtime IK worker exited during initialization; see motor-ik.log")
-            if time.monotonic() - started > timeout:
-                raise TimeoutError("runtime IK worker initialization timed out")
-        ready = self.connection.recv()
-        if not ready.get("ready"):
-            raise RuntimeError(f"runtime IK worker failed: {ready}")
-        self.pid = ready["pid"]
+                    raise TimeoutError("runtime IK worker initialization timed out")
+            ready = self.connection.recv()
+            if not ready.get("ready"):
+                raise RuntimeError(f"runtime IK worker failed: {ready}")
+            self.pid = ready["pid"]
+        except BaseException:
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
 
     def submit(self, job):
         self.connection.send(job)
@@ -147,24 +158,28 @@ class MotorIKClient:
             time.sleep(.001)
 
     def close(self):
-        if self.connection is not None:
-            self.connection.close()
-        if self.process is not None:
-            try:
-                os.killpg(self.process.pid, signal.SIGTERM)
+        process, connection = self.process, self.connection
+        folder, listener, log = self.folder, self.listener, self.log
+        self.process = self.connection = self.folder = self.listener = self.log = self.pid = None
+        with ExitStack() as cleanup:
+            if folder is not None:
+                cleanup.callback(folder.cleanup)
+            if log is not None:
+                cleanup.callback(log.close)
+            if listener is not None:
+                cleanup.callback(listener.close)
+            if connection is not None:
+                cleanup.callback(connection.close)
+            if process is not None:
                 try:
-                    self.process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    os.killpg(self.process.pid, signal.SIGKILL)
-                    self.process.wait()
-            except ProcessLookupError:
-                self.process.wait()
-        if self.listener is not None:
-            self.listener.close()
-        if self.log is not None:
-            self.log.close()
-        if self.folder is not None:
-            self.folder.cleanup()
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                except ProcessLookupError:
+                    process.wait()
 
 
 def main():
