@@ -433,7 +433,6 @@ class AsyncSimRuntime:
                 # Wall time only paces polling; missed wall ticks never burst.
                 poll_dt_ns = max(1, self.dt_ns // 4) if self._simulation_timeline else self.dt_ns
                 self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
-                health = self.client.health()
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
                 nonlocal request_seq, last_submitted, last_deadline, in_flight
