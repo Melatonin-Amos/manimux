@@ -103,15 +103,37 @@ class SmoothExecutor:
 
         Arms follow the caller's hold state. A close-latch gripper keeps its
         last command, so contact feedback cannot remove the commanded squeeze.
+        Decelerate using the same arm limits and preserve velocity history;
+        resetting it to zero would cause a discontinuity at every serial gap.
         """
         groups = copy_group_vector(state.groups)
         if self.uses_close_latch and self._previous is not None:
             for name, index in self._gripper["group_indices"].items():
                 groups[name][index] = self._previous[name][index]
-        self.reset(
-            RobotState(groups, now_ns, state.sequence),
-            preserve_gripper_latch=True,
-        )
+        velocities = None
+        if self._previous is not None:
+            held_grippers = {
+                name: groups[name][index]
+                for name, index in (self._gripper or {}).get("group_indices", {}).items()
+            }
+            groups, velocities = limit_step(
+                groups, self._previous, self._previous_velocity,
+                dt_s=self._dt_s, limits=self._limits,
+                gripper_indices=(self._gripper or {}).get("group_indices"),
+            )
+            # Apertures have their own units/limits; an inference hold must not
+            # apply the arm acceleration bound or relax a maintained squeeze.
+            for name, value in held_grippers.items():
+                index = self._gripper["group_indices"][name]
+                groups[name][index] = value
+                velocities[name][index] = 0.0
+        if velocities is None:
+            self.reset(RobotState(groups, now_ns, state.sequence))
+        else:
+            # A temporary inference gap is not Pause/Home. Keep captured
+            # release/grasp events and their arming state across chunk boundaries.
+            self._previous = copy_group_vector(groups)
+            self._previous_velocity = velocities
         return RobotCommand(groups, now_ns, plan_id=None)
 
     def reset(self, state: RobotState, *, preserve_gripper_latch: bool = False) -> None:
