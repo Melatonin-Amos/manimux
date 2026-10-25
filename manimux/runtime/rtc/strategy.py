@@ -151,6 +151,14 @@ class RtcInferenceStrategy:
         floor = self._min_execute_steps or max(1, horizon // 2)
         return int(min(max(floor, delay), horizon - delay))
 
+    def ready_for_observation(self, *, now_ns: int, timeline: ActionTimeline) -> bool:
+        """Query progress without collecting images or changing strategy state."""
+        if self._active_rows is None:
+            return True
+        horizon = len(self._active_rows)
+        executed = min(self._active_offset + timeline.cursor(now_ns), horizon)
+        return executed >= self.execution_horizon(horizon, max(self._delay_forecast))
+
     def build_submission(
         self,
         *,
@@ -179,7 +187,7 @@ class RtcInferenceStrategy:
         weights = None
         forecast_used = 0
         executed = 0
-        ready = active is None
+        ready = self.ready_for_observation(now_ns=now_ns, timeline=timeline)
         if active is not None:
             horizon = len(active)
             executed = min(self._active_offset + timeline.cursor(now_ns), horizon)
@@ -187,8 +195,7 @@ class RtcInferenceStrategy:
             if 2 * delay > horizon and not self._infeasible_reported:
                 self._infeasible_reported = True
                 self._infeasible_pending = (delay, horizon)
-            if executed >= self.execution_horizon(horizon, delay):
-                ready = True
+            if ready:
                 if delay <= executed <= horizon - delay:
                     condition, weights = inpainting_condition(
                         active,

@@ -140,6 +140,13 @@ class AsyncSimRuntime:
         self._instruction: str | None = None
         self._skip_unplanned_commands = bool(config["run"].get("skip_unplanned_commands", False))
         self._simulation_timeline = bool(config["run"].get("simulation_time_timeline", False))
+        self._inference_only_vision = bool(options.get("inference_only_vision", False))
+        if self._inference_only_vision and (
+            not self._simulation_timeline or self._virtual_delay_ns is None
+            or self.command_controller is not None
+            or callable(getattr(self.strategy, "observe_snapshot", None))
+        ):
+            raise ValueError("inference-only vision requires manual virtual timing without observation history")
         self._control_period_alignment = config["run"].get("control_period_alignment", "episode")
         if self._control_period_alignment not in {"episode", "plan"}:
             raise ValueError("run.control_period_alignment must be episode or plan")
@@ -195,10 +202,14 @@ class AsyncSimRuntime:
                 pass
             raise
 
-    def observe(self) -> ObservationSnapshot:
+    def observe(self, *, include_vision: bool = True) -> ObservationSnapshot:
         if not self._started:
             raise RuntimeError("start the AsyncSim runtime before observing")
-        snapshot = self.client.read_snapshot(self.streams)
+        streams = self.streams if include_vision else [
+            name for name in self.streams
+            if name not in self.sensor.streams.values() or name in self.observation_streams
+        ]
+        snapshot = self.client.read_snapshot(streams)
         if self._simulation_timeline:
             sim_ns = round(snapshot["sim_ts"] * 1_000_000_000)
             if self._timeline_origin_ns is None:
@@ -238,7 +249,7 @@ class AsyncSimRuntime:
                     raise ValueError("AsyncSim instruction must be a non-empty string")
                 self._instruction = value
         state = self.robot.use_snapshot(snapshot)
-        frames = self.sensor.use_snapshot(snapshot)
+        frames = self.sensor.use_snapshot(snapshot) if include_vision else {}
         if self._simulation_timeline:
             assert self._timeline_origin_ns is not None
             state_packet = snapshot["packets"][self.robot.state_stream]["packet"]
@@ -458,13 +469,27 @@ class AsyncSimRuntime:
                     in_flight = bool(pending_requests)
                     if len(pending_requests) >= max_pending_requests:
                         return False
+                request_state = RequestState(
+                    in_flight, last_submitted, last_deadline, multi_flight=self._multi_inflight,
+                )
+                if self._inference_only_vision:
+                    if not self.scheduler.ready(
+                        now_ns=now_ns, timeline=self.timeline, request_state=request_state,
+                        runtime_state=RuntimeState.RUNNING,
+                    ):
+                        return False
+                    # Manual stepping keeps this full snapshot at the same physical
+                    # instant as the servo state. Server capture/recording is unchanged.
+                    ready = getattr(self.strategy, "ready_for_observation", None)
+                    if ready is None or ready(now_ns=now_ns, timeline=self.timeline):
+                        observation = self.observe()
+                        if self._timeline_now_ns != now_ns:
+                            raise RuntimeError("simulation advanced while materializing policy vision")
                 submission = self.scheduler.build_submission(
                     self.strategy,
                     session_id=self.session_id, request_seq=request_seq + 1, now_ns=now_ns,
                     snapshot=observation, adapter=self.adapter, timeline=self.timeline,
-                    request_state=RequestState(
-                        in_flight, last_submitted, last_deadline, multi_flight=self._multi_inflight,
-                    ),
+                    request_state=request_state,
                     runtime_state=RuntimeState.RUNNING,
                 )
                 if submission is None:
@@ -535,7 +560,7 @@ class AsyncSimRuntime:
                     wait_for_poll()
                     health = self.client.health()
                     continue
-                observation = self.observe()
+                observation = self.observe(include_vision=not self._inference_only_vision)
                 now_ns = self._timeline_now_ns if self._simulation_timeline else self.clock.now_ns()
                 if self._simulation_timeline:
                     origin_ns = control_origin_ns()
@@ -643,7 +668,7 @@ class AsyncSimRuntime:
                             chunk = None
                 if self._simulation_timeline and chunk is not None:
                     # Decoding can take time; commit against current simulation time.
-                    observation = self.observe()
+                    observation = self.observe(include_vision=not self._inference_only_vision)
                     now_ns = self._timeline_now_ns
                 submitted_early = (
                     submit_if_ready(observation, now_ns)
@@ -726,6 +751,7 @@ class AsyncSimRuntime:
                     "wire_received_bytes": getattr(self.client, "wire_received_bytes", None),
                     "snapshot_payload_reuses": getattr(self.client, "payload_reuses", None),
                     "snapshot_payload_cache": self.config["robot"]["options"].get("cache_snapshot_payloads", False),
+                    "inference_only_vision": self._inference_only_vision,
                 },
                 "audit": {"episode_id": episode["episode_id"], "snapshots": self._snapshot_audit,
                           "actions": command_acks, "manimux_events": events,
