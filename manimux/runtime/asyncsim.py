@@ -6,8 +6,9 @@ import math
 import sys
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +71,18 @@ class AsyncSimRuntime:
         )
         robot = config["robot"]
         options = robot["options"]
-        self.client = client or AsyncSimClient(options["endpoint"], env_index=options.get("env_index", 0))
+        virtual_delay = options.get("simulation_response_delay_s")
+        if virtual_delay is not None and (
+            not math.isfinite(float(virtual_delay)) or float(virtual_delay) < 0 or self._multi_inflight
+        ):
+            raise ValueError("virtual response timing requires nonnegative delay and single-inflight")
+        self._virtual_delay_ns = None if virtual_delay is None else round(float(virtual_delay)*1e9)
+        self.client = client or AsyncSimClient(
+            options["endpoint"], env_index=options.get("env_index", 0),
+            timeout_s=options.get("rpc_timeout_s", 10.0),
+            compression=options.get("websocket_compression", "deflate"),
+            cache_snapshot_payloads=options.get("cache_snapshot_payloads", False),
+        )
         self.robot = AsyncSimRobot(
             self.client, robot["group_dims"], options["state_keys"],
             state_stream=options.get("state_stream", "proprio.joint_state"),
@@ -293,11 +305,10 @@ class AsyncSimRuntime:
                 now_ns, state, self.timeline.active_horizon(), self._last_command,
             )
         elif horizon is None:
-            if isinstance(self.executor, SmoothExecutor) and self.executor.braking_tracking:
-                command = self.executor.brake_hold(now_ns, state)
-            elif isinstance(self.executor, SmoothExecutor):
+            if isinstance(self.executor, SmoothExecutor):
                 held_state = type(state)(copy_group_vector(self._last_command), now_ns, state.sequence)
                 command = self.executor.hold(now_ns, held_state)
+                command.plan_id = "hold"
             else:
                 command = RobotCommand(copy_group_vector(self._last_command), now_ns, "hold")
         else:
@@ -333,6 +344,7 @@ class AsyncSimRuntime:
     def run_policy(
         self, *, seed: int | None = None, max_steps: int | None = None,
         timeout_s: float | None = None, recording_directory: str | Path | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Execute ManiMux's worker, adapter, strategy, timeline and executor."""
         worker = self.worker or PolicyWorkerClient(
@@ -344,6 +356,7 @@ class AsyncSimRuntime:
         if timeout_s is not None and timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
         started_wall = time.monotonic()
+        last_progress_wall = started_wall
         accepted = rejected = 0
         rejection_reasons: list[str] = []
         responses = 0
@@ -355,6 +368,8 @@ class AsyncSimRuntime:
         last_deadline = 0
         in_flight = False
         pending_requests: dict[int, tuple[int, int, RobotState]] = {}
+        delivery_times: dict[int, int] = {}
+        buffered_response: InferenceResponse | None = None
         max_pending_requests = (
             max(2, math.ceil(
                 self.config["policy"]["timeout_s"] * self.config["inference"]["observation_hz"]
@@ -364,6 +379,12 @@ class AsyncSimRuntime:
             worker.start()
             self._check_capabilities(worker)
             episode = self.start(seed=seed, recording_directory=recording_directory)
+            if self._virtual_delay_ns is not None:
+                capabilities = self.client.health()
+                if not capabilities.get("manual_step") or not self._simulation_timeline:
+                    raise ValueError("virtual response timing requires a manual-step simulation timeline")
+                physics_ns = round(capabilities["physics_dt_s"] * 1e9)
+                self.client.request("advance", {"steps": 1})
             self.strategy.reset()
             self.scheduler.reset()
             while True:
@@ -387,9 +408,32 @@ class AsyncSimRuntime:
                 return self._timeline_origin_ns
 
             def wait_for_poll() -> None:
+                nonlocal buffered_response, health
+                if self._virtual_delay_ns is not None:
+                    health_now = self.client.health()
+                    sim_ns = round(health_now["episode"]["sim_ts"]*1e9)
+                    next_ns = (sim_ns // self.dt_ns + 1)*self.dt_ns
+                    if delivery_times:
+                        due_ns = min(delivery_times.values()) - self._timeline_origin_ns
+                        due_ns = ((due_ns + physics_ns-1)//physics_ns)*physics_ns
+                        if due_ns <= sim_ns and buffered_response is None:
+                            while buffered_response is None:
+                                if not worker.is_alive or (
+                                    timeout_s is not None and time.monotonic()-started_wall > timeout_s
+                                ):
+                                    raise TimeoutError("model did not reach its virtual response event")
+                                buffered_response = worker.poll()
+                                if buffered_response is None:
+                                    time.sleep(.001)
+                        elif due_ns > sim_ns:
+                            next_ns = min(next_ns, due_ns)
+                    self.client.request("advance", {"steps": max(1, (next_ns-sim_ns+physics_ns-1)//physics_ns)})
+                    health = self.client.health()
+                    return
                 # Wall time only paces polling; missed wall ticks never burst.
                 poll_dt_ns = max(1, self.dt_ns // 4) if self._simulation_timeline else self.dt_ns
                 self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
+                health = self.client.health()
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
                 nonlocal request_seq, last_submitted, last_deadline, in_flight
@@ -436,10 +480,15 @@ class AsyncSimRuntime:
                         self.config["policy"]["timeout_s"] * 1_000_000_000
                     )
                 worker.submit_latest(prepared)
+                if self._virtual_delay_ns is not None:
+                    delivery_times[prepared.request_seq] = now_ns + self._virtual_delay_ns
                 self.scheduler.on_submitted(now_ns)
                 request_seq = prepared.request_seq
                 last_submitted = request_seq
-                last_deadline = prepared.deadline_ns
+                last_deadline = (
+                    now_ns + round(self.config["policy"]["timeout_s"] * 1e9)
+                    if self._virtual_delay_ns is not None else prepared.deadline_ns
+                )
                 if not self._multi_inflight:
                     pending_requests.clear()
                 request_state = prepared.observation.state
@@ -452,6 +501,7 @@ class AsyncSimRuntime:
                 )
                 in_flight = True
                 events.append({"kind": "inference_submitted", "request_seq": request_seq,
+                               "request_time_ns": now_ns,
                                "instruction": prepared.instruction,
                                "observation_time_ns": prepared.observation_time_ns,
                                "deadline_ns": prepared.deadline_ns,
@@ -465,6 +515,15 @@ class AsyncSimRuntime:
 
             while control_steps < max_steps:
                 loop_ticks += 1
+                if on_progress is not None and time.monotonic() - last_progress_wall >= 5:
+                    last_progress_wall = time.monotonic()
+                    on_progress({
+                        "wall_s": last_progress_wall-started_wall, "episode": health["episode"],
+                        "commands": control_steps, "responses": responses,
+                        "accepted_plans": accepted, "rejected_plans": rejected,
+                        "recent_rejections": rejection_reasons[-3:], "requests": request_seq,
+                        "in_flight": in_flight,
+                    })
                 if timeout_s is not None and time.monotonic() - started_wall > timeout_s:
                     raise TimeoutError("AsyncSim policy rollout exceeded its wall time limit")
                 if not worker.is_alive:
@@ -493,7 +552,15 @@ class AsyncSimRuntime:
                                        "count": slot - last_control_slot - 1,
                                        "sim_ts": health["episode"]["sim_ts"]})
                     last_control_slot = slot
-                response: InferenceResponse | None = worker.poll()
+                if self._virtual_delay_ns is None:
+                    response: InferenceResponse | None = worker.poll()
+                else:
+                    if buffered_response is None:
+                        buffered_response = worker.poll()
+                    ready_ns = None if buffered_response is None else delivery_times.get(buffered_response.request_seq)
+                    response = buffered_response if ready_ns is not None and now_ns >= ready_ns else None
+                    if response is not None:
+                        buffered_response = None
                 chunk = None
                 settings = None
                 if response is not None:
@@ -529,6 +596,7 @@ class AsyncSimRuntime:
                         or ("empty_action" if response.raw_action is None else None)
                     )
                     if invalid_reason is not None:
+                        delivery_times.pop(response.request_seq, None)
                         if same_session:
                             self.strategy.on_response_rejected(response)
                         rejected += 1
@@ -536,6 +604,16 @@ class AsyncSimRuntime:
                         events.append({"kind": "inference_rejected", "request_seq": response.request_seq,
                                        "reason": invalid_reason})
                     else:
+                        if self._virtual_delay_ns is not None:
+                            ready_ns = delivery_times.pop(response.request_seq)
+                            assert self._timeline_origin_ns is not None
+                            ready_sim = ready_ns-self._timeline_origin_ns
+                            ready_ns = self._timeline_origin_ns + ((ready_sim+physics_ns-1)//physics_ns)*physics_ns
+                            events.append({"kind": "virtual_response", "request_seq": response.request_seq,
+                                           "wall_finished_ns": response.finished_time_ns,
+                                           "simulation_finished_ns": ready_ns,
+                                           "response_delay_ns": self._virtual_delay_ns})
+                            response = replace(response, finished_time_ns=ready_ns)
                         try:
                             chunk = self.adapter.decode_action(
                                 response.raw_action,
@@ -645,6 +723,11 @@ class AsyncSimRuntime:
                 "backend_metadata": getattr(worker, "capabilities", PolicyCapabilities()).backend_metadata,
                 "inference_time_s": inference_ms / 1000.0,
                 "wall_elapsed_s": time.monotonic() - started_wall,
+                "transport": {
+                    "wire_received_bytes": getattr(self.client, "wire_received_bytes", None),
+                    "snapshot_payload_reuses": getattr(self.client, "payload_reuses", None),
+                    "snapshot_payload_cache": self.config["robot"]["options"].get("cache_snapshot_payloads", False),
+                },
                 "audit": {"episode_id": episode["episode_id"], "snapshots": self._snapshot_audit,
                           "actions": command_acks, "manimux_events": events,
                           **({"execution_contract": self.command_controller.audit()}
