@@ -24,6 +24,7 @@ from manimux.runtime.inference import (
     build_inference_strategy,
     prepare_strategy_chunk,
 )
+from manimux.runtime.native_chunk import NativeChunkExecution
 from manimux.runtime.safety import RuntimeState, SafetyGuard
 from manimux.runtime.scheduling import RequestScheduler
 from manimux.runtime.timeline import ActionTimeline, CommitResult
@@ -53,6 +54,9 @@ class AsyncSimRuntime:
         if config["policy"]["action_decoding"] != "inline" or config["inference"]["independent_group_decoding"]:
             raise ValueError("AsyncSim requires inline, non-independent action decoding")
         self.config = config
+        self._native_chunk_execution = config["run"].get("native_chunk_execution", False)
+        if type(self._native_chunk_execution) is not bool:
+            raise ValueError("run.native_chunk_execution must be boolean")
         self.clock = clock or SystemClock()
         self.session_id = f"asyncsim-{uuid.uuid4().hex}"
         self.worker = worker
@@ -64,12 +68,14 @@ class AsyncSimRuntime:
         )
         self.adapter.validate(config["robot"], config["policy"])
         factory = getattr(self.adapter, "create_command_controller", None)
-        self.command_controller = factory(config) if callable(factory) else None
+        self.command_controller = factory(config) if callable(factory) and not self._native_chunk_execution else None
         self._source_action_space = (
             self.command_controller.source_action_space if self.command_controller else "joint_position"
         )
         robot = config["robot"]
         options = robot["options"]
+        if self._native_chunk_execution:
+            self._source_action_space = options.get("command_action_space", "joint_position")
         self.client = client or AsyncSimClient(options["endpoint"], env_index=options.get("env_index", 0))
         self.robot = AsyncSimRobot(
             self.client, robot["group_dims"], options["state_keys"],
@@ -142,6 +148,19 @@ class AsyncSimRuntime:
             raise ValueError("simulation-time timeline currently requires Async, Serial or RTC inference")
         self._timeline_origin_ns: int | None = None
         self._timeline_now_ns: int | None = None
+        self._last_wire_snapshot: dict[str, Any] = {}
+        self._native_execution = NativeChunkExecution(
+            self.client, self.robot.group_dims, action_space=self._source_action_space,
+            ttl_s=self.robot.command_ttl_s,
+        ) if self._native_chunk_execution else None
+        if self._native_chunk_execution and (
+            config["executor"]["type"] != "direct" or config["executor"]["motion_limits"] is not None
+            or config["inference"]["blend_policy_steps"] != 0
+            or config["inference"]["handoff_skip_steps"] != 0
+            or config["inference"]["inference_schedule"] != "serial"
+            or config["inference"]["algorithm"] != "serial"
+        ):
+            raise ValueError("native chunk execution requires serial, exact unblended action rows")
 
     def start(
         self, *, seed: int | None = None, recording_directory: str | Path | None = None,
@@ -170,6 +189,12 @@ class AsyncSimRuntime:
             self._instruction = None
             self._timeline_origin_ns = None
             self._timeline_now_ns = None
+            if self._native_execution is not None:
+                self._native_execution.reset(episode["episode_id"])
+                health = self.client.health()
+                if health.get("command_action_space") != self._source_action_space:
+                    raise ValueError("AsyncSim native action space does not match the runtime")
+                self._native_execution.complete(health)
             if self.command_controller is not None:
                 self.command_controller.reset()
             self.client.subscribe(self.streams)
@@ -187,6 +212,7 @@ class AsyncSimRuntime:
         if not self._started:
             raise RuntimeError("start the AsyncSim runtime before observing")
         snapshot = self.client.read_snapshot(self.streams)
+        self._last_wire_snapshot = snapshot
         if self._simulation_timeline:
             sim_ns = round(snapshot["sim_ts"] * 1_000_000_000)
             if self._timeline_origin_ns is None:
@@ -278,6 +304,18 @@ class AsyncSimRuntime:
                     if commit_settings is None else commit_settings.blend_steps
                 ),
             )
+        if self._native_execution is not None:
+            if chunk is None or not result.accepted:
+                return result, {}
+            if result.trimmed_steps:
+                raise ValueError("native chunks cannot trim policy actions")
+            for index in range(chunk.horizon_steps):
+                self.safety.validate_command(RobotCommand(
+                    {name: rows[index] for name, rows in chunk.groups.items()}, now_ns, chunk.plan_id,
+                ))
+            ack = self._native_execution.submit(chunk, sim_ts=self._last_wire_snapshot["sim_ts"])
+            self._last_command = {name: rows[-1].copy() for name, rows in chunk.groups.items()}
+            return result, ack
         sample_ns = now_ns
         if self._control_period_alignment == "plan":
             active = self.timeline.active_horizon()
@@ -329,6 +367,9 @@ class AsyncSimRuntime:
                     elif value is not None and value != actual[key]:
                         raise RuntimeError(f"policy backend identity mismatch at {path}.{key}")
             compare(deepcopy(expected), capabilities.backend_metadata, "backend")
+
+    def native_execution_complete(self, health: dict[str, Any]) -> bool | None:
+        return None if self._native_execution is None else self._native_execution.complete(health)
 
     def run_policy(
         self, *, seed: int | None = None, max_steps: int | None = None,
@@ -393,6 +434,11 @@ class AsyncSimRuntime:
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
                 nonlocal request_seq, last_submitted, last_deadline, in_flight
+                if self._native_chunk_execution and control_steps >= max_steps:
+                    return False
+                execution_complete = self.native_execution_complete(health)
+                if execution_complete is False:
+                    return False
                 if self._multi_inflight:
                     # Coalesced IPC uploads and server acknowledgements may never
                     # reach this loop. Retire their contexts without losing a live anchor.
@@ -423,6 +469,7 @@ class AsyncSimRuntime:
                         in_flight, last_submitted, last_deadline, multi_flight=self._multi_inflight,
                     ),
                     runtime_state=RuntimeState.RUNNING,
+                    execution_complete=execution_complete,
                 )
                 if submission is None:
                     return False
@@ -452,6 +499,9 @@ class AsyncSimRuntime:
                 )
                 in_flight = True
                 events.append({"kind": "inference_submitted", "request_seq": request_seq,
+                               **({"execution_before_inference": deepcopy(health["action_chunk"]),
+                                   "input_snapshot_ts": self._last_wire_snapshot["sim_ts"]}
+                                  if self._native_execution is not None else {}),
                                "instruction": prepared.instruction,
                                "observation_time_ns": prepared.observation_time_ns,
                                "deadline_ns": prepared.deadline_ns,
@@ -463,12 +513,16 @@ class AsyncSimRuntime:
                                **submission.event_fields})
                 return True
 
-            while control_steps < max_steps:
+            while control_steps < max_steps or (
+                self._native_execution is not None and not self.native_execution_complete(health)
+            ):
                 loop_ticks += 1
                 if timeout_s is not None and time.monotonic() - started_wall > timeout_s:
                     raise TimeoutError("AsyncSim policy rollout exceeded its wall time limit")
                 if not worker.is_alive:
                     raise RuntimeError("policy worker stopped")
+                if self._native_chunk_execution and health.get("last_error"):
+                    raise RuntimeError(f"native chunk simulator failed: {health['last_error']}")
                 state = health["episode"]["state"]
                 if state not in {"ready", "running", "safe_hold"}:
                     break
@@ -479,7 +533,7 @@ class AsyncSimRuntime:
                     continue
                 observation = self.observe()
                 now_ns = self._timeline_now_ns if self._simulation_timeline else self.clock.now_ns()
-                if self._simulation_timeline:
+                if self._simulation_timeline and not self._native_chunk_execution:
                     origin_ns = control_origin_ns()
                     if origin_ns != last_control_origin:
                         last_control_origin = origin_ns
@@ -572,7 +626,8 @@ class AsyncSimRuntime:
                     submit_if_ready(observation, now_ns)
                     if self._simulation_timeline and chunk is None else False
                 )
-                if self._skip_unplanned_commands and chunk is None and self.timeline.sample(now_ns) is None:
+                if ((self._native_chunk_execution and chunk is None)
+                        or (self._skip_unplanned_commands and chunk is None and self.timeline.sample(now_ns) is None)):
                     result = None
                 else:
                     try:
