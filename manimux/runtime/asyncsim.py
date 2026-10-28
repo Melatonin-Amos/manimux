@@ -76,7 +76,9 @@ class AsyncSimRuntime:
         options = robot["options"]
         if self._native_chunk_execution:
             self._source_action_space = options.get("command_action_space", "joint_position")
-        self.client = client or AsyncSimClient(options["endpoint"], env_index=options.get("env_index", 0))
+        if options.get("env_index", 0) != 0:
+            raise ValueError("AsyncSim supports only env_index=0")
+        self.client = client or AsyncSimClient(options["endpoint"])
         self.robot = AsyncSimRobot(
             self.client, robot["group_dims"], options["state_keys"],
             state_stream=options.get("state_stream", "proprio.joint_state"),
