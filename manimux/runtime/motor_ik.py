@@ -40,6 +40,9 @@ def validate_motor_config(config):
             raise ValueError(f"{key} must be finite and positive")
     if not isinstance(config.get("worker_python"), str) or not config["worker_python"]:
         raise ValueError("motor control requires worker_python")
+    visible = config.get("cuda_visible_devices")
+    if visible is not None and (not isinstance(visible, str) or not visible.strip() or "\n" in visible):
+        raise ValueError("cuda_visible_devices must be an explicit non-empty device list")
     return config
 
 
@@ -103,6 +106,8 @@ class MotorIKClient:
             package = str(Path(__file__).resolve().parents[2])
             env = dict(os.environ, MANIMUX_MOTOR_IK_KEY=key.hex(), MANIMUX_MOTOR_PARENT=str(os.getpid()),
                        PYTHONPATH=os.pathsep.join(filter(None, (package, os.environ.get("PYTHONPATH")))))
+            if self.config.get("cuda_visible_devices") is not None:
+                env["CUDA_VISIBLE_DEVICES"] = self.config["cuda_visible_devices"]
             self.process = subprocess.Popen([self.config["worker_python"], "-u", "-m",
                 "manimux.runtime.motor_ik", "--socket", address],
                 env=env,

@@ -31,6 +31,20 @@ class RoboDojoMotorController:
         if robot["group_dims"] != {spec["prefix"] + "_arm": 8 for spec in self.robots}:
             raise ValueError("motor control requires physical six-joint/two-finger groups")
         self.planner = planner
+        self._identity = None
+        self._control_epoch = 0
+        self._ik_seq = 0
+        self.reset()
+
+    def bind_identity(self, env_index, episode_id, generation, *, cuda_visible_devices=None):
+        if (isinstance(env_index, bool) or not isinstance(env_index, int) or env_index < 0
+                or isinstance(generation, bool) or not isinstance(generation, int) or generation < 0
+                or not isinstance(episode_id, str) or not episode_id):
+            raise ValueError("invalid motor control environment identity")
+        self._identity = {"env_index": env_index, "episode_id": episode_id, "generation": generation}
+        if cuda_visible_devices is not None:
+            self.config["cuda_visible_devices"] = str(cuda_visible_devices)
+            validate_motor_config(self.config)
         self.reset()
 
     def start(self, recording_directory=None):
@@ -41,6 +55,8 @@ class RoboDojoMotorController:
         self.planner.start()
 
     def reset(self):
+        self._control_epoch += 1
+        self._pending_identity = None
         self.pending = None
         self.current = None
         self.requested = None
@@ -58,6 +74,11 @@ class RoboDojoMotorController:
         key = (source.plan_id, int(row)) if active else None
         if self.pending is not None:
             solved = self.planner.poll()
+            if (solved is not None and self._identity is not None
+                    and solved.get("identity") != self._pending_identity):
+                self.events.append({"kind": "stale_ik_discarded", "time_ns": now_ns,
+                                    "identity": solved.get("identity")})
+                solved = None
             if solved is not None:
                 if (solved["plan_id"], solved["source_index"]) != self.pending[:2]:
                     raise RuntimeError("IK result does not match the pending control row")
@@ -68,6 +89,7 @@ class RoboDojoMotorController:
                     self.events.append({"kind": "late_ik_discarded", "time_ns": now_ns,
                                         "plan_id": solved["plan_id"], "source_index": solved["source_index"]})
                 self.pending = None
+                self._pending_identity = None
             elif time.monotonic() - self.pending[2] > self.config.get("solve_timeout_s", 300):
                 raise TimeoutError("runtime motor IK exceeded its solve deadline")
         if active and key != self.requested and self.pending is None:
@@ -75,6 +97,11 @@ class RoboDojoMotorController:
                    "seed_time_ns": state.monotonic_ns,
                    "groups": {name: rows[row].tolist() for name, rows in source.groups.items()},
                    "measured": deepcopy(measured), "held": deepcopy(fallback)}
+            if self._identity is not None:
+                self._ik_seq += 1
+                self._pending_identity = {**self._identity, "control_epoch": self._control_epoch,
+                                          "ik_seq": self._ik_seq}
+                job["identity"] = dict(self._pending_identity)
             self.planner.submit(job)
             self.pending = (*key, time.monotonic())
             self.requested = key
@@ -91,8 +118,13 @@ class RoboDojoMotorController:
                              "interpolation_tick": tick})
         return RobotCommand(groups, now_ns, None if source is None else source.plan_id)
 
+    def check_timeout(self):
+        if self.pending is not None and time.monotonic() - self.pending[2] > self.config.get("solve_timeout_s", 300):
+            raise TimeoutError("runtime motor IK exceeded its solve deadline")
+
     def audit(self):
         return {"controller_location": "manimux_runtime", "manimux_ik": True,
+                "identity": self._identity,
                 "manimux_interpolation": True, "robodojo_interpolation": False,
                 "control_hz_target": 250, "policy_action_hz": 25,
                 "physics_during_inference": True, "physics_during_ik": True,
