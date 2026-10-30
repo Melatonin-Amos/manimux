@@ -69,6 +69,14 @@ def fingerprint(config: dict) -> str:
     # actions or scoring. Preserve its value in manifests, not scientific identity.
     if isinstance(fields.get("policy"), dict):
         fields["policy"].get("options", {}).pop("warmup_request_timeout_s", None)
+    # Xiaomi's mask is consumed only by RTC guidance. Enabling it on a shared
+    # server must not hide completed ordinary/PAINT trials from the same study.
+    if ((fields.get("policy_server") or {}).get("policy_name") == "Xiaomi_Robotics_1"
+            and config.get("inference", {}).get("algorithm") in {"serial", "async", "paint"}):
+        fields["policy_server"].pop("rtc_mask_padding", None)
+        fields.get("policy", {}).get("expected_backend", {}).get("model", {}).pop(
+            "rtc_mask_padding", None
+        )
     fields["inference"] = inference_parameters(
         executor=config.get("executor", {}), **config.get("inference", {})
     )
@@ -125,6 +133,11 @@ def pose_configuration(base: dict, pose_id: str) -> dict:
         config["experiment"]["variant"] = variant
         config["collection"].update(variant=variant, conditions_sha256=fingerprint(config),
                                      history_rejected=[])
+        roots = [Path(path).with_name(Path(path).name + "__pose_" + pose_id)
+                 for path in base["collection"].get("history_roots", [])]
+        sessions, rejected = checked_history(config, roots)
+        config["run"]["history_sessions"] = sessions
+        config["collection"]["history_rejected"] = rejected
     for manifest in config["run"]["output_dir"].glob("session-*/session-manifest.json"):
         if not _has_rollout_records(manifest.parent):
             continue
@@ -299,6 +312,7 @@ def load_collection(
             "variant": variant,
             "conditions_sha256": condition_hash,
             "history_rejected": rejected,
+            "history_roots": [str((root / p).resolve()) for p in history],
         }
         label = entry.get("label", config["robogui"]["policy_label"] or choice_id)
         if not isinstance(label, str) or not label.strip():
