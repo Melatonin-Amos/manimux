@@ -129,7 +129,7 @@ RoboGUI provides the operator workspace.
           <li><a href="https://sii-liulab.github.io/manimux/guideline.html#paint">PAINT</a> ✅</li>
           <li><a href="https://sii-liulab.github.io/manimux/guideline.html#aac">AAC</a> ✅</li>
           <li><a href="https://sii-liulab.github.io/manimux/guideline.html#autohorizon">AutoHorizon</a> ✅</li>
-          <li><a href="https://sii-liulab.github.io/manimux/guideline.html#chunktrust">ChunkTrust AHS</a> ✅ (serial / RTC; requires trace support; RTC backend validation pending)</li>
+          <li><a href="https://sii-liulab.github.io/manimux/guideline.html#chunktrust">ChunkTrust AHS</a> ✅</li>
           <li><a href="https://sii-liulab.github.io/manimux/guideline.html#bid-backward">BID (backward-only)</a> ✅</li>
         </ul>
       </td>
