@@ -61,6 +61,14 @@ Matching method names alone is insufficient. Fail explicitly for unsupported mod
   lifecycle. Select VLA workers/adapters through the ordinary experiment; do not
   create a second hardware or experiment lifecycle. RPent uses its existing unified
   Toolkit; other Harnesses may use different adapters. See [RPent](references/rpent.md).
+- All action IK paths must consume `execution.ik.failure_policy` through the shared
+  IK failure implementation, including chunk/step, analytic/differential and inline/
+  process decoding. Default `hold_last_valid` holds the complete arm-and-tool command
+  at a failed point, preserves time and retries later targets; `reject` rejects the
+  chunk or raises before the step command. Never let a model adapter advance the
+  gripper on a failed arm solve or hide its own failure default. Preserve solver
+  acceptance checks, record substitutions as experiment evidence, and test failure
+  followed by recovery with a changing gripper. See the [IK execution contract](references/runtime-config.md#chunk-ik-and-execution-time-ik).
 - Keep deployment constants in YAML. New capability needs an explicit protocol when
   it cannot fit the existing one; do not hide extra tool coordinates or weaken IK to
   imitate a supported interface.

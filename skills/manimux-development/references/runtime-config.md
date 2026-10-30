@@ -711,6 +711,90 @@ chunk decoding, while `step` keeps an absolute TCP trajectory until each control
 tick. `execution.ik.budget_ms` is optional and defaults to half the control period.
 It must be positive and less than one control period.
 
+`execution.ik.failure_policy` is shared by all action IK adapters and the step-IK
+execution pipeline. It must not be reimplemented as a model-specific option:
+
+- `hold_last_valid` (default): retain the failed group's complete previous accepted
+  command, including its gripper. Retain the row and timestamp, discard the failed
+  candidate as a seed, and attempt subsequent targets. The first failure holds the
+  runtime-selected seed. An entirely unsuccessful chunk is an explicitly recorded
+  hold, not evidence that IK solved any targets.
+- `reject`: a chunk decoder raises and no part of that chunk is committed; step IK
+  raises before issuing a command for that tick. Existing runtime error handling
+  owns the resulting stop/hold lifecycle; this setting does not enable recovery.
+
+Chunk IK handles each configured decode group independently. Step IK retains its
+atomic all-group execution contract: failure of either arm holds both complete
+arm/gripper commands. These are command targets; downstream interpolation and
+executor limits still govern motion and do not prove measured physical stillness.
+For differential IK with dense substeps, accept the whole target interval or replace
+all of its partial samples with the previous valid command, preserve its duration,
+and reset solver history before the next target. Bounded decoders continue after
+ordinary point failures while budget remains; after budget expiry they hold the
+remaining rows, or reject under `reject`.
+
+The adapter factory receives the resolved execution settings; process workers receive
+the same failure policy as inline decoding. The old `policy.adapter.ik_failure_policy`
+is rejected with a migration message. Record per-group `ik` metadata (failure policy,
+solved/failed counts, failed indices and reasons) through normal experiment recording;
+do not add adapter-owned debug logs. Counts include attempted handoff lead-in knots
+when present; they are decode-sequence indices, not necessarily original model rows.
+Malformed input, nonfinite successful solutions and coordinate-mapping errors remain
+errors in both modes. Raw mathematical IK still returns convergence status. Observation
+conversion and initialization checks must not fabricate observations by applying an
+action hold policy. Joint-output models without an IK conversion are unaffected.
+
+### YAM DLS chunk IK
+
+XR-1 and OpenWAM YAM select the chunk solver with `policy.adapter.ik_backend: mink | dls`,
+like Tianji's `analytic | diff`. `mink` (default) is the strict i2rt/mink solve.
+`dls` (damped least squares) solves each output step from the previous accepted joints:
+
+```
+min_q |pose error|^2 + c^2 * |q - q_previous|^2,  |q - q_previous| <= max_joint_step_rad
+```
+
+The box keeps one IK branch. Near a singularity the motion cost declines large swings
+that buy little pose: j1 when a target passes the base yaw axis at lift-off from Home,
+and j4/j6 when the wrist reaches j5 ~ +-pi/2. A residual within `max_position_error_m` /
+`max_rotation_error_rad` is accepted and recorded as `approximations` in the `ik`
+metadata. A larger residual is an ordinary IK failure for `execution.ik.failure_policy`.
+It is chunk IK only, and `execution.ik.mode: step` rejects it.
+
+Two DLS methods, selected by profile:
+
+| Method | Profile | Cost `c` | Accuracy (teleop replay, p95) |
+|---|---|---|---|
+| DLS | `yam_dls_ik.yaml` | `joint_motion_cost` (0.1) on every step | 2.7 mm overall, 1.3 mm near gripper events |
+| DLS gate | `yam_dls_gate_ik.yaml` | `joint_motion_cost` scaled by `singularity_gate` | 0.7 mm overall, 0.06 mm near gripper events |
+
+```yaml
+policy:
+  adapter:
+    ik_backend: dls
+    dls_ik:
+      config: ../../../embodiment/arm/yam_dls_gate_ik.yaml   # or yam_dls_ik.yaml
+```
+
+`singularity_gate: [low, high]` compares the seed's smallest 6D Jacobian singular value
+`sigma_min` with the gate: full cost below `low`, none above `high` (exact tracking like
+`mink`), linear in between. On the reference station both methods damp lift-off and the
+wrist limit equally; the gate removes the lag on ordinary motion.
+
+The gate is station data. `sigma_min` depends on the TCP site and on where the tasks
+place the arm, so derive it from that station's own demonstrations or rollouts:
+
+```bash
+python -m scripts.setup.dls_gate_calibrate {teleop_dir} [--ee-site grasp_site]
+```
+
+It reads `*joint_pos*.npy` arm trajectories or ManiMux `data.zarr` recordings and
+suggests `low` = 10th percentile of `sigma_min`, `high` = 2 x `low`. Override it in the
+experiment (`dls_ik: {config: ..., singularity_gate: [low, high]}`), then check lift-off
+from the start pose and the wrist-limit phase on the robot before comparing methods.
+The shipped `[0.03, 0.06]` comes from the reference station's 80 teleop arm
+trajectories and is not a default for other stations.
+
 The step path is adapter pose decoding -> pose ActionTimeline -> one sampled
 pose per group -> ExecutionPipeline (optional PoseSpeedLimiter -> StepIKResolver
 -> DirectExecutor) -> existing safety/send path.
@@ -725,8 +809,9 @@ The execution stages are built once and IK is warmed before the control loop. IK
 the current control tick's measured joint state and solves only the current target.
 The pipeline receives the last sent command separately for failure holds and
 optional target limiting; the IK solver does not choose fallback commands. A shared budget
-covers all arms. If any arm fails, is nonfinite, or returns late, hold all groups
-at the last command and reset executor velocity history. `step_ik_hold` records
+covers all arms. Under the default failure policy, if any arm fails or returns late,
+hold all groups including their grippers at the last command and reset executor
+velocity history. Nonfinite or incorrectly shaped successful solutions are errors. `step_ik_hold` records
 failures; `run.control_timing: true` records the `step_ik` stage. YAM checks a
 cooperative deadline between native solver iterations. Other native solvers are
 checked after return; a long native call cannot be preempted. This is a soft

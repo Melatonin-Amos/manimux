@@ -155,9 +155,13 @@ def compatible_history(saved: dict, current: dict) -> bool:
     """
     from manimux.evaluation.rubric import explicit_evaluation
 
+    saved = deepcopy(saved)
+    # Sessions before the shared IK policy stored it as policy.adapter.ik_failure_policy.
+    legacy = saved.get("policy", {}).get("adapter", {}).pop("ik_failure_policy", None)
+    if legacy is not None:
+        saved.setdefault("execution", {}).setdefault("ik", {})["failure_policy"] = legacy
     if fingerprint(saved) == fingerprint(current):
         return True
-    saved = deepcopy(saved)
     saved.setdefault("run", {})["max_control_steps"] = current.get("run", {}).get("max_control_steps")
     if fingerprint(saved) == fingerprint(current):
         return True
