@@ -135,9 +135,11 @@ Insufficient available suffix for the frozen candidate basis rejects explicitly.
 
 Preparation computes on a clone. Acceptance advances posterior/RNG once; rejection,
 duplicate, timeout and reset discard pending state. Successful command submission
-updates a history ledger with policy-row identities, so control 100 Hz/policy 30 Hz
-does not triple-count rows. Preview uses an isolated ledger and the same strategy;
-Start drains outputs and acknowledges backend reset before formal execution.
+admits the corresponding original model row to the scoring history, so control
+100 Hz/policy 30 Hz does not triple-count rows. Values come from the accepted
+absolute-joint prediction before control interpolation. Preview uses an isolated
+ledger and the same strategy; Start drains outputs and acknowledges backend reset
+before formal execution.
 The preview strategy excludes the first ordinary and the first conditioned cold call
 from delay calibration. Steady end-to-end samples seed formal execution after reset.
 Formal execution does not exclude its first latency sample or clamp infeasible delays.
@@ -149,12 +151,17 @@ disabling dispatch. Use the isolated preview lifecycle and public runtime/lifecy
 probes below for a complete disconnected loop. Preview advances its own validated
 target ledger and never promotes those rows into formal execution history.
 
-Each policy interval contributes its first successfully submitted control target;
-later interpolated commands in that interval do not append duplicate history. This
-counts submitted targets, not waypoint completion or measured arrival. Handoff does
-not wait for the source simulator's variable-duration waypoint to finish. Holding
-the terminal target after K expires adds no consumed rows. This is the ManiMux
-control-grid adaptation, not a reproduction of the source TOPP execution protocol.
+The first successful command submission in a policy interval marks its source row
+as consumed; history stores that original model action, not the interpolated command.
+RTC source offsets select the matching row of the full prediction. Expired prefixes,
+unexecuted suffixes, duplicate ticks and terminal holds after K add no history rows.
+The ledger retains the latest `history_window` admitted model rows across as many
+chunks as needed; it never fills history with complete unexecuted predictions.
+This counts submitted policy intervals, not waypoint completion or measured arrival.
+Handoff does not wait for the source simulator's variable-duration waypoint to finish.
+This is the ManiMux control-grid adaptation, not a reproduction of the source TOPP
+execution protocol. Experiment recording of provider responses, control commands
+and measured feedback is separate and retains its existing values and cadence.
 
 ## External model service without changing the default pin
 

@@ -1,7 +1,8 @@
-"""Runtime-owned ChunkTrust selection and successful-target history.
+"""Runtime-owned ChunkTrust selection and original-policy-step history.
 
 The source selector sees raw model velocity and consistently decoded joint targets.
-Only plan acceptance commits its posterior, and only command feedback adds history.
+Only plan acceptance commits its posterior. Command feedback admits source rows
+to history; their values come from the model prediction before interpolation.
 """
 
 from __future__ import annotations
@@ -237,7 +238,7 @@ class ChunkTrustAhsStrategy(SynchronousChunkStrategy):
             **context, "algorithm": self.name, "selected_horizon_steps": selected,
             "available_horizon": self._horizon - offset,
             "history_targets": self._history.copy(), "history_rows": deepcopy(self._history_rows),
-            "history_semantics": "successful_submitted_targets_not_measured_arrival",
+            "history_semantics": "submitted_policy_rows_before_interpolation",
             "evidence": decision.info, "selector_state_before": decision.before,
             "selector_state_after": decision.after,
         })
@@ -346,7 +347,12 @@ class ChunkTrustAhsStrategy(SynchronousChunkStrategy):
                 "plan_id": active.plan_id, "first_row": active.last_row + 1,
                 "last_row": int(row) - 1,
             }))
-        target = np.concatenate([command.groups[name] for name in GROUPS]).astype(np.float32)
+        # Feedback identifies an executed policy interval, not the scoring value.
+        # RTC can start at a cropped source row; never include expired/unused rows
+        # or substitute an interpolated control target for that model prediction.
+        if self._full_actions is None:
+            raise RuntimeError("ChunkTrust history requires the accepted source prediction")
+        target = self._full_actions[active.source_offset + int(row)].copy()
         if not np.isfinite(target).all():
             raise ValueError("ChunkTrust history must be finite in float32")
         self._history = np.concatenate([self._history, target[None]], axis=0)[

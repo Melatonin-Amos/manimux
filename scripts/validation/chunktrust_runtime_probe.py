@@ -325,7 +325,13 @@ class RuntimeChecks(unittest.TestCase):
                     ]
                 ).astype(np.float32),
             )
-        np.testing.assert_array_equal(state["history"], list(first_command_per_row.values()))
+        policy_rows = np.concatenate([prefix.groups[name] for name in ("left_arm", "right_arm")],
+                                     axis=1).astype(np.float32)
+        np.testing.assert_array_equal(state["history"], policy_rows)
+        self.assertFalse(np.allclose(policy_rows, list(first_command_per_row.values())))
+        # Actual submitted commands remain interpolated and are not rewritten by AHS.
+        np.testing.assert_array_equal(commands[1].groups["left_arm"],
+                                      h.sink.commands[1].groups["left_arm"])
         commands[0].groups["left_arm"][:] = 2.0
         self.assertEqual(h.strategy.state_dict()["history"], state["history"])
         h.clock.ns = origin + 10 * h.dt - 1
@@ -334,8 +340,40 @@ class RuntimeChecks(unittest.TestCase):
         second = h.request()
         next_prefix, _ = h.accept(h.response(second, seed=52))
         self.assertEqual(next_prefix.metadata["chunktrust"]["history_targets"], state["history"])
+        self.assertEqual(next_prefix.metadata["chunktrust"]["history_semantics"],
+                         "submitted_policy_rows_before_interpolation")
         self.assertEqual(h.strategy.state_dict()["selector"]["revision"], 2)
         write_json(h.output / "ledger.json", h.strategy.state_dict())
+
+    def test_history_and_scores_ignore_control_sampling_phase(self):
+        results = []
+        for label, period, phase in (("aligned", 10_000_000, 0),
+                                     ("offset", 7_000_000, 2_000_000)):
+            h = self.harness(label, candidates=[10, 20, 30, 40, 50])
+            expected_history = np.empty((0, 14), dtype=np.float32)
+            for round_index in range(7):
+                submission = h.request()
+                response = h.response(submission, seed=51 + round_index)
+                prefix, _ = h.accept(response)
+                origin = h.clock.ns
+                rows = np.concatenate([prefix.groups[name] for name in ("left_arm", "right_arm")],
+                                      axis=1).astype(np.float32)
+                # Every source interval is submitted, at different control phases.
+                for ns in range(origin + phase, origin + prefix.horizon_steps * h.dt, period):
+                    h.submit_at(ns)
+                expected_history = np.concatenate([expected_history, rows])[-60:]
+                np.testing.assert_array_equal(h.strategy.state_dict()["history"], expected_history)
+                h.clock.ns = origin + prefix.horizon_steps * h.dt
+            self.assertEqual(len(expected_history), 60)
+            submission = h.request()
+            response = h.response(submission, seed=80)
+            prefix, _ = h.accept(response)
+            evidence = prefix.metadata["chunktrust"]["evidence"]
+            self.assertTrue(np.isfinite(evidence["u_inter_raw"]).all())
+            results.append((evidence, prefix.horizon_steps, h.strategy.state_dict()["selector"]))
+        # History accumulates across repeated chunks. Inter evidence, selected K,
+        # and posterior/RNG state must not depend on the interpolated tick samples.
+        self.assertEqual(results[0], results[1])
 
     def test_rtc_early_and_late_common_suffix_and_bounded_budget(self):
         for label, additionally_consumed, hold_steps in (("early", 0, 0), ("late", 3, 5)):
@@ -387,6 +425,19 @@ class RuntimeChecks(unittest.TestCase):
             self.assertEqual(
                 h.strategy.state_dict()["history_rows"][-1]["source_row"], additionally_consumed
             )
+            np.testing.assert_array_equal(
+                h.strategy.state_dict()["history"],
+                np.concatenate([old[:7 + additionally_consumed],
+                                full_actions[additionally_consumed:additionally_consumed + 1]]),
+            )
+            # A non-grid control tick in the cropped suffix must still record
+            # the original model row, with its source offset applied exactly once.
+            command = h.submit_at(h.clock.ns + h.dt + h.dt // 4)
+            after = h.strategy.state_dict()
+            np.testing.assert_array_equal(after["history"][-1],
+                                          full_actions[additionally_consumed + 1])
+            self.assertFalse(np.allclose(after["history"][-1][:7], command.groups["left_arm"]))
+            self.assertEqual(after["history_rows"][-1]["source_row"], additionally_consumed + 1)
             write_json(h.output / "ledger.json", h.strategy.state_dict())
 
     def test_reject_duplicate_expired_and_reset_are_transactional(self):
@@ -559,6 +610,11 @@ class RuntimeChecks(unittest.TestCase):
             h.strategy.state_dict()["history_sources"], {"submitted": 0, "preview": 10}
         )
         self.assertEqual(len(h.sink.commands), 0)
+        np.testing.assert_array_equal(
+            h.strategy.state_dict()["history"],
+            np.concatenate([prefix.groups[name] for name in ("left_arm", "right_arm")], axis=1)
+            .astype(np.float32),
+        )
         second = h.request()
         h.accept(h.response(second, seed=54))
         self.assertEqual(h.strategy.state_dict()["selector"]["revision"], 2)
