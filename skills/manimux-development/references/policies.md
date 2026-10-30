@@ -252,6 +252,10 @@ recipe's client-format/adapter pairing. Offline geometry or synthetic transport
 tests do not prove checkpoint inference or physical task success.
 
 
+## Shared IK failure behavior
+
+All model and backend adapters use the [shared execution IK policy](runtime-config.md#chunk-ik-and-execution-time-ik). Configure `execution.ik.failure_policy`, not an adapter-specific default. `hold_last_valid` holds both arm and gripper at a failed target and attempts later targets; `reject` fails the decode. Use the common `IKSequence` helper for chunk decoding and preserve the resolved policy when constructing child decoders. Raw solver failures must never produce independently advancing gripper commands.
+
 ## Optional pose decoding for step IK
 
 IK adapters declare `supports_step_ik` and implement `decode_pose_only`, selected

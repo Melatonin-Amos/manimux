@@ -2998,6 +2998,20 @@ decisions and result tables; it is not a second public guide.</p>
 </tbody>
 </table>
 <h3 id="step-ik">Choose when IK runs</h3>
+<p><strong>Shared IK failure behavior:</strong> set <code>execution.ik.failure_policy</code> for every model that uses action IK. The default <code>hold_last_valid</code> holds the failed arm group and its gripper at the previous accepted command for that point, keeps its timestamp, and attempts the next target. A first-point failure holds the selected seed; an all-failed chunk remains a recorded hold. <code>reject</code> rejects the whole decoded chunk, or raises before the current command in step mode. Invalid inputs or malformed successful solutions remain errors in both modes.</p>
+<pre><code>execution:
+  ik:
+    mode: chunk
+    failure_policy: hold_last_valid  # or reject</code></pre>
+<p>The same setting applies to inline/process decoding and analytic/differential action IK. Step IK keeps all arms and grippers together on failure; chunk IK holds the affected group. A failed dense IK interval discards partial substeps and holds the full command for the interval. Normal experiment metadata records held indices and counts; held rows must not be counted as solved IK. This controls target commands, with downstream interpolation and executor limits still active. Replace the old <code>policy.adapter.ik_failure_policy</code> setting with this shared field.</p>
+<p><strong>YAM chunk IK solver:</strong> XR-1 and OpenWAM on YAM choose <code>policy.adapter.ik_backend: mink</code> (default, strict solve) or <code>dls</code> (damped least squares from the previous step, which declines large joint swings near singularities such as lift-off from Home and the wrist limit). DLS has two methods, selected by profile: <code>yam_dls_ik.yaml</code> applies the joint-motion cost on every step; <code>yam_dls_gate_ik.yaml</code> applies it only when the seed's smallest Jacobian singular value is below <code>singularity_gate</code>, so ordinary motion tracks like <code>mink</code>.</p>
+<pre><code>policy:
+  adapter:
+    ik_backend: dls
+    dls_ik:
+      config: ../../../embodiment/arm/yam_dls_gate_ik.yaml
+      singularity_gate: [0.03, 0.06]   # from your own demonstrations</code></pre>
+<p>The gate depends on the station's TCP and task workspace. Derive it from that station's demonstrations or rollouts with <code>python -m scripts.setup.dls_gate_calibrate {teleop_dir}</code> (10th percentile of the singular value, high = 2 &times; low), then verify lift-off and the wrist-limit phase on the robot. The shipped <code>[0.03, 0.06]</code> is the reference station's value.</p>
 <p>Pose-producing adapters support two modes. <code>chunk</code> is the default and solves the decoded chunk before Timeline commit. <code>step</code> keeps TCP poses in Timeline and solves only the current target inside each control tick. Joint-output adapters need no IK mode.</p>
 <pre><code>execution:
   ik:
@@ -3007,7 +3021,7 @@ run:
   control_timing: true</code></pre>
 <p>Merge these fields into an experiment with a direct executor and inline action decoding. The optional budget defaults to half the control period and must be shorter than that period. Add them to a variant whose adapter uses IK (for example OpenWAM YAM or XR1 YAM). Existing experiments remain in chunk mode.</p>
 <p>Step mode supports serial/async for IK adapters. OpenWAM YAM and XR1 YAM also support pose-space RTC/PAINT; Pi05 Tianji, XR1 Tianji and UMI-DP Tianji support pose-space RTC. Unsupported combinations fail at configuration validation. Smooth/MPC, joint candidate scoring, temporal ensembling, executor-based RTC forecasts, cubic joint blends, waypoint handoff and decoder diffIK substeps require chunk mode.</p>
-<p>The current pose is interpolated with linear position/gripper and quaternion SLERP, then IK is seeded from the current measured joint state. Both arms share the budget; a failed or late solution holds both arms at the previous command. Watch the <code>step_ik</code> timing stage and <code>step_ik_hold</code> events. The budget is cooperative: native calls cannot always be interrupted, so verify control timing on the target machine. Pose-space interpolation can produce a different joint path from interpolating a pre-solved joint chunk.</p>
+<p>The current pose is interpolated with linear position/gripper and quaternion SLERP, then IK is seeded from the current measured joint state. Both arms share the budget; under the default failure policy, a failed or late solution holds both arms and grippers at the previous command. Watch the <code>step_ik</code> timing stage and <code>step_ik_hold</code> events. The budget is cooperative: native calls cannot always be interrupted, so verify control timing on the target machine. Pose-space interpolation can produce a different joint path from interpolating a pre-solved joint chunk.</p>
 <p><strong>Optional TCP target speed limit (off by default):</strong> set <code>execution.ik.pose_speed_limit</code> to a mapping with <code>max_linear_m_s</code> and/or <code>max_angular_rad_s</code>. Values must be positive and finite. Omit it or use <code>null</code> to disable. This setting applies to step IK only.</p>
 <pre><code>execution:
   ik:
