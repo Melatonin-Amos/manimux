@@ -116,7 +116,7 @@ RoboGUI provides the operator workspace.
         <strong>API</strong>
         <ul>
           <li><a href="manimux/configs/experiments/example-yam-dream1/README.md">Dream-1</a> ✅</li>
-          <li><a href="https://sii-liulab.github.io/manimux/guideline.html#poke-api">Poke-Aurora</a> ✅ (requires station calibration)</li>
+          <li><a href="https://sii-liulab.github.io/manimux/guideline.html#poke-api">Poke-Aurora</a> ✅</li>
         </ul>
       </td>
       <td>
