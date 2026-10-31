@@ -62,6 +62,13 @@ def resolve_server(experiment, local, *, verify_weights=True):
     ):
         raise ValueError("OpenWAM deployment must preserve the official 32-step action horizon")
     server["ckpt_dir"] = str(root)
+    # Repository provenance was checked above; the model validates file identities.
+    server["expected_artifacts"] = {
+        "checkpoint_file": expected["checkpoint_file"],
+        "checkpoint_sha256": expected["checkpoint_sha256"],
+        "training_config_sha256": expected["config_sha256"],
+        "norm_stats_sha256": expected["norm_stats_sha256"],
+    }
     return server
 
 

@@ -379,6 +379,25 @@ class AsyncSimRuntime:
         timeout_s: float | None = None, recording_directory: str | Path | None = None,
     ) -> dict[str, Any]:
         """Execute ManiMux's worker, adapter, strategy, timeline and executor."""
+        session = getattr(self, "_driveable_session", None)
+        if session is not None and not session.finished:
+            raise RuntimeError("runtime already owns an active control session")
+        steps = self._policy_steps(seed=seed, max_steps=max_steps, timeout_s=timeout_s,
+                                   recording_directory=recording_directory)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as completed:
+                return completed.value
+
+    def create_session(self, **kwargs):
+        from manimux.runtime.asyncsim_session import AsyncSimSession
+        return AsyncSimSession(self, **kwargs)
+
+    def _policy_steps(
+        self, *, seed=None, max_steps=None, timeout_s=None, recording_directory=None, driveable=False,
+    ):
+        """One generator frame owns all state for one environment's control chain."""
         worker = self.worker or PolicyWorkerClient(
             self.config["policy"], self.session_id, multi_inflight=self._multi_inflight,
         )
@@ -411,12 +430,14 @@ class AsyncSimRuntime:
             self.strategy.reset()
             self.scheduler.reset()
             while True:
+                yield "initial_observation"
                 initial = self.client.read_snapshot(self.streams)
                 if all(entry["packet"] is not None for entry in initial["packets"].values()):
                     break
                 if timeout_s is not None and time.monotonic() - started_wall > timeout_s:
                     raise TimeoutError("AsyncSim initial observation streams did not become available")
-                self.clock.sleep_until_ns(self.clock.now_ns() + self.dt_ns)
+                if not driveable:
+                    self.clock.sleep_until_ns(self.clock.now_ns() + self.dt_ns)
             control_steps = 0
             loop_ticks = 0
             last_control_slot: int | None = None
@@ -433,7 +454,8 @@ class AsyncSimRuntime:
             def wait_for_poll() -> None:
                 # Wall time only paces polling; missed wall ticks never burst.
                 poll_dt_ns = max(1, self.dt_ns // 4) if self._simulation_timeline else self.dt_ns
-                self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
+                if not driveable:
+                    self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
                 nonlocal request_seq, last_submitted, last_deadline, in_flight, health
@@ -534,11 +556,14 @@ class AsyncSimRuntime:
             while control_steps < max_steps or (
                 self._native_execution is not None and not self.native_execution_complete(health)
             ):
+                yield "control"
                 loop_ticks += 1
                 if timeout_s is not None and time.monotonic() - started_wall > timeout_s:
                     raise TimeoutError("AsyncSim policy rollout exceeded its wall time limit")
                 if not worker.is_alive:
                     raise RuntimeError("policy worker stopped")
+                if self.command_controller is not None and hasattr(self.command_controller, "check_timeout"):
+                    self.command_controller.check_timeout()
                 if self._native_chunk_execution and health.get("last_error"):
                     raise RuntimeError(f"native chunk simulator failed: {health['last_error']}")
                 state = health["episode"]["state"]
