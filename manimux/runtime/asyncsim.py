@@ -13,6 +13,7 @@ from typing import Any
 
 from manimux.clock import Clock, SystemClock
 from manimux.embodiments.asyncsim import AsyncSimClient, AsyncSimRobot, AsyncSimSensor
+from manimux.embodiments.asyncsim.client import AsyncSimRemoteError
 from manimux.embodiments.asyncsim.robot import AsyncSimCommandRejected
 from manimux.policies import PolicyCapabilities
 from manimux.policies.worker import PolicyWorkerClient
@@ -435,7 +436,7 @@ class AsyncSimRuntime:
                 self.clock.sleep_until_ns(self.clock.now_ns() + poll_dt_ns)
 
             def submit_if_ready(observation: ObservationSnapshot, now_ns: int) -> bool:
-                nonlocal request_seq, last_submitted, last_deadline, in_flight
+                nonlocal request_seq, last_submitted, last_deadline, in_flight, health
                 if self._native_chunk_execution and control_steps >= max_steps:
                     return False
                 execution_complete = self.native_execution_complete(health)
@@ -484,7 +485,22 @@ class AsyncSimRuntime:
                     prepared.deadline_ns = self.clock.now_ns() + round(
                         self.config["policy"]["timeout_s"] * 1_000_000_000
                     )
-                worker.submit_latest(prepared)
+                try:
+                    worker.submit_latest(prepared)
+                except AsyncSimRemoteError as exc:
+                    if (exc.code != "runtime_error"
+                            or str(exc) != "AsyncSim runtime_error: environment gate is stopped"):
+                        raise
+                    # 观测读取与交接之间可能正常结束；仅确认当前 episode 终态后收尾。
+                    health = self.client.health()
+                    if (health["episode"].get("episode_id") == episode["episode_id"]
+                            and health["episode"]["state"] in {"succeeded", "failed", "finished"}
+                            and health.get("gate") == "stopped" and not health.get("last_error")):
+                        events.append({"kind": "episode_finished_before_inference",
+                                       "request_seq": prepared.request_seq,
+                                       "episode_state": health["episode"]["state"]})
+                        return False
+                    raise
                 self.scheduler.on_submitted(now_ns)
                 request_seq = prepared.request_seq
                 last_submitted = request_seq
@@ -628,6 +644,8 @@ class AsyncSimRuntime:
                     submit_if_ready(observation, now_ns)
                     if self._simulation_timeline and chunk is None else False
                 )
+                if health["episode"]["state"] in {"succeeded", "failed", "finished"}:
+                    break
                 if ((self._native_chunk_execution and chunk is None)
                         or (self._skip_unplanned_commands and chunk is None and self.timeline.sample(now_ns) is None)):
                     result = None
