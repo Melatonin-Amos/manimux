@@ -230,19 +230,7 @@ before enabling a combination. See <a href="#configuration">configuration</a> an
   --checkpoint HF-RoboDojo-sim-arx_x5-ee-0-35efbc7 \
   --profile async_config/profiles/manimux_xr1_zero_delay.yml --seeds 1 \
   --timeout 900 --output async_eval_result/xr1_insert_tubes_default_multi_inflight</code></pre>
-<p>For one Isaac Sim instance with N environments and N independent policy services, run the simulator with <code>--num-envs N</code> and the benchmark with <code>--policy-urls URL_0 ... URL_N-1</code>. The URL order maps to <code>robot.options.env_index</code> (default 0). Each slot owns a separate AsyncSimRuntime session, worker, timeline and executor; each external service loads its own model and keeps the policy recipe's <code>num_envs: 1</code>. This is independent of <code>multi_inflight</code> and does not share weights or batch inference.</p>
-<p>Start the N policy processes externally on distinct ports, using their existing launcher and separate private station files. The benchmark requires the <code>xpolicylab_ws</code> worker, a matching simulator environment count and distinct <code>server_instance_id</code> values. HELLO preflight does not reset models; normal workers still check backend identity and sampling capabilities. GPU placement remains external, and independent services still compete for memory and compute on shared hardware.</p>
-<p>Reset uses full batches: all slots must reset before physics starts, and every slot must finish before the next batch. Seed count must be divisible by N; partial reset and dynamic slot replacement are not supported. Terminal task results and episode clocks stop changing while the shared scene continues. With the two services and a two-environment simulator already running, launch from the AsyncSim workspace root:</p>
-<pre><code class="language-bash">"$RUNNER_PYTHON" scripts/run_async_benchmark.py \
-  --experiment manimux/manimux/configs/experiments/asyncsim/robodojo_pi05_insert_tubes_rtc.yaml \
-  --local manimux/manimux/configs/local/asyncsim_pi05.example.yaml \
-  --asyncsim-url ws://127.0.0.1:18765 \
-  --policy-urls ws://127.0.0.1:18766 ws://127.0.0.1:18776 \
-  --task insert_tubes --policy Pi_05 \
-  --checkpoint RoboDojo-sim-arx_x5-joint-0/59999 \
-  --profile async_config/profiles/manimux_pi05_zero_delay.yml \
-  --seeds 0 1 2 3 --output async_eval_result/pi05_parallel</code></pre>
-<p>The AsyncSim repository's <code>docs/PARALLEL_SIMULATION.md</code> covers policy station files, simulator startup, reset timeout and failure handling. Validation covers two mock services over real WebSockets with ManiMux workers, including a fast environment finishing while a slow inference is pending. This change has not been validated with a real multi-environment Isaac/GPU/model rollout.</p>
+<p>AsyncSim deployments use one environment and one policy service per simulator. Multi-inflight scheduling remains available within that controller; it does not batch multiple environments.</p>
 <h3 id="request-schedules-and-triggers">Request schedules and triggers</h3>
 <table>
 <thead>

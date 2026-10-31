@@ -210,27 +210,13 @@ def config():
 
 
 class AsyncSimRuntimeTests(unittest.TestCase):
-    def test_default_client_uses_the_robot_environment_index(self):
-        for index in (0, 2):
-            with self.subTest(env_index=index):
-                configured = config()
-                configured["robot"]["options"]["env_index"] = index
-                runtime = AsyncSimRuntime(configured)
-                self.assertEqual(runtime.client.env_index, index)
-                self.assertEqual(runtime.robot.env_index, index)
-                self.assertEqual(runtime.sensor.env_index, index)
+    def test_retired_environment_slot_is_rejected(self):
+        configured = config()
+        configured["robot"]["options"]["env_index"] = 1
+        with self.assertRaisesRegex(ValueError, "only env_index=0"):
+            AsyncSimRuntime(configured)
 
-    def test_client_routes_reset_and_health_without_changing_default_wire_shape(self):
-        from manimux.embodiments.asyncsim.client import AsyncSimClient
 
-        for index in (0, 2):
-            with self.subTest(env_index=index):
-                client = AsyncSimClient("ws://127.0.0.1:18765", env_index=index)
-                with patch.object(client, "request", return_value={"episode_id": "test"}) as request:
-                    client.reset(seed=3)
-                    request.assert_called_with("reset", {"seed": 3, **({"env_index": index} if index else {})})
-                    client.health()
-                    request.assert_called_with("health", {"env_index": index} if index else None)
 
     def test_multi_inflight_accepts_valid_earlier_response_and_rejects_older_plan(self):
         clock = FixedClock()

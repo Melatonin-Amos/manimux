@@ -146,29 +146,10 @@ Wall time paces polling and enforces timeouts. Missed command periods are skippe
 and recorded, never replayed in bursts; task evaluation continues during inference.
 Worker startup precedes episode reset.
 
-For one Isaac Sim process with N environments and N independent policy services,
-each AsyncSimRuntime still owns exactly one session, worker, timeline and executor.
-`robot.options.env_index` (default 0) selects the simulator slot in the client,
-robot and sensor bundle. Reset binds the session to that slot; later requests use
-the binding. Do not pass the simulator's N-environment batch into model history or
-change a single-slot policy recipe to `num_envs: N`.
-
-From the AsyncSim workspace, `scripts/run_async_benchmark.py --policy-urls URL_0
-... URL_N-1` creates one independent controller per slot. It requires the
-`xpolicylab_ws` worker, matching simulator `num_envs` and distinct service instance
-IDs obtained through HELLO without a model reset. Normal worker startup retains
-backend identity and sampling capability validation. Policy processes are started
-externally and load independent model copies; no shared-weight or batched service
-is added. Parallelism is separate from a controller's `multi_inflight` schedule.
-
-The server collects all slot resets before resetting the shared scene and starting
-physics. Initial-stream polling already waits for this barrier. Runs use fixed
-full batches with the same task/profile/experiment/checkpoint; seed count must be
-divisible by N. No per-slot reset during an active batch or dynamic replacement is
-supported. A slow policy does not stop physics or peer controllers, but shared GPU
-and CPU contention still affects latency. See `guideline.html#asyncsim-deployments`
-for the command and the AsyncSim repository's `docs/PARALLEL_SIMULATION.md` for
-resource placement, timeout, failure and validation limits.
+AsyncSim runs one environment and one policy service per simulator. The previous
+vector-slot routing and N-service deployment are removed. Multiple in-flight
+requests remain a per-controller scheduling mode, not multi-environment support
+or batched model inference.
 
 `run.observation_streams` optionally preserves additional visible packets and
 source timestamps in `ObservationSnapshot.stream_packets`. Models must use

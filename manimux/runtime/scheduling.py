@@ -100,7 +100,7 @@ class RequestScheduler:
     def reset(self) -> None:
         self._next_request_ns = 0
 
-    def ready(self, *, now_ns, timeline, request_state, runtime_state) -> bool:
+    def ready(self, *, now_ns, timeline, request_state, runtime_state, execution_complete=None) -> bool:
         if now_ns < self._next_request_ns:
             return False
         if self.mode in {"serial", "multi_inflight"} and runtime_state != RuntimeState.RUNNING:
@@ -111,8 +111,11 @@ class RequestScheduler:
             request_state.last_submitted_seq < 0 or now_ns > request_state.last_deadline_ns
         ):
             return False
-        if self.mode == "serial" and timeline.remaining_ns(now_ns) > 0:
-            return False
+        if self.mode == "serial":
+            if execution_complete is False:
+                return False
+            if execution_complete is None and timeline.remaining_ns(now_ns) > 0:
+                return False
         return not (
             self.trigger == "refill" and timeline.remaining_ns(now_ns) >= self._refill_ns
         )
@@ -121,12 +124,13 @@ class RequestScheduler:
         self._next_request_ns = now_ns + self._interval_ns
 
     def build_submission(self, strategy, **kwargs):
+        execution_complete = kwargs.pop("execution_complete", None)
         # History collection must run on every tick, including ticks where the
         # transport is busy. Sampling it only on admitted requests loses frames.
         observe = getattr(strategy, "observe_snapshot", None)
         if callable(observe):
             observe(kwargs["snapshot"])
-        if not self.ready(**{
+        if not self.ready(execution_complete=execution_complete, **{
             key: kwargs[key]
             for key in ("now_ns", "timeline", "request_state", "runtime_state")
         }):
